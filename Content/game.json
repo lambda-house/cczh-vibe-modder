@@ -1,0 +1,101 @@
+{
+  // Skeleton content pack. This document is the AI-open surface: everything a
+  // generator may produce is expressible here, and everything here is validated
+  // by `rts lint` before any simulation runs. JSON-with-comments in the skeleton;
+  // YAML is a loader swap once external packages are in play.
+  "meta": { "name": "skeleton-pack", "version": 1 },
+
+  "damageTypes": ["cannon", "hmg", "rifle"],
+  "armorClasses": ["infantry", "light_vehicle", "heavy_vehicle"],
+
+  // The counter-matrix seed: damage type vs armor class multipliers.
+  "damageVsArmor": {
+    "cannon": { "infantry": 0.25, "light_vehicle": 1.25, "heavy_vehicle": 1.0 },
+    "hmg":    { "infantry": 1.5,  "light_vehicle": 1.0,  "heavy_vehicle": 0.4 },
+    "rifle":  { "infantry": 1.0,  "light_vehicle": 0.5,  "heavy_vehicle": 0.15 }
+  },
+
+  "weapons": {
+    "crusader_cannon":     { "damageType": "cannon", "damage": 60, "range": 9.0, "cooldownTicks": 36, "spread": 0.1 },
+    "battlemaster_cannon": { "damageType": "cannon", "damage": 65, "range": 9.5, "cooldownTicks": 40, "spread": 0.1 },
+    "technical_hmg":       { "damageType": "hmg",    "damage": 14, "range": 8.5, "cooldownTicks": 9,  "spread": 0.1 },
+    "ranger_rifle":        { "damageType": "rifle",  "damage": 10, "range": 8.0, "cooldownTicks": 15, "spread": 0.1 }
+  },
+
+  // Veterancy: thresholds in XP (kills award victimCost/10), rank bundles are
+  // cumulative lists of modifiers through the same algebra as upgrades/perks.
+  "veterancyTracks": {
+    "vehicle_default": {
+      "thresholds": [100, 300],
+      "ranks": [
+        [ { "stat": "Damage", "op": "Mul", "value": 1.10 } ],
+        [ { "stat": "Damage", "op": "Mul", "value": 1.15 },
+          { "stat": "ArmorFactor", "op": "Mul", "value": 0.85 } ]
+      ]
+    },
+    "infantry_default": {
+      "thresholds": [60, 180],
+      "ranks": [
+        [ { "stat": "Damage", "op": "Mul", "value": 1.10 } ],
+        [ { "stat": "CooldownScale", "op": "Mul", "value": 0.85 } ]
+      ]
+    }
+  },
+
+  // Tech DAG: lint checks acyclicity and reference integrity; production gating
+  // uses ContentDb.CanProduce. The harness spawns directly (no economy yet).
+  "tech": {
+    "nodes": {
+      "barracks":        { "requires": [] },
+      "war_factory":     { "requires": [] },
+      "strategy_center": { "requires": ["war_factory"] }
+    }
+  },
+
+  "units": {
+    "ranger": {
+      "faction": "usa", "cost": 300, "prerequisites": ["barracks"],
+      "components": {
+        "Health": { "max": 120, "armorClass": "infantry" },
+        "Mobile": { "speed": 5.0 },
+        "WeaponBearer": { "weapon": "ranger_rifle" },
+        "VeterancyCarrier": { "track": "infantry_default" }
+      }
+    },
+    "technical": {
+      "faction": "gla", "cost": 600, "prerequisites": [],
+      "components": {
+        "Health": { "max": 200, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 7.5 },
+        "WeaponBearer": { "weapon": "technical_hmg" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    },
+    "crusader": {
+      "faction": "usa", "cost": 900, "prerequisites": ["war_factory"],
+      "components": {
+        "Health": { "max": 480, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.2 },
+        "WeaponBearer": { "weapon": "crusader_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    },
+    "battlemaster": {
+      "faction": "china", "cost": 800, "prerequisites": ["war_factory"],
+      "components": {
+        "Health": { "max": 440, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 3.8 },
+        "WeaponBearer": { "weapon": "battlemaster_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    }
+  },
+
+  "factions": {
+    "usa":   ["ranger", "crusader"],
+    "gla":   ["technical"],
+    "china": ["battlemaster"]
+  },
+
+  "lint": { "dpsPer1000CostBand": [20, 200] }
+}
