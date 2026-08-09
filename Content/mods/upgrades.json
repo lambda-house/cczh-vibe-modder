@@ -1,0 +1,53 @@
+{
+  // Flags and conditional variants — ZH's real upgrade mechanism.
+  //
+  //   rts duel --a crusader --b battlemaster --n 40 --seed 42 --mod content/mods/upgrades.json
+  //   rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,crusader*" \
+  //            --n 20 --seed 42 --mod content/mods/upgrades.json
+  //
+  // The point: an upgrade in ZH carries NO effect data. `ArmorUpgrade` (173 uses) and
+  // `WeaponSetUpgrade` (117 uses) take zero parameters — they set one condition bit, and a
+  // separate condition-keyed set is selected. Our (base+Σadd)×Πmul algebra covers 4.5% of
+  // real upgrade references; selectors cover the rest. So this file changes a unit's gun
+  // and armour without touching either the unit's base stats or the weapon table.
+  //
+  // Researching a tech node grants a same-named team flag, which is why `strategy_center`
+  // below is both a tech node the econ harness can queue AND the condition on the variant.
+  "meta": { "name": "upgrades", "version": 1 },
+
+  "weapons": {
+    // The upgraded gun. Same damage type, materially better numbers.
+    "crusader_cannon_ap": {
+      "damageType": "cannon", "damage": 78, "range": 10.5, "cooldownTicks": 34, "spread": 0.06
+    }
+  },
+
+  "units": {
+    "crusader": {
+      "faction": "usa", "cost": 900, "buildSeconds": 15,
+      "prerequisites": ["war_factory"],
+      "components": {
+        "Health": { "max": 480, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.2 },
+        "WeaponBearer": { "weapon": "crusader_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      },
+      // First match wins, so order is the priority. Authored order is visible in a diff;
+      // ZH's best-match scorer is not, and can tie.
+      "variants": [
+        {
+          "whenFlags": ["strategy_center"],
+          "weapon": "crusader_cannon_ap",
+          // Excess is ZH's composition rule for situational bonuses: the amounts by which
+          // each multiplier exceeds 1 are SUMMED, so this +10% and a veteran +10% give
+          // 1.20, not the 1.21 that Mul would produce. Deliberately anti-combinatorial.
+          "modifiers": [ { "stat": "MaxHp", "op": "Excess", "value": 1.10 } ]
+        }
+      ]
+    }
+  },
+
+  "factions": {
+    "usa_upgraded": { "extends": "usa" }
+  }
+}

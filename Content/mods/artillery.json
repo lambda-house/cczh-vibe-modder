@@ -1,0 +1,46 @@
+{
+  // Weapon vocabulary: splash, clips, minimum range — Zero Hour's model, their field names.
+  //
+  //   rts duel --a katyusha --b ranger --n 50 --seed 42 --mod content/mods/artillery.json
+  //   rts diff --head-mod content/mods/artillery.json
+  //
+  // The point of the slice: these three fields turn "damage per second" into a shape.
+  // Two weapons with identical paper DPS now behave completely differently depending on
+  // whether the damage lands in one place, over an area, or in bursts with dead time.
+  "meta": { "name": "artillery", "version": 1 },
+
+  "weapons": {
+    // Splash is a TWO-BAND STEP FUNCTION, no falloff — inside primaryDamageRadius you take
+    // the full hit, inside secondaryDamageRadius you take the reduced one, beyond that
+    // nothing. That is ZH's whole area-damage model, and it is why massed infantry is a
+    // liability rather than a strength.
+    //
+    // Clips make it artillery rather than a machine gun: 4 shells fast, then a long reload.
+    // Minimum range is the weakness that pays for the area damage.
+    "katyusha_rockets": {
+      "damageType": "cannon", "damage": 40, "range": 14.0,
+      "cooldownTicks": 8, "spread": 0.15,
+      "primaryDamageRadius": 3.0,
+      "secondaryDamage": 15, "secondaryDamageRadius": 6.0,
+      "clipSize": 4, "clipReloadSeconds": 6.0,
+      "minimumAttackRange": 5.0
+    }
+  },
+
+  "units": {
+    "katyusha": {
+      "faction": "china", "cost": 900, "buildSeconds": 18,
+      "kindOf": ["VEHICLE", "CAN_ATTACK"],
+      "components": {
+        "Health": { "max": 260, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 4.0 },
+        "WeaponBearer": { "weapon": "katyusha_rockets" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    }
+  },
+
+  "factions": {
+    "china_arty": { "extends": "china", "add": ["katyusha"] }
+  }
+}

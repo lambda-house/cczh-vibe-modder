@@ -11,4 +11,9 @@
     <!-- Zero NuGet dependencies by design: the sim core must stay engine- and package-agnostic. -->
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- godot/ is the presentation project (own csproj, references this one). -->
+    <Compile Remove="godot/**" />
+  </ItemGroup>
+
 </Project>

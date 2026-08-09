@@ -17,7 +17,20 @@ public enum Stat
     ArmorFactor = 5,    // multiplier on damage taken; <1 is tougher
 }
 
-public enum ModOp { Add, Mul }
+/// <summary>
+/// How a modifier composes with others touching the same stat.
+///
+/// <c>Excess</c> is Zero Hour's rule for situational bonuses (Weapon.cpp:3487 —
+/// <c>bonus += this - 1.0</c>): the amounts by which each multiplier exceeds 1 are summed,
+/// so Veteran(1.10) + upgrade(1.25) gives 1.35, not the 1.375 that <c>Mul</c> produces.
+/// It is deliberately anti-combinatorial — three +25% sources give x1.75, not x1.95 — and
+/// that is what keeps a balance surface tractable as sources multiply. Reproducing any real
+/// ZH number requires it.
+///
+/// <c>Mul</c> is kept because true compounding is sometimes what you mean. Mixing the two
+/// on one stat is legal but almost never intended, so <c>rts lint</c> warns.
+/// </summary>
+public enum ModOp { Add, Mul, Excess }
 
 public readonly struct Modifier
 {
@@ -48,20 +61,30 @@ public static class StatResolver
     {
         Span<Fix64> add = stackalloc Fix64[StatCount];
         Span<Fix64> mul = stackalloc Fix64[StatCount];
+        Span<Fix64> excess = stackalloc Fix64[StatCount];   // Σ(value - 1), ZH's rule
         for (int i = 0; i < StatCount; i++)
         {
             add[i] = Fix64.Zero;
             mul[i] = Fix64.One;
+            excess[i] = Fix64.Zero;
         }
 
         foreach (var m in mods)
         {
             int s = (int)m.Stat;
-            if (m.Op == ModOp.Add) add[s] += m.Value;
-            else mul[s] *= m.Value;
+            switch (m.Op)
+            {
+                case ModOp.Add: add[s] += m.Value; break;
+                case ModOp.Mul: mul[s] *= m.Value; break;
+                default: excess[s] += m.Value - Fix64.One; break;
+            }
         }
 
+        // (base + Σadd) × Πmul × (1 + Σ(excess - 1)).
+        // The excess factor is 1 when nothing used the op, so this is exactly the old
+        // formula for every existing pack — the third op is additive to the algebra, not
+        // a replacement for it.
         for (int i = 0; i < StatCount; i++)
-            outStats[i] = (baseStats[i] + add[i]) * mul[i];
+            outStats[i] = (baseStats[i] + add[i]) * mul[i] * (Fix64.One + excess[i]);
     }
 }

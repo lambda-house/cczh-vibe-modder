@@ -1,0 +1,101 @@
+{
+  // Structures, in Zero Hour's vocabulary.
+  //
+  // A structure is not a new content type — it is a unit with speed 0, KindOf role flags and
+  // BuildCompletion = PLACED_BY_PLAYER. That is exactly how ZH models it: one enum on the
+  // Object block separates a building from a unit, and KindOf carries what it DOES.
+  //
+  // What this unlocks: with a factory present, a team cannot start a unit unless it owns a
+  // live one. The factory becomes an economic target — which is the gap CLAUDE.md records as
+  // "rushes can only spawn-camp, there are no economic targets".
+  //
+  //   rts econ --a "usa_factory,crusader*" --b "usa_factory,crusader*" \
+  //            --mod content/mods/structures.json
+  //
+  // Gates are opt-in by content: a pack declaring no FS_FACTORY behaves exactly as before,
+  // which is why adding all of this moved no existing hash.
+  "meta": { "name": "structures", "version": 1 },
+
+  "units": {
+    // The producer. Destroy it and the opponent's unit queue stalls.
+    "usa_factory": {
+      "faction": "usa", "cost": 2000, "buildSeconds": 20,
+      "kindOf": ["STRUCTURE", "FS_FACTORY", "MP_COUNT_FOR_VICTORY", "IS_PREREQUISITE"],
+      "buildCompletion": "PLACED_BY_PLAYER",
+      "energyProduction": -5,
+      "maxSimultaneousOfType": 4,
+      "components": {
+        "Health": { "max": 2000, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 0 },
+        "WeaponBearer": { "weapon": "ranger_rifle" }
+      }
+    },
+
+    // The grid. Without positive net power the whole team's production halts —
+    // ZH's brownout, which is one integer per object and nothing more.
+    "usa_power_plant": {
+      "faction": "usa", "cost": 800, "buildSeconds": 10,
+      "kindOf": ["STRUCTURE", "MP_COUNT_FOR_VICTORY"],
+      "buildCompletion": "PLACED_BY_PLAYER",
+      "energyProduction": 10,
+      "components": {
+        "Health": { "max": 800, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 0 },
+        "WeaponBearer": { "weapon": "ranger_rifle" }
+      }
+    },
+
+    // The payoff. In ZH a unit's prerequisite is an OBJECT, not a research flag:
+    //   Prerequisites { Object = AmericaWarFactory }
+    // Retail has 624 such rows. A tech flag, once researched, can never be taken away —
+    // an object prerequisite can be levelled. Restating the crusader here swaps its
+    // abstract `war_factory` tech for the building that has to be standing.
+    "crusader": {
+      "faction": "usa", "cost": 900, "buildSeconds": 15,
+      "prerequisites": ["usa_factory"],
+      "components": {
+        "Health": { "max": 480, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.2 },
+        "WeaponBearer": { "weapon": "crusader_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    }
+  },
+
+  // A faction becomes PLAYABLE, not just a roster, once it says how it starts. ZH keeps
+  // exactly these on PlayerTemplate, and treats a template with no StartingBuilding as
+  // unplayable — it is the lobby's "is this faction real" test.
+  //
+  //   rts skirmish --a usa_base --b usa_rush --mod content/mods/structures.json
+  //
+  // startMoney is our addition: all 15 retail templates set it to 0 and take a global
+  // instead, so asymmetric economies are a design space their format could not express.
+
+  // Structures need models like anything else — an Object with no Draw is invisible, and
+  // `rts lint --target zh` treats that as an error rather than letting it ship.
+  "zh": {
+    "models": {
+      "usa_factory":     "ABWarFact",
+      "usa_power_plant": "ABPWRPLANT"
+    }
+  },
+
+  "factions": {
+    "usa_base": {
+      "extends": "usa",
+      "add": ["usa_factory", "usa_power_plant"],
+      "startingBuilding": "usa_factory",
+      "startingUnits": ["usa_power_plant"],
+      "startMoney": 3000
+    },
+
+    // Same roster, different opening: no power plant, more cash. Brownout territory —
+    // the factory draws -5 and nothing supplies it, so production halts until one is built.
+    "usa_rush": {
+      "extends": "usa",
+      "add": ["usa_factory", "usa_power_plant"],
+      "startingBuilding": "usa_factory",
+      "startMoney": 5000
+    }
+  }
+}

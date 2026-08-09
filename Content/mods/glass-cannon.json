@@ -1,0 +1,36 @@
+{
+  // A mod: a patch over content/game.json, not a fork of it.
+  //
+  //   rts duel --a crusader --b technical --mod content/mods/glass-cannon.json
+  //   rts diff --head-mod content/mods/glass-cannon.json
+  //
+  // Everything absent here is inherited. This file is 30 lines; the pack it patches is
+  // 141. Zero Hour's equivalent — one general differing from its parent — ships 17,000
+  // to 22,000 lines to express the same order of intent, because its format cannot
+  // express derivation. That 700x is the whole argument for layered packs.
+  "meta": { "name": "glass-cannon", "version": 1 },
+
+  // Per-CELL matrix merge: this retunes exactly one matchup and inherits the other 8.
+  // Cannon was 0.25 vs infantry; making it 0.6 should visibly weaken infantry screens.
+  "damageVsArmor": {
+    "cannon": { "infantry": 0.6 }
+  },
+
+  // Whole-entry replace: restating a weapon replaces that weapon, nothing else.
+  "weapons": {
+    "crusader_cannon": { "damageType": "cannon", "damage": 85, "range": 9.0, "cooldownTicks": 36, "spread": 0.1 }
+  },
+
+  // Whole-entry replace: the Crusader gets glassier — more punch, far less armour.
+  "units": {
+    "crusader": {
+      "faction": "usa", "cost": 900, "buildTicks": 450, "prerequisites": ["war_factory"],
+      "components": {
+        "Health": { "max": 300, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.2 },
+        "WeaponBearer": { "weapon": "crusader_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    }
+  }
+}

@@ -4,8 +4,13 @@ namespace RtsSkeleton.Runtime;
 
 public enum CommandKind
 {
-    Spawn = 1,      // A = proto index, B = team, X/Y = position
-    RallyTeam = 2,  // A = team, X/Y = rally point (attack-move destination)
+    Spawn = 1,        // A = proto index, B = team, X/Y = position
+    RallyTeam = 2,    // A = team, X/Y = rally point (attack-move destination; also the
+                      //   default rally applied to units the team produces afterwards)
+    SetupEconomy = 3, // A = team, B = supply pool, X = starting money, Y = income per tick
+    SetSpawn = 4,     // A = team, X/Y = where produced units enter the world
+    ProduceUnit = 5,  // A = team, B = proto index → tail of the team's unit queue
+    ResearchTech = 6, // A = team, B = tech index → tail of the team's research queue
 }
 
 /// <summary>

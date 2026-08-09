@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+# e2e.sh — build, run the full verification gate, then the balance demos.
+# Base-unit state hashes are pinned below: content may grow (new units, new
+# factions) without ever perturbing an existing replay, and this catches it if
+# layering ever renumbers a prototype.
+# Every gate verb exits non-zero on failure, so set -e makes this a real test.
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
+export PATH="$DOTNET_ROOT:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+echo "== build =="
+dotnet build -c Release --nologo -v quiet
+echo "build: OK"
+
+rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
+
+echo
+echo "== gate 1/4: content lint =="
+rts lint
+
+echo
+echo "== gate 2/4: replay determinism =="
+rts replay --a crusader --b battlemaster --seed 7
+
+echo
+echo "== gate 3/4: duel smoke =="
+rts duel --a crusader --b technical --n 20 --seed 42
+
+echo
+echo "== gate 4/4: econ determinism =="
+rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
+
+echo
+echo "== gate 5/12: faction layering resolves =="
+rts faction
+
+echo
+echo "== demo: set-piece counter matrix (base units + general variants) =="
+rts matrix --n 100 --seed 1
+
+echo
+echo "== demo: macro reversal (battlemaster wins the trickle war it loses set-piece) =="
+rts econ --a "war_factory,battlemaster*" --b "war_factory,crusader*" --n 50 --seed 42
+
+echo
+echo "== demo: greedy opening punished by rush =="
+rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
+
+echo
+echo "== gate 6/12: layered packs + diff =="
+# A mod is a patch over a base pack. Three properties are asserted:
+#   1. a stack lints and resolves (the mod does not need to restate the base)
+#   2. `rts diff` names exactly what changed, by category
+#   3. the base pack is UNAFFECTED — loading a mod must not mutate base results
+rts lint --mod content/mods/glass-cannon.json | tail -1
+changes=$(rts diff --head-mod content/mods/glass-cannon.json --json \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['changes'])")
+[ "$changes" = "4" ] || { echo "  DIFF DRIFT: expected 4 changes, got $changes"; exit 1; }
+echo "  diff: 4 changes detected (2 unit stats, 1 weapon, 1 matrix cell)"
+
+base_only=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
+            | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+with_mod=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
+           --mod content/mods/glass-cannon.json | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+[ "$base_only" != "$with_mod" ] || { echo "  MOD HAD NO EFFECT: $base_only"; exit 1; }
+echo "  mod changes the sim: $base_only -> $with_mod"
+
+base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
+             | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+[ "$base_again" = "$base_only" ] || { echo "  BASE CONTAMINATED: $base_again != $base_only"; exit 1; }
+echo "  base unaffected by the mod: $base_again"
+
+echo
+echo "== gate 7/12: structures are economic targets =="
+# A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
+# — ZH's model exactly. Three properties:
+#   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
+#   2. a team that can never produce again is defeated, not left alive until the tick cap
+#   3. all of it is opt-in by content, so packs without structures are bit-identical
+rts lint --mod content/mods/structures.json | tail -1
+
+# B declares no factory at all: instantly out, because money cannot buy what has no producer.
+nofac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "crusader*" \
+        --n 3 --seed 42 --maxsec 300 --mod content/mods/structures.json --json \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['WinsA'], d['Draws'])")
+[ "$nofac" = "3 0" ] || { echo "  FACTORY GATE NOT DECISIVE: winsA/draws = $nofac"; exit 1; }
+echo "  no factory => defeated (A 3/3)"
+
+# With a factory, production flows and the tank advantage decides it.
+fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,usa_factory" \
+      --n 3 --seed 42 --maxsec 600 --mod content/mods/structures.json --json \
+      | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['WinsA'])")
+[ "$fac" = "3" ] || { echo "  PRODUCTION BLOCKED WITH A FACTORY PRESENT: winsA = $fac"; exit 1; }
+echo "  factory present => units build and win (A 3/3)"
+
+echo
+echo "== gate 8/12: flags and conditional variants =="
+# ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
+# and a condition-keyed weapon/armor set is selected. Four properties:
+#   1. researching a tech grants a same-named team flag
+#   2. the flag activates a variant that swaps weapon AND armor class
+#   3. the variant is what wins the game — ablate it and the same pack loses
+#   4. packs that use no flags are BIT-IDENTICAL (flag state is hashed only when it can vary)
+rts lint --mod content/mods/upgrades.json | tail -1
+
+WITH=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,crusader*" \
+       --n 12 --seed 42 --mod content/mods/upgrades.json --json \
+       | python3 -c "import sys,json; print(json.load(sys.stdin)['WinsA'])")
+[ "$WITH" = "9" ] || { echo "  VARIANT DRIFT: expected winsA=9, got $WITH"; exit 1; }
+
+# Ablation: same pack, variant deleted. If the loadout system were inert this would match.
+ABL=$(mktemp -d); trap 'rm -rf "$ABL"' EXIT
+python3 - "$ABL" <<'PY'
+import json, re, sys
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/upgrades.json').read(), flags=re.M))
+d['units']['crusader'].pop('variants')
+d['meta']['name'] = 'upgrades-ablated'
+open(f"{sys.argv[1]}/novariant.json", "w").write(json.dumps(d))
+PY
+WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,crusader*" \
+          --n 12 --seed 42 --mod "$ABL/novariant.json" --json \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['WinsA'])")
+[ "$WITHOUT" = "0" ] || { echo "  ABLATION FAILED: variant removed but winsA=$WITHOUT (expected 0)"; exit 1; }
+echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
+
+echo
+echo "== gate 9/12: event rules {on, when, do} =="
+# Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
+# response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
+# Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
+# own cannot distinguish "the rule fired" from "the unit was good anyway".
+rts lint --mod content/mods/deathrules.json | sed -n '3p'
+
+ABR=$(mktemp -d); trap 'rm -rf "$ABR"' EXIT
+python3 - "$ABR" <<'PY'
+import json, re, sys
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/deathrules.json').read(), flags=re.M))
+for u in d['units'].values(): u.pop('rules', None)
+d['meta']['name'] = 'deathrules-ablated'
+open(f"{sys.argv[1]}/norules.json", "w").write(json.dumps(d))
+PY
+
+# spawn: a tank that leaves two fighting wrecks wins a matchup it otherwise loses.
+sp_on=$(rts duel --a scrap_tank --b crusader --n 40 --seed 42 --mod content/mods/deathrules.json --json \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['WinsA'])")
+sp_off=$(rts duel --a scrap_tank --b crusader --n 40 --seed 42 --mod "$ABR/norules.json" --json \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['WinsA'])")
+[ "$sp_on" -gt "$sp_off" ] || { echo "  SPAWN RULE INERT: $sp_on vs $sp_off"; exit 1; }
+echo "  spawn: $sp_on/40 wins with wrecks, $sp_off/40 without"
+
+# grantMoney: salvage shows up as end-of-run net worth, and ONLY in an economy.
+gm_on=$(rts econ --a "salvager*" --b "war_factory,crusader*" --n 8 --seed 42 --maxsec 300 \
+        --mod content/mods/deathrules.json --json \
+        | python3 -c "import sys,json; print(int(json.load(sys.stdin)['avgNetWorthA']))")
+gm_off=$(rts econ --a "salvager*" --b "war_factory,crusader*" --n 8 --seed 42 --maxsec 300 \
+        --mod "$ABR/norules.json" --json \
+        | python3 -c "import sys,json; print(int(json.load(sys.stdin)['avgNetWorthA']))")
+[ "$gm_on" -gt "$gm_off" ] || { echo "  GRANTMONEY INERT: $gm_on vs $gm_off"; exit 1; }
+echo "  grantMoney: net worth $gm_on with salvage, $gm_off without"
+
+# The stall diagnostic must actually fire on the classic mistake: an order that names a unit
+# whose prerequisite it never satisfies. A silent stall makes every result above it a lie.
+stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
+        --mod content/mods/deathrules.json | grep -c "STALLED B: 'crusader' needs tech 'war_factory'")
+[ "$stall" = "1" ] || { echo "  STALL DIAGNOSTIC MISSING"; exit 1; }
+echo "  stalled queues are reported, not silent"
+
+echo
+echo "== gate 10/12: factions are startable, not just rosters =="
+# A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
+# skirmish` starts both sides from their own definitions rather than from a build order
+# someone typed. That is the difference the product goal actually needs.
+#
+# usa_rush is usa_base minus the power plant, plus 2000 cash. The factory draws -5, nothing
+# supplies it, production browns out: more money loses to a working grid, every time.
+rush=$(rts skirmish --a usa_base --b usa_rush --n 12 --seed 42 --maxsec 400 \
+       --mod content/mods/structures.json --json \
+       | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['WinsA'], d['WinsB'])")
+[ "$rush" = "12 0" ] || { echo "  SKIRMISH DRIFT: winsA/winsB = $rush"; exit 1; }
+echo "  power grid beats extra cash: usa_base 12/12 over usa_rush"
+
+# And the loser's stall is NAMED. A silent stall would make the result unreadable.
+why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
+      --mod content/mods/structures.json | grep -c "STALLED B:")
+[ "$why" = "1" ] || { echo "  SKIRMISH STALL NOT REPORTED"; exit 1; }
+echo "  the loser's stall is reported, not silent"
+
+echo
+echo "== gate 11/12: compile to a Zero Hour mod =="
+# The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
+# end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
+# subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
+OUT=$(mktemp -d); trap 'rm -rf "$OUT"' EXIT
+rts compile --target zh --out "$OUT" | grep -E "^compiled|objects"
+
+for f in Armor Weapon Locomotor Object CommandButton CommandSet PlayerTemplate; do
+  [ -f "$OUT/Data/INI/$f/skeleton_pack.ini" ] || { echo "  MISSING EMIT: $f"; exit 1; }
+done
+echo "  7 content types emitted into the additive Data/INI/<type>/ scan"
+
+# Emitting Data/INI/Weapon.ini instead of Weapon/<pack>.ini would replace retail's 363
+# weapons with our 5 and break the base game. Assert we never regress to that.
+[ ! -f "$OUT/Data/INI/Weapon.ini" ] || { echo "  CLOBBERS RETAIL: emitted Weapon.ini"; exit 1; }
+[ ! -f "$OUT/Data/Generals.str" ] || { echo "  CLOBBERS RETAIL: emitted Generals.str without --with-strings"; exit 1; }
+echo "  retail files untouched (no Weapon.ini, no Generals.str)"
+
+# Their enums are closed and parsed with parseIndexList, so a plausible-sounding value is
+# a hard load error. Both of these were invented once and only the round trip caught them.
+grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
+  || { echo "  BAD ENUM: ZAxisBehavior is not NO_Z_MOTIVE_FORCE"; exit 1; }
+! grep -qE "NO_Z_MOTION|CANCELABLE" "$OUT/Data/INI"/*/skeleton_pack.ini \
+  || { echo "  INVENTED ENUM VALUE regressed into the emitter"; exit 1; }
+echo "  emitted enum values are ones retail actually uses"
+
+echo
+echo "== gate 12/12: target-zh lint — caps, round-trip, divergence =="
+# Three questions that fail differently: their hard caps (mod will not load), round-trip
+# fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
+# plays, and behaves differently from the numbers you tuned against).
+rts lint --target zh | grep -E "round-trip checked|cap ·"
+
+# ROUND-TRIP must be clean for every pack. We emit ms and their loader ceils back to 30 Hz
+# frames, so the conversion FLOORS: rounding 8 ticks to 267ms ceils back to 9 — a silent
+# 12.5% rate-of-fire loss, and precisely the bug that makes their DragonTank read 250 DPS
+# and deliver 150. This caught it; keep it catching it.
+for m in "" content/mods/artillery.json content/mods/structures.json content/mods/upgrades.json; do
+  arg=""; [ -n "$m" ] && arg="--mod $m"
+  trips=$(rts lint --target zh $arg | grep -c "^TRIP:" || true)
+  [ "$trips" = "0" ] || { echo "  ROUND-TRIP LOSS in '${m:-base}': $trips value(s) change meaning on compile"; exit 1; }
+done
+echo "  every duration survives ticks -> ms -> ceil() back to the same tick"
+
+# Death rules COMPILE now: damageInRadius -> FireWeaponWhenDeadBehavior (203 retail uses),
+# spawn -> ObjectCreationList + CreateObjectDie (566). Verified on the engine: 8 files
+# parsed, 0 exceptions, 42/42 subsystems, main loop entered.
+DOUT=$(mktemp -d); trap 'rm -rf "$DOUT"' EXIT
+rts compile --target zh --out "$DOUT" --mod content/mods/deathrules.json >/dev/null
+grep -q "FireWeaponWhenDeadBehavior" "$DOUT/Data/INI/Object/deathrules.ini" \
+  || { echo "  damageInRadius did not become a death weapon module"; exit 1; }
+grep -q "CreateObjectDie" "$DOUT/Data/INI/Object/deathrules.ini" \
+  || { echo "  spawn did not become a CreateObjectDie"; exit 1; }
+[ -f "$DOUT/Data/INI/ObjectCreationList/deathrules.ini" ] \
+  || { echo "  no ObjectCreationList emitted for spawn effects"; exit 1; }
+# SpreadFormation is a BOOL and the distance goes in MinDistanceAFormation. Emitting the
+# radius into the bool is a type error their parser rejects — it did, once.
+grep -q "SpreadFormation = Yes" "$DOUT/Data/INI/ObjectCreationList/deathrules.ini" \
+  || { echo "  SpreadFormation regressed to a non-boolean"; exit 1; }
+echo "  death rules compile to real modules (FireWeaponWhenDead, CreateObjectDie + OCL)"
+
+# What still cannot map must be REPORTED, never silent. grantMoney has no faithful
+# equivalent: their nearest mechanic pays the KILLER, not the owner.
+dv=$(rts lint --target zh --mod content/mods/deathrules.json | grep -c "grantMoney effect(s) are NOT emitted" || true)
+[ "$dv" = "1" ] || { echo "  DIVERGENCE NOT REPORTED: grantMoney vanishes without warning"; exit 1; }
+echo "  what still cannot map is named, not silently lost"
+
+# Conditional variants COMPILE now. Their shape is ours: a named boolean with a cost, a
+# condition-keyed set, and a parameterless module that flips the bit (173 ArmorUpgrade /
+# 117 WeaponSetUpgrade / 52 MaxHealthUpgrade in retail). Verified on the engine: 42/42
+# subsystems, Data/INI/Upgrade/upgrades.ini parsed, main loop entered.
+UOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT"' EXIT
+rts compile --target zh --out "$UOUT" --mod content/mods/upgrades.json >/dev/null
+[ -f "$UOUT/Data/INI/Upgrade/upgrades.ini" ] \
+  || { echo "  no Upgrade block emitted for the flag gating a variant"; exit 1; }
+grep -q "Conditions = PLAYER_UPGRADE" "$UOUT/Data/INI/Object/upgrades.ini" \
+  || { echo "  variant did not become a condition-keyed set"; exit 1; }
+grep -q "WeaponSetUpgrade" "$UOUT/Data/INI/Object/upgrades.ini" \
+  || { echo "  nothing flips the upgrade bit; the second WeaponSet is dead content"; exit 1; }
+# An upgrade with no button cannot be bought, and an unbought upgrade never fires — the
+# unit would ship with its base loadout while the harness measured the upgraded one.
+grep -q "ButtonBorderType = UPGRADE" "$UOUT/Data/INI/CommandButton/upgrades.ini" \
+  || { echo "  upgrade is unpurchasable: no PLAYER_UPGRADE command button"; exit 1; }
+# AddMaxHealth is ABSOLUTE where ours is a factor. 480 base x (1.10 - 1) = 48.
+grep -q "AddMaxHealth = 48" "$UOUT/Data/INI/Object/upgrades.ini" \
+  || { echo "  variant MaxHp factor did not convert to an absolute AddMaxHealth"; exit 1; }
+echo "  variants compile to Upgrade + condition sets + *Upgrade modules"
+
+# The ONE-BIT limit is theirs, not ours: an object has a single PLAYER_UPGRADE condition,
+# so a second variant has nowhere to live. Retail needed 268 ConflictsWith lines because
+# of it. A pack that hits it must be told, not quietly shipped half-applied.
+python3 - <<'PY' > "$UOUT/twovar.json"
+import json, re
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/upgrades.json').read(), flags=re.M))
+d['meta']['name'] = 'twovar'
+v = d['units']['crusader']['variants']
+v.append({"whenFlags": ["war_factory"], "weapon": "crusader_cannon"})
+print(json.dumps(d))
+PY
+tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first compiles" || true)
+[ "$tv" = "1" ] || { echo "  ONE-BIT LIMIT NOT REPORTED: extra variants silently never fire"; exit 1; }
+echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
+
+echo
+echo "== regression: pinned replay hashes =="
+# Re-pinned twice, both deliberate, both recorded:
+#   1. prototype identity moved from the dense table index to a name-derived StableId
+#      (docs/ZERO-HOUR-ANATOMY.md §8). Previous pins: df8b977f31362dda / 4a8a45c49b0fffce.
+#   2. UnitState gained ClipRemaining (burst-fire weapons). Every sim-state field must
+#      enter the hash in a fixed position, so ADDING one necessarily moves every hash —
+#      that is the invariant working, not a regression. Previous pins:
+#      facc617cce5e8ce6 / 2e0ed7322422be60 / 736b5a6718e4a434.
+# Pins from different eras are not comparable and must never be "restored".
+#
+# NOTE these pins alone are a weak guard: they only observe units ALIVE in the final
+# state, so they are blind to renumbering of anything that dies. That is exactly how a
+# real renumbering bug survived here undetected. The generative check below is the
+# guard that actually holds; these pins just catch unintended sim changes.
+for pair in "7a3e280081f484c6:duel --a crusader --b technical --n 1 --seed 42 --json" \
+            "cc503fc148421b98:duel --a technical --b ranger --n 1 --seed 42 --json" \
+            "c1fcdb0cd48530d8:econ --a war_factory,battlemaster* --b war_factory,crusader* --n 1 --seed 42 --json"; do
+  want=${pair%%:*}; cmd=${pair#*:}
+  got=$(rts $cmd | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+  if [ "$got" != "$want" ]; then echo "  REPLAY DRIFT: got $got want $want ($cmd)"; exit 1; fi
+  echo "  stable: $got"
+done
+
+echo
+echo "== regression: content growth must not renumber an existing prototype =="
+# Generative, not pinned. Inject a unit that never spawns, joins no roster and is
+# referenced by nothing, under names that sort BEFORE and AFTER every existing unit.
+# Under ordinal identity the "aaa_" variant shifts every later prototype and rewrites
+# replays; under name-derived identity nothing moves. Every matchup must agree across
+# all three packs — including ones where the shifted unit SURVIVES, which is the case
+# the pinned hashes above cannot see.
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+python3 - "$TMP" <<'PY'
+import sys
+tmp = sys.argv[1]
+src = open('content/game.json').read()
+block = '''    "%s": {
+      "faction": "usa", "cost": 300, "buildTicks": 150, "prerequisites": [],
+      "components": {
+        "Health": { "max": 120, "armorClass": "infantry" },
+        "Mobile": { "speed": 5.0 },
+        "WeaponBearer": { "weapon": "ranger_rifle" },
+        "VeterancyCarrier": { "track": "infantry_default" }
+      }
+    },
+'''
+for name in ("aaa_dummy", "zzz_dummy"):
+    open(f"{tmp}/{name}.json", "w").write(
+        src.replace('  "units": {\n', '  "units": {\n' + block % name, 1))
+PY
+
+fail=0
+for m in "crusader technical" "technical ranger" "battlemaster ranger" "ranger technical"; do
+  set -- $m
+  base=$(rts duel --a "$1" --b "$2" --n 1 --seed 42 --json | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+  for v in aaa_dummy zzz_dummy; do
+    got=$(rts duel --a "$1" --b "$2" --n 1 --seed 42 --json --content "$TMP/$v.json" \
+          | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+    if [ "$got" != "$base" ]; then
+      echo "  PROTOTYPE RENUMBERING: $1 vs $2 with $v -> $got, base $base"; fail=1
+    fi
+  done
+  echo "  $1 vs $2: identity-stable ($base)"
+done
+[ "$fail" -eq 0 ] || exit 1
+
+# --- presentation shell (optional; skipped when Godot isn't installed) ---------
+GODOT="${GODOT:-$HOME/Applications/Godot_mono.app/Contents/MacOS/Godot}"
+if [ -x "$GODOT" ]; then
+  echo
+  echo "== shell: build =="
+  (cd godot && dotnet build --nologo -v quiet)
+  echo "shell build: OK"
+
+  echo
+  echo "== shell: sim equivalence =="
+  # The shell must reach the same final state hash as the harness from the same
+  # (contentHash, seed, command log) — proof that presentation cannot perturb
+  # the sim. Compared against `rts <verb> --json` for the same scenarios.
+  shell_out=$("$GODOT" --headless --path godot -- --verify 2>/dev/null | grep '^scenario=')
+  echo "$shell_out"
+
+  duel_hash=$(rts duel --a crusader --b technical --n 1 --seed 42 --json | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+  econ_hash=$(rts econ --a "war_factory,battlemaster*" --b "war_factory,crusader*" --n 1 --seed 42 --json | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+
+  for pair in "SetPieceDuel:$duel_hash" "MacroBattle:$econ_hash"; do
+    name=${pair%%:*}; want=${pair#*:}
+    got=$(echo "$shell_out" | sed -n "s/.*scenario=$name .*finalHash=\([0-9a-f]*\).*/\1/p")
+    if [ "$got" != "$want" ]; then
+      echo "  MISMATCH $name: shell=$got harness=$want"
+      exit 1
+    fi
+    echo "  $name: shell == harness ($got)"
+  done
+else
+  echo
+  echo "== shell: skipped (no Godot at $GODOT; set GODOT=/path/to/Godot) =="
+fi
+
+echo
+echo "E2E PASS"

@@ -23,10 +23,15 @@ public static class Program
         {
             return verb switch
             {
-                "lint" => Lint(content),
-                "duel" => Duel(args, content),
-                "matrix" => Matrix(args, content),
-                "replay" => Replay(args, content),
+                "lint" => Lint(args, Stack(args, content)),
+                "duel" => Duel(args, Stack(args, content)),
+                "matrix" => Matrix(args, Stack(args, content)),
+                "econ" => Econ(args, Stack(args, content)),
+                "faction" => Faction(args, Stack(args, content)),
+                "replay" => Replay(args, Stack(args, content)),
+                "skirmish" => Skirmish(args, Stack(args, content)),
+                "compile" => Compile(args, Stack(args, content)),
+                "diff" => Diff(args),
                 _ => Usage(),
             };
         }
@@ -43,10 +48,23 @@ public static class Program
             rts-skeleton — deterministic RTS sim core walking skeleton
 
             usage:
-              rts lint   [--content content/game.json]
+              rts lint   [--content content/game.json] [--target zh]
+                         --target zh also checks their caps, round-trip fidelity,
+                         and what silently diverges once compiled
               rts duel   --a <unit> --b <unit> [--budget 3600] [--n 200] [--seed 42] [--json]
               rts matrix [--budget 3600] [--n 100] [--seed 1] [--json]
+              rts econ   --a <order> --b <order> [--money 3000] [--income 50] [--pool 15000]
+                         [--n 50] [--seed 42] [--maxsec 600] [--hold-a] [--hold-b] [--json]
+              rts faction [--id <faction>] [--json]
+              rts skirmish --a <faction> --b <faction> [--money 3000] [--income 50]
+                         [--pool 15000] [--n 20] [--seed 42] [--maxsec 600] [--json]
               rts replay --a <unit> --b <unit> [--budget 3600] [--seed 7]
+              rts compile --target zh --out <dir> [--with-strings]
+                         emit additive Data/INI the Zero Hour engine will load
+
+            econ build orders are comma-separated unit/tech ids issued at tick 0;
+            'id*N' repeats N times, a trailing unit 'id*' repeats to resource cap.
+            example: --a "war_factory,crusader*" --b "technical*"
             """);
         return 1;
     }
@@ -60,9 +78,29 @@ public static class Program
 
     private static bool Flag(string[] args, string name) => args.Contains(name);
 
-    private static ContentDb LoadOrDie(string path, bool printReport)
+    /// <summary>All values of a repeatable option, in command-line order.</summary>
+    private static List<string> OptAll(string[] args, string name)
     {
-        var db = ContentDb.Load(path, out var errors, out var warnings);
+        var vals = new List<string>();
+        for (int i = 0; i < args.Length - 1; i++)
+            if (args[i] == name) vals.Add(args[i + 1]);
+        return vals;
+    }
+
+    /// <summary>
+    /// The pack stack: one --content base, then zero or more --mod layers in order.
+    /// A mod is a patch over the base, never a fork of it.
+    /// </summary>
+    private static List<string> Stack(string[] args, string content)
+    {
+        var paths = new List<string> { content };
+        paths.AddRange(OptAll(args, "--mod"));
+        return paths;
+    }
+
+    private static ContentDb LoadOrDie(IReadOnlyList<string> paths, bool printReport)
+    {
+        var db = ContentDb.Load(paths, out var errors, out var warnings);
         if (printReport)
         {
             foreach (var w in warnings) Console.WriteLine($"warn:  {w}");
@@ -73,18 +111,177 @@ public static class Program
         return db;
     }
 
-    private static int Lint(string contentPath)
+    /// <summary>
+    /// rts diff --base &lt;pack&gt; [--base-mod ...] --head &lt;pack&gt; [--head-mod ...]
+    /// Structural delta between two resolved stacks. The thing ZH's iniCRC cannot do.
+    /// </summary>
+    /// <summary>
+    /// Faction vs faction, started from the factions' own definitions rather than from a
+    /// build order someone typed. This is the verb the product goal actually needs: author
+    /// a faction, measure it, without also having to author an opening for it.
+    /// </summary>
+    private static int Skirmish(string[] args, IReadOnlyList<string> contentPath)
+    {
+        var db = LoadOrDie(contentPath, printReport: false);
+        string a = Opt(args, "--a", ""), b = Opt(args, "--b", "");
+        if (a.Length == 0 || b.Length == 0) return Usage();
+        int money = int.Parse(Opt(args, "--money", "3000"));
+        int income = int.Parse(Opt(args, "--income", "50"));
+        int pool = int.Parse(Opt(args, "--pool", "15000"));
+        int n = int.Parse(Opt(args, "--n", "20"));
+        ulong seed = ulong.Parse(Opt(args, "--seed", "42"));
+        int maxTicks = int.Parse(Opt(args, "--maxsec", "600")) * ContentDb.TicksPerSecond;
+
+        var s = Scenarios.RunSkirmishSeries(db, a, b, money, income, pool, n, seed, maxTicks);
+
+        if (Flag(args, "--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                contentHash = $"{db.ContentHash:x16}",
+                factionA = a, factionB = b,
+                s.Runs, s.WinsA, s.WinsB, s.Draws,
+                winRateA = (double)s.WinsA / s.Runs,
+                avgSeconds = s.AvgTicks / ContentDb.TicksPerSecond,
+                s.AvgNetWorthA, s.AvgNetWorthB, s.AvgAliveA, s.AvgAliveB,
+                stallA = s.StallA, stallB = s.StallB,
+                determinismOk = s.DeterminismOk,
+                lastFinalHash = $"{s.LastFinalHash:x16}",
+            }, JsonOpts));
+            return 0;
+        }
+
+        Console.WriteLine($"skirmish {a} vs {b}  n={n}  seed={seed}  contentHash={db.ContentHash:x16}");
+        Console.WriteLine($"  {a}: {s.WinsA} wins ({100.0 * s.WinsA / s.Runs:0.#}%)   " +
+                          $"{b}: {s.WinsB} wins ({100.0 * s.WinsB / s.Runs:0.#}%)   draws: {s.Draws}");
+        Console.WriteLine($"  avg length: {s.AvgTicks / ContentDb.TicksPerSecond:0.#}s   " +
+                          $"alive: A={s.AvgAliveA:0.#} B={s.AvgAliveB:0.#}");
+        if (s.StallA is not null) Console.WriteLine($"  STALLED A: {s.StallA}");
+        if (s.StallB is not null) Console.WriteLine($"  STALLED B: {s.StallB}");
+        Console.WriteLine($"  determinism: {(s.DeterminismOk ? "OK" : "FAILED")}");
+        return 0;
+    }
+
+    /// <summary>
+    /// rts compile --target zh --out &lt;dir&gt;
+    ///
+    /// Turn a measured pack into a Zero Hour mod. Output is additive Data/INI that layers
+    /// over the player's own install — the distribution model every ZH conversion uses, and
+    /// the one that ships no EA content at all.
+    /// </summary>
+    private static int Compile(string[] args, IReadOnlyList<string> contentPath)
+    {
+        string target = Opt(args, "--target", "zh");
+        if (target != "zh") { Console.Error.WriteLine($"unknown target '{target}' (expected: zh)"); return 2; }
+
+        var db = LoadOrDie(contentPath, printReport: false);
+        var zh = ContentDb.LoadZhTarget(contentPath);
+        string outRoot = Opt(args, "--out", "build/zh-mod");
+
+        var r = ZhCompiler.Compile(db, zh, outRoot, Flag(args, "--with-strings"));
+
+        foreach (var w in r.Warnings) Console.WriteLine($"warn:  {w}");
+        foreach (var e in r.Errors) Console.WriteLine($"ERROR: {e}");
+        if (r.Errors.Count > 0)
+        {
+            Console.WriteLine($"compile: {r.Errors.Count} error(s); the mod would not load");
+            return 1;
+        }
+
+        Console.WriteLine($"compiled '{db.PackName}' contentHash={db.ContentHash:x16} -> {outRoot}");
+        Console.WriteLine($"  {r.Objects} objects · {r.Weapons} weapons · {r.Armors} armors · " +
+                          $"{r.Locomotors} locomotors · {r.Buttons} buttons · {r.Sets} command sets · " +
+                          $"{r.Templates} factions");
+        foreach (var f in r.Files) Console.WriteLine($"  {Path.GetRelativePath(outRoot, f)}");
+        Console.WriteLine();
+        Console.WriteLine("install:  rsync -a " + outRoot + "/ ~/GeneralsX/GeneralsZH/");
+        Console.WriteLine("play:     cd ~/GeneralsX/GeneralsZH && ./run.sh -win");
+        return 0;
+    }
+
+    private static int Diff(string[] args)
+    {
+        var basePaths = new List<string> { Opt(args, "--base", "content/game.json") };
+        basePaths.AddRange(OptAll(args, "--base-mod"));
+        var headPaths = new List<string> { Opt(args, "--head", "content/game.json") };
+        headPaths.AddRange(OptAll(args, "--head-mod"));
+
+        var b = LoadOrDie(basePaths, printReport: false);
+        var h = LoadOrDie(headPaths, printReport: false);
+        var r = PackDiff.Compare(b, h);
+
+        var byKind = r.Entries.GroupBy(e => e.Kind)
+                              .OrderByDescending(g => g.Count())
+                              .ToList();
+
+        if (Flag(args, "--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                baseHash = $"{r.BaseHash:x16}",
+                headHash = $"{r.HeadHash:x16}",
+                changes = r.Entries.Count,
+                identicalUnits = r.IdenticalUnits,
+                comparedUnits = r.TotalUnits,
+                duplicationRatio = r.DuplicationRatio,
+                taxonomy = byKind.ToDictionary(g => g.Key.ToString(), g => g.Count()),
+                entries = r.Entries.Select(e => new { kind = e.Kind.ToString(), e.Subject, e.Detail }),
+            }, JsonOpts));
+            return 0;
+        }
+
+        Console.WriteLine($"diff  base '{r.BaseName}' {r.BaseHash:x16}  ->  head '{r.HeadName}' {r.HeadHash:x16}");
+        if (r.Entries.Count == 0)
+        {
+            Console.WriteLine("  no differences — the stacks resolve identically");
+            return 0;
+        }
+        Console.WriteLine($"  {r.Entries.Count} change(s) across {byKind.Count} categor(y/ies)");
+        foreach (var g in byKind)
+        {
+            Console.WriteLine($"  {g.Key} ({g.Count()})");
+            foreach (var e in g.Take(12))
+                Console.WriteLine($"     {e.Subject}{(e.Detail.Length > 0 ? ": " + e.Detail : "")}");
+            if (g.Count() > 12) Console.WriteLine($"     … {g.Count() - 12} more");
+        }
+        Console.WriteLine($"  duplication: {r.IdenticalUnits}/{r.TotalUnits} shared prototypes unchanged " +
+                          $"({100.0 * r.DuplicationRatio:0.#}%)");
+        return 0;
+    }
+
+    private static int Lint(string[] args, IReadOnlyList<string> contentPath)
     {
         var db = ContentDb.Load(contentPath, out var errors, out var warnings);
         Console.WriteLine($"pack '{db.PackName}'  contentHash={db.ContentHash:x16}");
         Console.WriteLine($"units={db.Units.Length} weapons={db.Weapons.Length} damageTypes={db.DamageTypes.Length} armorClasses={db.ArmorClasses.Length} techNodes={db.TechNodes.Count}");
+        Console.WriteLine($"features: structures={db.HasFactories} power={db.HasPower} flags={db.HasFlags}({db.Flags.Count}) rules={db.HasRules}({db.Units.Sum(u => u.Rules.Length)})");
         foreach (var w in warnings) Console.WriteLine($"warn:  {w}");
         foreach (var e in errors) Console.WriteLine($"ERROR: {e}");
+        // --target zh asks a different question: not "is this pack coherent" but "will it
+        // survive compilation to their engine, and will it still mean what we measured".
+        if (Opt(args, "--target", "") == "zh")
+        {
+            var zr = ZhLint.Check(db, ContentDb.LoadZhTarget(contentPath));
+            Console.WriteLine();
+            Console.WriteLine($"target zh — {zr.Checked} value(s) round-trip checked");
+
+            foreach (var e in zr.CapErrors) Console.WriteLine($"CAP:   {e}");
+            foreach (var t in zr.RoundTrip) Console.WriteLine($"TRIP:  {t}");
+            foreach (var d in zr.Divergence) Console.WriteLine($"DIVERGE: {d}");
+
+            if (zr.CapErrors.Count == 0 && zr.RoundTrip.Count == 0 && zr.Divergence.Count == 0)
+                Console.WriteLine("  nothing lost in translation");
+            else
+                Console.WriteLine($"  {zr.CapErrors.Count} cap · {zr.RoundTrip.Count} round-trip · " +
+                                  $"{zr.Divergence.Count} divergence");
+            if (!zr.Ok) return 1;
+        }
+
         Console.WriteLine(errors.Count == 0 ? "lint: OK" : $"lint: {errors.Count} error(s)");
         return errors.Count == 0 ? 0 : 1;
     }
 
-    private static int Duel(string[] args, string contentPath)
+    private static int Duel(string[] args, IReadOnlyList<string> contentPath)
     {
         var db = LoadOrDie(contentPath, printReport: false);
         string a = Opt(args, "--a", "");
@@ -115,7 +312,7 @@ public static class Program
         return 0;
     }
 
-    private static int Matrix(string[] args, string contentPath)
+    private static int Matrix(string[] args, IReadOnlyList<string> contentPath)
     {
         var db = LoadOrDie(contentPath, printReport: false);
         int budget = int.Parse(Opt(args, "--budget", "3600"));
@@ -165,7 +362,101 @@ public static class Program
         return 0;
     }
 
-    private static int Replay(string[] args, string contentPath)
+    private static int Econ(string[] args, IReadOnlyList<string> contentPath)
+    {
+        var db = LoadOrDie(contentPath, printReport: false);
+        string a = Opt(args, "--a", "");
+        string b = Opt(args, "--b", "");
+        if (a.Length == 0 || b.Length == 0) return Usage();
+        int money = int.Parse(Opt(args, "--money", "3000"));
+        int income = int.Parse(Opt(args, "--income", "50"));
+        int pool = int.Parse(Opt(args, "--pool", "15000"));
+        int n = int.Parse(Opt(args, "--n", "50"));
+        ulong seed = ulong.Parse(Opt(args, "--seed", "42"));
+        int maxsec = int.Parse(Opt(args, "--maxsec", "600"));
+        bool holdA = Flag(args, "--hold-a");
+        bool holdB = Flag(args, "--hold-b");
+
+        var s = Scenarios.RunEconSeries(db, a, b, money, income, pool, holdA, holdB, n, seed,
+            maxsec * ContentDb.TicksPerSecond);
+
+        if (Flag(args, "--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                contentHash = $"{db.ContentHash:x16}",
+                orderA = s.OrderA, orderB = s.OrderB,
+                startingMoney = money, incomePerSecond = income, supplyPool = pool,
+                holdA, holdB, s.Runs, s.WinsA, s.WinsB, s.Draws,
+                winRateA = (double)s.WinsA / s.Runs,
+                avgSeconds = s.AvgTicks / ContentDb.TicksPerSecond,
+                avgNetWorthA = s.AvgNetWorthA, avgNetWorthB = s.AvgNetWorthB,
+                determinismOk = s.DeterminismOk,
+                lastFinalHash = $"{s.LastFinalHash:x16}",
+            }, JsonOpts));
+            return s.DeterminismOk ? 0 : 1;
+        }
+
+        Console.WriteLine($"econ  money={money} income={income}/s pool={pool}  n={n}  seed={seed}  maxsec={maxsec}  contentHash={db.ContentHash:x16}");
+        Console.WriteLine($"  A: {s.OrderA}{(holdA ? "  (hold)" : "")}");
+        Console.WriteLine($"  B: {s.OrderB}{(holdB ? "  (hold)" : "")}");
+        Console.WriteLine($"  A: {s.WinsA} wins ({100.0 * s.WinsA / s.Runs:0.#}%)   B: {s.WinsB} wins ({100.0 * s.WinsB / s.Runs:0.#}%)   draws: {s.Draws}");
+        Console.WriteLine($"  avg battle length: {s.AvgTicks / ContentDb.TicksPerSecond:0.#}s   avg end net worth: A={s.AvgNetWorthA:0} B={s.AvgNetWorthB:0}   alive: A={s.AvgAliveA:0.#} B={s.AvgAliveB:0.#}");
+        if (s.StallA is not null) Console.WriteLine($"  STALLED A: {s.StallA}");
+        if (s.StallB is not null) Console.WriteLine($"  STALLED B: {s.StallB}");
+        Console.WriteLine(s.DeterminismOk
+            ? "  determinism: OK (base seed double-run bit-identical)"
+            : "  DETERMINISM FAILED");
+        return s.DeterminismOk ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Faction rosters and, for a general, the diff against its parent. This is the
+    /// review surface for generated content: what did this faction actually change?
+    /// </summary>
+    private static int Faction(string[] args, IReadOnlyList<string> contentPath)
+    {
+        var db = LoadOrDie(contentPath, printReport: false);
+        string id = Opt(args, "--id", "");
+
+        if (Flag(args, "--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                contentHash = $"{db.ContentHash:x16}",
+                factions = db.FactionOrder
+                    .Where(f => id.Length == 0 || f == id)
+                    .Select(f => db.Factions[f])
+                    .Select(f => new
+                    {
+                        f.Id, f.Parent,
+                        roster = f.RosterIds.Zip(f.OwnUnitIdx)
+                            .Select(p => new { rosterId = p.First, proto = db.Units[p.Second].Id, cost = db.Units[p.Second].Cost }),
+                        added = f.AddedIds, removed = f.RemovedIds, patched = f.PatchedIds,
+                    }),
+            }, JsonOpts));
+            return 0;
+        }
+
+        Console.WriteLine($"factions  contentHash={db.ContentHash:x16}");
+        foreach (var fid in db.FactionOrder)
+        {
+            if (id.Length > 0 && fid != id) continue;
+            var f = db.Factions[fid];
+            string lineage = f.Parent is null ? "(base)" : $"extends {f.Parent}";
+            Console.WriteLine($"\n  {f.Id}  {lineage}   roster={f.RosterIds.Length}");
+            foreach (var (rosterId, idx) in f.RosterIds.Zip(f.OwnUnitIdx))
+            {
+                var u = db.Units[idx];
+                string mark = u.IsVariant ? " *patched" : (f.AddedIds.Contains(rosterId) ? " +added" : "");
+                Console.WriteLine($"      {rosterId,-16} -> {u.Id,-28} cost={u.Cost,5} build={u.BuildTicks,4}{mark}");
+            }
+            foreach (var r in f.RemovedIds) Console.WriteLine($"      {r,-16} -removed");
+        }
+        return 0;
+    }
+
+    private static int Replay(string[] args, IReadOnlyList<string> contentPath)
     {
         var db = LoadOrDie(contentPath, printReport: false);
         string a = Opt(args, "--a", "");

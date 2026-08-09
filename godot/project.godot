@@ -1,0 +1,25 @@
+; Godot 4 project file for the presentation shell.
+; The shell reads read-only snapshots from the headless sim and interpolates
+; them at frame rate; it never writes sim state except through commands.
+
+config_version=5
+
+[application]
+
+config/name="rts-shell"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+
+[dotnet]
+
+project/assembly_name="RtsShell"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+environment/defaults/default_clear_color=Color(0.086, 0.094, 0.11, 1)

@@ -9,14 +9,23 @@ namespace RtsSkeleton.Content;
 public sealed class ContentPackDto
 {
     public MetaDto Meta { get; set; } = new();
+    public DefaultsDto Defaults { get; set; } = new();
     public List<string> DamageTypes { get; set; } = new();
     public List<string> ArmorClasses { get; set; } = new();
+    /// <summary>
+    /// damageType -> armorClass -> multiplier. The reserved key "default" sets the value
+    /// for every armor class not named in that row. ZH does this positionally
+    /// (`Armor = DEFAULT n%` blast-fills all 38 slots and its POSITION in the block changes
+    /// the result — correct in all 38 shipping armor sets only because every author wrote
+    /// it first). A declared field cannot be order-sensitive.
+    /// </summary>
     public Dictionary<string, Dictionary<string, double>> DamageVsArmor { get; set; } = new();
     public Dictionary<string, WeaponDto> Weapons { get; set; } = new();
     public Dictionary<string, VeterancyTrackDto> VeterancyTracks { get; set; } = new();
     public TechDto Tech { get; set; } = new();
     public Dictionary<string, UnitDto> Units { get; set; } = new();
-    public Dictionary<string, List<string>> Factions { get; set; } = new();
+    public Dictionary<string, FactionDto> Factions { get; set; } = new();
+    public ZhTargetDto Zh { get; set; } = new();
     public LintConfigDto Lint { get; set; } = new();
 }
 
@@ -34,6 +43,34 @@ public sealed class WeaponDto
     public int CooldownTicks { get; set; }
     /// <summary>Symmetric damage spread, e.g. 0.1 => multiplier drawn from [0.9, 1.1).</summary>
     public double Spread { get; set; }
+
+    // --- ZH's Weapon vocabulary. All default to 0/absent, so a pack that ignores them
+    // --- behaves exactly as before and its hashes do not move.
+
+    /// <summary>
+    /// Splash. ZH's model is a TWO-BAND STEP FUNCTION with no falloff — inside
+    /// primaryDamageRadius you take primaryDamage, inside secondaryDamageRadius you take
+    /// secondaryDamage, beyond that nothing (Weapon.cpp:1462 is the whole thing). Simpler
+    /// and cheaper than a curve, and every balance number in the corpus assumes it, so
+    /// adding smooth falloff would silently invalidate all of them.
+    /// 0 means single-target.
+    /// </summary>
+    public double PrimaryDamageRadius { get; set; }
+    public double SecondaryDamage { get; set; }
+    public double SecondaryDamageRadius { get; set; }
+
+    /// <summary>
+    /// Burst fire. Shots available before a long reload; 0 means unlimited (fire every
+    /// cooldown forever). ZH pairs ClipSize with ClipReloadTime and it is what separates a
+    /// machine gun from an artillery piece at equal DPS-on-paper.
+    /// </summary>
+    public int ClipSize { get; set; }
+    public int ClipReloadTicks { get; set; }
+    /// <summary>Seconds; quantised with ceil() at load. Wins over ClipReloadTicks.</summary>
+    public double? ClipReloadSeconds { get; set; }
+
+    /// <summary>Cannot fire closer than this. Artillery's defining weakness. 0 = none.</summary>
+    public double MinimumAttackRange { get; set; }
 }
 
 public sealed class VeterancyTrackDto
@@ -63,14 +100,171 @@ public sealed class TechDto
 public sealed class TechNodeDto
 {
     public List<string> Requires { get; set; } = new();
+    /// <summary>Money deducted when research starts (queue head, funds available).</summary>
+    public int Cost { get; set; }
+    public int ResearchTicks { get; set; }
 }
 
 public sealed class UnitDto
 {
     public string Faction { get; set; } = "";
-    public int Cost { get; set; }
-    public List<string> Prerequisites { get; set; } = new();
+    public int? Cost { get; set; }
+    public int? BuildTicks { get; set; }
+    /// <summary>Seconds; quantised to ticks with ceil() at load. Wins over BuildTicks.</summary>
+    public double? BuildSeconds { get; set; }
+
+    // --- Zero Hour's Object vocabulary. Their schema is the target model, so these keep
+    // --- their names: content and knowledge then transfer in both directions.
+
+    /// <summary>
+    /// ZH's taxonomy flag set. In ZH this is a 120-bit mask and the single most load-bearing
+    /// field on an Object — it is what makes a thing a structure, a factory, a victory
+    /// condition or a valid target. We take the same idea with an open string set, closed by
+    /// lint rather than by a compiled enum, because a fixed enum is exactly the wall that
+    /// stops ZH modders adding a genuinely new category.
+    /// </summary>
+    public List<string>? KindOf { get; set; }
+
+    /// <summary>
+    /// PLACED_BY_PLAYER (a structure: built at a site) or APPEARS_AT_RALLY_POINT (a unit:
+    /// leaves a factory). This one enum is what distinguishes a building from a unit in ZH —
+    /// not a separate content type. We copy that: a structure IS a unit with a different
+    /// completion mode, speed 0 and role flags.
+    /// </summary>
+    public string? BuildCompletion { get; set; }
+
+    /// <summary>Net power. Negative consumes. ZH's whole power economy is this one integer.</summary>
+    public int? EnergyProduction { get; set; }
+
+    // RefundValue and VisionRange belong here and are deliberately ABSENT until a system
+    // consumes them. ZH is full of declared-but-dead schema — ProductionCostChange,
+    // ProductionVeterancyLevel and IntrinsicSciencePurchasePoints are parseable and used
+    // zero times in retail AND in the community patch — and nothing tells an author which
+    // fields are real. A field that does nothing is worse than a missing one: it invites
+    // content that silently has no effect.
+
+    /// <summary>Hard cap on live instances per team. ZH: MaxSimultaneousOfType.</summary>
+    public int? MaxSimultaneousOfType { get; set; }
+
+    /// <summary>Flags this unit carries from birth (e.g. "STEALTHED", "ELITE_TRAINING").</summary>
+    public List<string>? Flags { get; set; }
+
+    /// <summary>
+    /// Flag-keyed alternate loadouts, tested in order — FIRST MATCH WINS.
+    ///
+    /// This is ZH's real upgrade mechanism and it is not a modifier stack. `ArmorUpgrade`
+    /// (173 uses) and `WeaponSetUpgrade` (117) take ZERO parameters: they set one condition
+    /// bit, and a separate condition-keyed ArmorSet/WeaponSet is selected. Weighted by real
+    /// usage our (base+Σadd)×Πmul algebra covers 61 of 1,348 upgrade references — 4.5% —
+    /// while selectors cover armor 220 + weapon-swap 123 + menu-swap 122.
+    ///
+    /// The grammar stays deliberately tiny because the corpus is: 1,716 of ~2,300 real
+    /// condition clauses are literally `None` and 237 more are a single `PLAYER_UPGRADE`,
+    /// so a required-flag list covers over 85% of shipping usage. No expression language.
+    /// </summary>
+    public List<VariantDto>? Variants { get; set; }
+
+    /// <summary>
+    /// How many bodies one purchase yields. ZH ships this (QuantityModifier = Redguard 2,
+    /// SpawnNumber = 3 on the Stinger Site) and any DPS-per-cost figure is 2-3x wrong
+    /// without it. Defaults to 1.
+    /// </summary>
+    public int? UnitsPerPurchase { get; set; }
+    public List<string>? Prerequisites { get; set; }
+
+    /// <summary>
+    /// Event rules — our replacement for ZH's C++ behavior modules.
+    ///
+    /// ZH attaches ~217 compiled module classes to objects by name. That is its whole
+    /// extensibility story and its whole extensibility wall: every new behaviour is a
+    /// recompile, so every mod that needs one is dead on arrival. The canonical case is
+    /// eight separate classes (SabotageSupplyDropzone/SupplyCenter/Superweapon/PowerPlant/
+    /// MilitaryFactory/InternetCenter/FakeBuilding/CommandCenter) at three uses each,
+    /// differing only in which building type they hit.
+    ///
+    /// The corpus says that wall buys almost nothing: 7 modules cover 50% of all usage and
+    /// 27 cover 80%; 86.7% of non-draw instances are PURE DATA averaging 3.9 parameter
+    /// lines; and the eleven Die-family classes share one filter schema, differing only by
+    /// a single typed effect. So the vocabulary collapses to {on, when, do}.
+    ///
+    /// This is NOT a scripting language, deliberately: closed event enum, closed filter
+    /// grammar, closed effect enum with open parameters. No control flow, no variables, no
+    /// loops, fixed arity — statically lintable and bounded per tick.
+    /// </summary>
+    public List<RuleDto>? Rules { get; set; }
+
     public ComponentsDto Components { get; set; } = new();
+}
+
+/// <summary>One {on, when, do} rule.</summary>
+public sealed class RuleDto
+{
+    /// <summary>Closed event enum. Currently: "death".</summary>
+    public string On { get; set; } = "";
+    /// <summary>All must be set on the dying unit (or its team) for the rule to fire.</summary>
+    public List<string> WhenFlags { get; set; } = new();
+    public List<EffectDto> Do { get; set; } = new();
+}
+
+/// <summary>
+/// One effect. <see cref="Kind"/> is a closed enum; the other fields are its open
+/// parameters and which ones apply depends on the kind — the same shape as ZH's module
+/// parameter blocks, which is why 930 of its instances need no parameters at all.
+/// </summary>
+public sealed class EffectDto
+{
+    /// <summary>"spawn" | "grantMoney" | "damageInRadius" | "grantFlag".</summary>
+    public string Kind { get; set; } = "";
+
+    // spawn
+    public string? Proto { get; set; }
+    public int Count { get; set; } = 1;
+    /// <summary>Placement jitter radius, world units. Uses its own RNG stream.</summary>
+    public double Spread { get; set; }
+
+    // grantMoney (salvage, bounties)
+    public int Amount { get; set; }
+
+    // damageInRadius (death explosions); reuses a named weapon's damage + type
+    public string? Weapon { get; set; }
+    public double Radius { get; set; }
+
+    // grantFlag
+    public string? Flag { get; set; }
+    /// <summary>Grant to the whole team rather than to the spawned/affected unit.</summary>
+    public bool TeamScope { get; set; }
+}
+
+/// <summary>One conditional loadout. Every field is optional; absent means "inherit".</summary>
+public sealed class VariantDto
+{
+    /// <summary>All of these must be set (on the unit or its team) for this to apply.</summary>
+    public List<string> WhenFlags { get; set; } = new();
+    public string? Weapon { get; set; }
+    public string? ArmorClass { get; set; }
+    /// <summary>Applied on top of the base stats while this variant is active.</summary>
+    public List<ModifierDto> Modifiers { get; set; } = new();
+}
+
+/// <summary>
+/// Field defaults applied to every unit that does not state them.
+///
+/// ZH's Default/Object.ini DefaultThingTemplate is 130 lines serving all 1,949 objects —
+/// it is why 60 objects need no Draw block and 349 need no Body. Without an equivalent,
+/// every new schema field is a breaking change to every existing unit in every pack.
+/// Cheap to add now, impossible to retrofit once mods exist in the wild.
+/// </summary>
+public sealed class DefaultsDto
+{
+    public UnitDefaultsDto Unit { get; set; } = new();
+}
+
+public sealed class UnitDefaultsDto
+{
+    public int Cost { get; set; } = 0;
+    public int BuildTicks { get; set; } = 1;
+    public int UnitsPerPurchase { get; set; } = 1;
+    public List<string> Prerequisites { get; set; } = new();
 }
 
 /// <summary>
@@ -107,6 +301,98 @@ public sealed class WeaponBearerDto
 public sealed class VeterancyCarrierDto
 {
     public string Track { get; set; } = "";
+}
+
+/// <summary>
+/// A faction is either a base roster or a delta on another faction — the Zero Hour
+/// generals model, where each general is his parent faction plus a small patch.
+/// Layering is the customization surface: a generated faction is a diff a human can
+/// read, not a wholesale copy of the parent that silently drifts from it.
+/// </summary>
+public sealed class FactionDto
+{
+    /// <summary>Parent faction id. Null/empty means this is a base faction.</summary>
+    public string? Extends { get; set; }
+    /// <summary>Roster for a base faction. Ignored when <see cref="Extends"/> is set.</summary>
+    public List<string> Units { get; set; } = new();
+    /// <summary>Units added on top of the parent roster.</summary>
+    public List<string> Add { get; set; } = new();
+    /// <summary>Unit ids dropped from the parent roster.</summary>
+    public List<string> Remove { get; set; } = new();
+    /// <summary>Per-unit tweaks. Each produces a faction-local variant of the unit.</summary>
+    public Dictionary<string, UnitPatchDto> Modify { get; set; } = new();
+
+    // --- What makes a faction PLAYABLE rather than just a roster. ZH's PlayerTemplate
+    // --- carries exactly these, and without them a faction is a list nobody can start.
+
+    /// <summary>
+    /// The structure a player begins with. In retail this is uniformly a command center,
+    /// and the engine treats a template with no StartingBuilding as unplayable — it is the
+    /// lobby's "is this faction real" test. Inherited from the parent unless restated.
+    /// </summary>
+    public string? StartingBuilding { get; set; }
+
+    /// <summary>
+    /// Units in play at t=0. ZH declares StartingUnit0..9 as ten separate fields (a
+    /// #define'd cap of 10) and then never uses ANY of them in retail — every template
+    /// ships a dozer as the lone starting unit via StartingBuilding's own build queue.
+    /// A list has no cap and no dead fields.
+    /// </summary>
+    public List<string>? StartingUnits { get; set; }
+
+    /// <summary>
+    /// Starting cash. Worth knowing: every one of ZH's 15 PlayerTemplates sets this to 0
+    /// and the real value comes from a global plus a lobby dropdown, so faction-specific
+    /// starting money is NOT a retail concept — it is one we are adding deliberately,
+    /// because asymmetric economies are a design space their format could not express.
+    /// Null inherits the scenario default.
+    /// </summary>
+    public int? StartMoney { get; set; }
+}
+
+/// <summary>
+/// A patch against an inherited unit. Stat changes go through the same
+/// (base + Σadd) × Πmul algebra as veterancy and upgrades; cost and build time are
+/// plain overrides because they are not stats the sim resolves per-unit.
+/// </summary>
+public sealed class UnitPatchDto
+{
+    public int? Cost { get; set; }
+    public int? BuildTicks { get; set; }
+    public List<ModifierDto> Modifiers { get; set; } = new();
+}
+
+/// <summary>
+/// Everything the ZH compiler needs that our own model has no reason to carry.
+///
+/// Our vocabulary is open where theirs is closed, so the bridge has to be declared rather
+/// than guessed: our damage-type names must land on their 38-value enum, and every unit
+/// needs a model, because an Object with no Draw module is invisible even when its stats
+/// are perfect. Making this explicit means lint can check it before the engine does.
+/// </summary>
+public sealed class ZhTargetDto
+{
+    /// <summary>
+    /// Our damage type -> theirs. Their DamageType is a closed C++ enum of 38 values; an
+    /// unknown name is a hard parse error at load, so this mapping is mandatory.
+    /// </summary>
+    public Dictionary<string, string> DamageTypes { get; set; } = new();
+
+    /// <summary>
+    /// Our unit id -> a `.w3d` model name that already exists in the archives. During
+    /// development this is how content is playable with zero new art: 2,928 shipped models
+    /// (32.9%) are referenced by nothing at all and are free to adopt.
+    /// </summary>
+    public Dictionary<string, string> Models { get; set; } = new();
+
+    /// <summary>
+    /// World-unit scale. Our ranges and speeds are in our own units; ZH's are roughly 16x
+    /// larger (a Crusader's 150 range against our 9). Applied to range, radius and speed.
+    /// </summary>
+    public double WorldScale { get; set; } = 16.0;
+
+    /// <summary>Draw module class per unit id; defaults to W3DModelDraw, which suits anything.</summary>
+    public Dictionary<string, string> DrawModules { get; set; } = new();
 }
 
 public sealed class LintConfigDto

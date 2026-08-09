@@ -1,0 +1,96 @@
+{
+  // Event rules: {on, when, do}. Our replacement for ZH's ~217 compiled behavior modules.
+  //
+  //   rts duel --a suicide_truck --b crusader --n 40 --seed 42 --mod content/mods/deathrules.json
+  //   rts duel --a salvager --b ranger --n 40 --seed 42 --mod content/mods/deathrules.json
+  //
+  // Why death first: damage/death response is 30.5% of every module instance in the
+  // reference corpus (5,083 of 16,685), and all eleven of its Die-family classes share one
+  // filter schema differing only by a single typed effect. One rule shape absorbs the lot.
+  //
+  // Cascades are bounded at 4 generations. ZH has no bound at all — a slow death spawns
+  // objects that carry their own death rules and nothing caps it.
+  "meta": { "name": "deathrules", "version": 1 },
+
+  "weapons": {
+    "demo_charge": {
+      "damageType": "cannon", "damage": 220, "range": 1.0, "cooldownTicks": 30, "spread": 0.0
+    }
+  },
+
+  "units": {
+    // A unit whose entire purpose is dying near something expensive. Impossible to express
+    // before this slice: it has no useful weapon, only an ON-DEATH effect.
+    "suicide_truck": {
+      "faction": "gla", "cost": 500, "buildSeconds": 8,
+      "kindOf": ["VEHICLE"],
+      "components": {
+        "Health": { "max": 180, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 8.0 },
+        "WeaponBearer": { "weapon": "technical_hmg" }
+      },
+      "rules": [
+        { "on": "death",
+          "do": [ { "kind": "damageInRadius", "weapon": "demo_charge", "radius": 5.0 } ] }
+      ]
+    },
+
+    // Salvage economy: dying pays. GLA's identity in one effect.
+    "salvager": {
+      "faction": "gla", "cost": 400, "buildSeconds": 8,
+      "kindOf": ["VEHICLE"],
+      "components": {
+        "Health": { "max": 220, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 6.0 },
+        "WeaponBearer": { "weapon": "technical_hmg" }
+      },
+      "rules": [
+        { "on": "death", "do": [ { "kind": "grantMoney", "amount": 150 } ] }
+      ]
+    },
+
+    // Death spawns: a wreck that keeps fighting. Two generations of cascade — the tank
+    // leaves a wreck, and the wreck's own death rule pays out.
+    "wreck": {
+      "faction": "gla", "cost": 1, "buildSeconds": 1,
+      "kindOf": ["VEHICLE"],
+      "components": {
+        "Health": { "max": 90, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 0 },
+        "WeaponBearer": { "weapon": "technical_hmg" }
+      },
+      "rules": [
+        { "on": "death", "do": [ { "kind": "grantMoney", "amount": 25 } ] }
+      ]
+    },
+
+    "scrap_tank": {
+      "faction": "gla", "cost": 800, "buildSeconds": 14,
+      "kindOf": ["VEHICLE"],
+      "components": {
+        "Health": { "max": 420, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.0 },
+        "WeaponBearer": { "weapon": "crusader_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      },
+      "rules": [
+        { "on": "death",
+          "do": [ { "kind": "spawn", "proto": "wreck", "count": 2, "spread": 2.0 } ] }
+      ]
+    }
+  },
+
+  // Models adopted from what the archives already ship — no new art to be playable.
+  "zh": {
+    "models": {
+      "suicide_truck": "AVBATTLEDR",
+      "salvager":      "AVAmbulance",
+      "wreck":         "AVAmbulance",
+      "scrap_tank":    "AVCrusader"
+    }
+  },
+
+  "factions": {
+    "gla_scrap": { "extends": "gla", "add": ["suicide_truck", "salvager", "scrap_tank"] }
+  }
+}

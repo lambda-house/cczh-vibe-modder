@@ -19,7 +19,8 @@
     "crusader_cannon":     { "damageType": "cannon", "damage": 60, "range": 9.0, "cooldownTicks": 36, "spread": 0.1 },
     "battlemaster_cannon": { "damageType": "cannon", "damage": 65, "range": 9.5, "cooldownTicks": 40, "spread": 0.1 },
     "technical_hmg":       { "damageType": "hmg",    "damage": 14, "range": 8.5, "cooldownTicks": 9,  "spread": 0.1 },
-    "ranger_rifle":        { "damageType": "rifle",  "damage": 10, "range": 8.0, "cooldownTicks": 15, "spread": 0.1 }
+    "ranger_rifle":        { "damageType": "rifle",  "damage": 10, "range": 8.0, "cooldownTicks": 15, "spread": 0.1 },
+    "laser_cannon":        { "damageType": "cannon", "damage": 75, "range": 10.0, "cooldownTicks": 36, "spread": 0.02 }
   },
 
   // Veterancy: thresholds in XP (kills award victimCost/10), rank bundles are
@@ -42,19 +43,20 @@
     }
   },
 
-  // Tech DAG: lint checks acyclicity and reference integrity; production gating
-  // uses ContentDb.CanProduce. The harness spawns directly (no economy yet).
+  // Tech DAG: lint checks acyclicity and reference integrity, and the nodes now
+  // drive production — researching a node (cost, researchTicks) through a team's
+  // research queue is what unlocks units that list it as a prerequisite.
   "tech": {
     "nodes": {
-      "barracks":        { "requires": [] },
-      "war_factory":     { "requires": [] },
-      "strategy_center": { "requires": ["war_factory"] }
+      "barracks":        { "requires": [],              "cost": 500,  "researchTicks": 600 },
+      "war_factory":     { "requires": [],              "cost": 2000, "researchTicks": 1200 },
+      "strategy_center": { "requires": ["war_factory"], "cost": 2500, "researchTicks": 1500 }
     }
   },
 
   "units": {
     "ranger": {
-      "faction": "usa", "cost": 300, "prerequisites": ["barracks"],
+      "faction": "usa", "cost": 300, "buildTicks": 150, "prerequisites": ["barracks"],
       "components": {
         "Health": { "max": 120, "armorClass": "infantry" },
         "Mobile": { "speed": 5.0 },
@@ -63,7 +65,7 @@
       }
     },
     "technical": {
-      "faction": "gla", "cost": 600, "prerequisites": [],
+      "faction": "gla", "cost": 600, "buildTicks": 300, "prerequisites": [],
       "components": {
         "Health": { "max": 200, "armorClass": "light_vehicle" },
         "Mobile": { "speed": 7.5 },
@@ -72,7 +74,7 @@
       }
     },
     "crusader": {
-      "faction": "usa", "cost": 900, "prerequisites": ["war_factory"],
+      "faction": "usa", "cost": 900, "buildTicks": 450, "prerequisites": ["war_factory"],
       "components": {
         "Health": { "max": 480, "armorClass": "heavy_vehicle" },
         "Mobile": { "speed": 4.2 },
@@ -81,20 +83,84 @@
       }
     },
     "battlemaster": {
-      "faction": "china", "cost": 800, "prerequisites": ["war_factory"],
+      "faction": "china", "cost": 800, "buildTicks": 400, "prerequisites": ["war_factory"],
       "components": {
         "Health": { "max": 440, "armorClass": "heavy_vehicle" },
         "Mobile": { "speed": 3.8 },
         "WeaponBearer": { "weapon": "battlemaster_cannon" },
         "VeterancyCarrier": { "track": "vehicle_default" }
       }
+    },
+    // Authored as a full unit but absent from every base roster: it exists so the
+    // laser general can swap it in. Units and rosters are separate concerns.
+    "laser_crusader": {
+      "faction": "usa", "cost": 1100, "buildTicks": 500, "prerequisites": ["strategy_center"],
+      "components": {
+        "Health": { "max": 460, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.2 },
+        "WeaponBearer": { "weapon": "laser_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
     }
   },
 
+  // Factions layer: a base faction lists a roster, a general extends one and applies
+  // a patch. `add`/`remove` do roster surgery; `modify` produces a faction-local
+  // variant of an inherited unit through the same modifier algebra as veterancy.
+  // A general is therefore a readable diff against its parent, not a copied roster.
   "factions": {
-    "usa":   ["ranger", "crusader"],
-    "gla":   ["technical"],
-    "china": ["battlemaster"]
+    "usa":   { "units": ["ranger", "crusader"] },
+    "gla":   { "units": ["technical"] },
+    "china": { "units": ["battlemaster"] },
+
+    // Roster surgery: drops the stock Crusader for the laser variant.
+    "usa_laser": {
+      "extends": "usa",
+      "remove": ["crusader"],
+      "add": ["laser_crusader"]
+    },
+
+    // Stat patch: same Battlemaster, cheaper and tougher. Produces the
+    // faction-local prototype 'china_tank/battlemaster'.
+    "china_tank": {
+      "extends": "china",
+      "modify": {
+        "battlemaster": {
+          "cost": 750,
+          "buildTicks": 380,
+          "modifiers": [
+            { "stat": "ArmorFactor", "op": "Mul", "value": 0.85 },
+            { "stat": "MaxHp",       "op": "Add", "value": 40 }
+          ]
+        }
+      }
+    }
+  },
+
+  // Bridge to the Zero Hour target. Our vocabulary is open where theirs is closed, so the
+  // mapping is declared rather than guessed — and lint checks it before the engine does.
+  //
+  //   rts compile --target zh --out build/zh-mod
+  //
+  // Models are adopted from what the archives already ship: 2,928 of 9,000 models (32.9%)
+  // are referenced by no INI at all. Using them is a development accelerator, not a
+  // distribution plan — the mod ships only OUR files, over the player's own install.
+  "zh": {
+    // Their DamageType is a closed 38-value C++ enum; an unknown name is a load error.
+    "damageTypes": {
+      "cannon": "ARMOR_PIERCING",
+      "hmg":    "GATTLING",
+      "rifle":  "SMALL_ARMS"
+    },
+    // Their world units run about 16x ours (a Crusader's 150 range against our 9).
+    "worldScale": 16.0,
+    "models": {
+      "ranger":         "AVAmbulance",
+      "technical":      "AVBATTLEDR",
+      "crusader":       "AVCrusader",
+      "battlemaster":   "AVCrusader",
+      "laser_crusader": "AVAVNGER"
+    }
   },
 
   "lint": { "dpsPer1000CostBand": [20, 200] }

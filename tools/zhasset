@@ -1,0 +1,588 @@
+#!/usr/bin/env python3
+"""zhasset — inspect and extract the Zero Hour asset set.
+
+WHY THIS EXISTS
+    Our platform needs a reference model of what a ZH-like game is made of. That model
+    has to be DATA (queryable, diffable, machine-checkable), not prose in a markdown file.
+    This tool extracts it from two sources that are already on disk, and it is
+    deterministic and re-runnable — no transcription, no hand-copied numbers.
+
+WHAT MAY BE COMMITTED
+    This tool: yes. Its OUTPUT: no.
+    EA's GPL v3 release covers the engine SOURCE. It does not cover Data/INI, the .big
+    archives, generals.csf, the maps or the art — those stay EA-copyrighted. So
+    reference/ is generated locally and gitignored. Ship the extractor, never the extract.
+
+COMMANDS
+    archives list|tree|names|extract    the .big layer
+    schema                              content types + fields, from the GPL FieldParse tables
+    catalogue                           the resolved retail catalogue (factions/units/...)
+    deps                                INI -> art reference resolution, both directions
+    show <thing>                        explain one unit / weapon / faction / terrain type
+"""
+import argparse, fnmatch, json, os, re, struct, sys
+from collections import Counter, defaultdict
+
+HOME = os.path.expanduser("~")
+DEF_GAME = f"{HOME}/GeneralsX/GeneralsZH"
+DEF_INI = f"{HOME}/work/oss/zh-retail/Data/INI"
+DEF_SRC = f"{HOME}/work/oss/CnC_Generals_Zero_Hour/GeneralsMD/Code"
+DEF_OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reference")
+
+
+# ---------------------------------------------------------------- .big archives
+def big_toc(path):
+    """BIGF container. Format per Win32BIGFileSystem.cpp:104-155."""
+    with open(path, "rb") as f:
+        if f.read(4) != b"BIGF":
+            raise ValueError(f"{path}: not a BIGF archive")
+        f.read(4)                                     # archive size, stored unswapped
+        (count,) = struct.unpack(">I", f.read(4))
+        f.read(4)                                     # first-file offset
+        f.seek(0x10)
+        out = []
+        for _ in range(count):
+            off, size = struct.unpack(">II", f.read(8))
+            name = bytearray()
+            while (b := f.read(1)) not in (b"", b"\0"):
+                name += b
+            out.append((name.decode("latin-1").replace("\\", "/"), off, size))
+        return out
+
+
+def all_archives(game):
+    """Both layers. The ZH archives are a DELTA over base Generals in ZH_Generals/;
+    counting only the top level undercounts the art by roughly half."""
+    out = []
+    for d in (game, os.path.join(game, "ZH_Generals")):
+        if os.path.isdir(d):
+            out += sorted(os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(".big"))
+    return out
+
+
+def cmd_archives(a):
+    arcs = all_archives(a.game) if not a.archive else [a.archive]
+    if a.action == "list":
+        tf = tb = 0
+        for arc in arcs:
+            try:
+                e = big_toc(arc)
+            except Exception as ex:
+                print(f"  {os.path.basename(arc)}: {ex}"); continue
+            b = sum(x[2] for x in e); tf += len(e); tb += b
+            layer = "base" if "ZH_Generals" in arc else "zh"
+            print(f"  {layer:4s} {os.path.basename(arc):24s} {len(e):6d} files  {b/1e6:8.1f} MB")
+        print(f"\n  {len(arcs)} archives · {tf:,} files · {tb/1e9:.2f} GB")
+    elif a.action == "tree":
+        hist = defaultdict(lambda: [0, 0])
+        for arc in arcs:
+            try:
+                e = big_toc(arc)
+            except Exception:
+                continue
+            for n, _o, s in e:
+                k = os.path.splitext(n)[1].lower() or "(none)"
+                hist[k][0] += 1; hist[k][1] += s
+        for ext, (c, b) in sorted(hist.items(), key=lambda kv: -kv[1][1])[:20]:
+            print(f"  {ext:10s} {c:7,d}  {b/1e6:9.1f} MB")
+    elif a.action == "names":
+        for arc in arcs:
+            try:
+                e = big_toc(arc)
+            except Exception:
+                continue
+            for n, _o, s in e:
+                if not a.glob or fnmatch.fnmatch(n.lower(), a.glob.lower()):
+                    print(f"{s:10d}  {n}")
+    elif a.action == "extract":
+        n = 0
+        for arc in arcs:
+            try:
+                entries = big_toc(arc)
+            except Exception:
+                continue
+            with open(arc, "rb") as f:
+                for name, off, size in entries:
+                    if a.glob and not fnmatch.fnmatch(name.lower(), a.glob.lower()):
+                        continue
+                    p = os.path.join(a.dest, name)
+                    os.makedirs(os.path.dirname(p), exist_ok=True)
+                    f.seek(off)
+                    open(p, "wb").write(f.read(size))
+                    n += 1
+        print(f"extracted {n} files -> {a.dest}")
+
+
+# ---------------------------------------------------------------- schema (GPL source)
+# Every INI block type in this engine declares a static FieldParse table:
+#     { "FieldName", INI::parseReal, NULL, offsetof(Foo, m_bar) },
+# That table IS the schema: legal keys, and a parser function that implies the type.
+FIELD_RE = re.compile(r'\{\s*"([A-Za-z_][A-Za-z_0-9]*)"\s*,\s*([A-Za-z_:][\w:<>\.]*)', re.M)
+# Table names are often class-qualified (ThingTemplate::s_objectFieldParseTable), and the
+# declaration may or may not be static/extern-const. Matching only \w+ silently drops the
+# biggest tables in the engine, which is exactly the ones that matter.
+TABLE_RE = re.compile(
+    r'(?:static\s+|extern\s+)?const\s+FieldParse\s+([\w:]+)\s*\[\s*\]\s*=\s*\{(.*?)\n\s*\}\s*;', re.S)
+
+PARSER_TYPES = {
+    "parseReal": "real", "parseInt": "int", "parseUnsignedInt": "uint",
+    "parseUnsignedShort": "ushort", "parseUnsignedByte": "byte", "parseBool": "bool",
+    "parseAsciiString": "string", "parseQuotedAsciiString": "string",
+    "parseAsciiStringVector": "string[]", "parseAngleReal": "angle",
+    "parsePercentToReal": "percent", "parseVelocityReal": "velocity/tick",
+    "parseAccelerationReal": "accel/tick^2", "parseDurationReal": "ticks(ceil)",
+    "parseDurationUnsignedInt": "ticks(ceil)", "parseDurationUnsignedShort": "ticks(ceil)",
+    "parseBitString32": "bitflags", "parseIndexList": "enum", "parseIndexListOrNone": "enum?",
+    "parseCoord3D": "coord3", "parseCoord2D": "coord2", "parseRGBColor": "rgb",
+    "parseBitInInt32": "bit",
+}
+
+
+def cmd_schema(a):
+    """Walk the GPL source, harvest every FieldParse table, emit the schema as JSON."""
+    tables = {}
+    for root, _d, files in os.walk(a.src):
+        for fn in files:
+            if not fn.endswith((".cpp", ".h")):
+                continue
+            p = os.path.join(root, fn)
+            try:
+                text = open(p, encoding="latin-1").read()
+            except Exception:
+                continue
+            for tname, body in TABLE_RE.findall(text):
+                fields = []
+                for fname, parser in FIELD_RE.findall(body):
+                    short = parser.split("::")[-1]
+                    fields.append({"field": fname, "parser": short,
+                                   "type": PARSER_TYPES.get(short, short)})
+                if not fields:
+                    continue
+                rel = os.path.relpath(p, a.src)
+                key = f"{rel}::{tname}"
+                tables[key] = {"table": tname, "file": rel, "fieldCount": len(fields),
+                               "fields": fields}
+
+    total = sum(t["fieldCount"] for t in tables.values())
+    doc = {
+        "_provenance": "derived from EA's GPL v3 engine source FieldParse tables; "
+                       "regenerate with tools/zhasset schema. Not for redistribution.",
+        "source": a.src,
+        "tableCount": len(tables),
+        "fieldCount": total,
+        "tables": tables,
+    }
+    os.makedirs(a.out, exist_ok=True)
+    dest = os.path.join(a.out, "zh-schema.json")
+    json.dump(doc, open(dest, "w"), indent=1)
+    print(f"  {len(tables)} FieldParse tables · {total} fields -> {dest}")
+    big = sorted(tables.values(), key=lambda t: -t["fieldCount"])[:12]
+    for t in big:
+        print(f"    {t['fieldCount']:4d}  {t['table']:32s} {t['file']}")
+
+
+# ---------------------------------------------------------------- catalogue (retail INI)
+BLOCK_RE = re.compile(r"^(\w+)\s+([^\s;]+)", re.M)
+
+
+def ini_blocks(path):
+    """Yield (kind, name, [lines]) for every column-0 block ... End in an INI file."""
+    kind = name = None
+    buf = []
+    for raw in open(path, encoding="latin-1", errors="replace"):
+        line = raw.split(";")[0].rstrip("\n")
+        if kind is None:
+            m = BLOCK_RE.match(line)
+            if m and not line.startswith(" ") and not line.startswith("\t"):
+                kind, name = m.group(1), m.group(2)
+                buf = []
+        else:
+            if line.strip().lower() == "end" and not line.startswith((" ", "\t")):
+                yield kind, name, buf
+                kind = name = None
+            else:
+                buf.append(line)
+
+
+def field(lines, key, default=None):
+    k = key.lower()
+    for l in lines:
+        s = l.strip()
+        if "=" in s and s.split("=")[0].strip().lower() == k:
+            return s.split("=", 1)[1].strip()
+    return default
+
+
+def cmd_catalogue(a):
+    ini = a.ini
+    cat = {"_provenance": "derived from EA-copyrighted retail Data/INI; local artifact only, "
+                          "never redistribute. Regenerate with tools/zhasset catalogue.",
+           "source": ini}
+
+    # factions
+    factions = {}
+    pt = os.path.join(ini, "PlayerTemplate.ini")
+    if os.path.exists(pt):
+        for kind, name, lines in ini_blocks(pt):
+            if kind.lower() != "playertemplate":
+                continue
+            factions[name] = {
+                "side": field(lines, "Side", ""),
+                "baseSide": field(lines, "BaseSide"),
+                "playable": (field(lines, "PlayableSide", "No") or "No").lower() == "yes",
+                "startingBuilding": field(lines, "StartingBuilding"),
+                "intrinsicSciences": (field(lines, "IntrinsicSciences", "") or "").split(),
+            }
+
+    # objects -> roster by Side
+    units, roster = {}, defaultdict(list)
+    objdir = os.path.join(ini, "Object")
+    if os.path.isdir(objdir):
+        for fn in sorted(os.listdir(objdir)):
+            if not fn.lower().endswith(".ini"):
+                continue
+            for kind, name, lines in ini_blocks(os.path.join(objdir, fn)):
+                if kind.lower() not in ("object", "objectreskin"):
+                    continue
+                cost = field(lines, "BuildCost")
+                side = field(lines, "Side")
+                kindof = (field(lines, "KindOf", "") or "")
+                rec = {
+                    "file": fn, "reskin": kind.lower() == "objectreskin",
+                    "side": side, "buildCost": int(cost) if cost and cost.isdigit() else None,
+                    "buildTime": field(lines, "BuildTime"),
+                    "kindOf": kindof.split(),
+                    "isStructure": "STRUCTURE" in kindof.upper(),
+                    "commandSet": field(lines, "CommandSet"),
+                    "vision": field(lines, "VisionRange"),
+                    "lines": len(lines),
+                }
+                units[name] = rec
+                if side:
+                    roster[side].append(name)
+
+    def simple(fn, kindname, keys):
+        out = {}
+        p = os.path.join(ini, fn)
+        if not os.path.exists(p):
+            return out
+        for kind, name, lines in ini_blocks(p):
+            if kind.lower() != kindname:
+                continue
+            out[name] = {k: field(lines, k) for k in keys}
+        return out
+
+    cat["factions"] = factions
+    cat["rosterBySide"] = {k: sorted(v) for k, v in sorted(roster.items())}
+    cat["objects"] = units
+    cat["weapons"] = simple("Weapon.ini", "weapon",
+                            ["PrimaryDamage", "DamageType", "AttackRange", "DelayBetweenShots",
+                             "PrimaryDamageRadius", "ClipSize", "ClipReloadTime"])
+    cat["locomotors"] = simple("Locomotor.ini", "locomotor",
+                               ["Surfaces", "Speed", "TurnRate", "Acceleration", "Appearance"])
+    cat["upgrades"] = simple("Upgrade.ini", "upgrade", ["Type", "BuildCost", "BuildTime"])
+    cat["sciences"] = simple("Science.ini", "science",
+                             ["PrerequisiteSciences", "SciencePurchasePointCost", "IsGrantable"])
+    cat["specialPowers"] = simple("SpecialPower.ini", "specialpower",
+                                  ["Enum", "ReloadTime", "RequiredScience", "SharedSyncedTimer"])
+    cat["terrain"] = simple("Terrain.ini", "terrain", ["Texture", "Class"])
+
+    # armor: damageType -> multiplier, per armor set
+    armor = {}
+    ap = os.path.join(ini, "Armor.ini")
+    if os.path.exists(ap):
+        for kind, name, lines in ini_blocks(ap):
+            if kind.lower() != "armor":
+                continue
+            row = {}
+            for l in lines:
+                s = l.strip()
+                if s.lower().startswith("armor") and "=" in s:
+                    rhs = s.split("=", 1)[1].split()
+                    if len(rhs) >= 2:
+                        row[rhs[0]] = rhs[1]
+            armor[name] = row
+    cat["armor"] = armor
+
+    os.makedirs(a.out, exist_ok=True)
+    dest = os.path.join(a.out, "zh-catalogue.json")
+    json.dump(cat, open(dest, "w"), indent=1)
+
+    buildable = sum(1 for u in units.values() if u["buildCost"])
+    structures = sum(1 for u in units.values() if u["buildCost"] and u["isStructure"])
+    print(f"  factions      {len(factions):6d}  ({sum(1 for f in factions.values() if f['playable'])} playable)")
+    print(f"  objects       {len(units):6d}  ({buildable} buildable = {buildable-structures} units + {structures} structures)")
+    print(f"  weapons       {len(cat['weapons']):6d}")
+    print(f"  armor sets    {len(armor):6d}")
+    print(f"  locomotors    {len(cat['locomotors']):6d}")
+    print(f"  upgrades      {len(cat['upgrades']):6d}")
+    print(f"  sciences      {len(cat['sciences']):6d}")
+    print(f"  powers        {len(cat['specialPowers']):6d}")
+    print(f"  terrain types {len(cat['terrain']):6d}")
+    print(f"  -> {dest}")
+
+
+# ---------------------------------------------------------------- dependency resolution
+ART_RE = re.compile(r"^\s*(?:Model|DefaultModel|ModelName)\s*=\s*([A-Za-z0-9_]+)", re.M | re.I)
+
+
+def cmd_deps(a):
+    """Resolve INI art references against the archives, both directions."""
+    referenced = Counter()
+    for root, _d, files in os.walk(a.ini):
+        for fn in files:
+            if fn.lower().endswith(".ini"):
+                text = open(os.path.join(root, fn), encoding="latin-1", errors="replace").read()
+                for m in ART_RE.findall(text):
+                    if m.upper() != "NONE":
+                        referenced[m.lower()] += 1
+
+    shipped = set()
+    for arc in all_archives(a.game):
+        try:
+            for n, _o, _s in big_toc(arc):
+                if n.lower().endswith(".w3d"):
+                    shipped.add(os.path.splitext(os.path.basename(n))[0].lower())
+        except Exception:
+            pass
+
+    refs = set(referenced)
+    hit = refs & shipped
+    print(f"  models referenced by INI : {len(refs):,}")
+    print(f"  models shipped           : {len(shipped):,}")
+    print(f"  resolved                 : {len(hit):,}  ({100*len(hit)/max(1,len(refs)):.1f}% of references)")
+    print(f"  DANGLING (ref, no file)  : {len(refs-shipped):,}")
+    print(f"  ORPHANED (file, no ref)  : {len(shipped-refs):,}  ({100*len(shipped-refs)/max(1,len(shipped)):.1f}% of shipped)")
+    if a.verbose:
+        for m in sorted(refs - shipped)[:25]:
+            print(f"     dangling: {m}")
+
+
+# ---------------------------------------------------------------- coverage
+# ZH's schema is the TARGET model: we adapt to it rather than grow our own in parallel.
+# Coverage is therefore "how much of their model do we implement", per content type.
+#
+# Most of their surface is presentation, which we do not inherit and must not count as
+# debt. Classify mechanically so the split is reproducible rather than an opinion.
+# Whole WORDS after CamelCase splitting, never substrings — see words() below.
+ART_HINTS = {"model", "models", "anim", "animation", "particle", "particles", "fx", "shadow",
+             "draw", "bone", "bones", "texture", "image", "images", "portrait", "cameo",
+             "cameo1", "art", "sprite", "trail", "smoke", "flash", "render", "wireframe",
+             "tint", "color", "colour", "opacity", "condition", "conditionstate",
+             "transition", "shroud", "occlusion", "watermark", "medallion"}
+AUDIO_HINTS = {"sound", "sounds", "voice", "audio", "speech", "music", "eva", "noise"}
+UI_HINTS = {"displayname", "description", "button", "buttons", "tooltip", "commandset",
+            "radar", "editorsorting", "selectportrait", "hotkey", "window", "screen",
+            "name", "label"}
+
+# What our content model expresses today, keyed to THEIR field names. This is an authored
+# correspondence table, not generated: it records a decision per field.
+OURS = {
+    "Object": {
+        "BuildCost": "unit.cost", "BuildTime": "unit.buildSeconds",
+        # Object prerequisites, not just tech: the prototype must be ALIVE, so a levelled
+        # factory revokes buildability. ZH has 624 such rows.
+        "Prerequisites": "unit.prerequisites (object|tech)",
+        "ArmorSet": "unit.components.Health.armorClass",
+        "WeaponSet": "unit.components.WeaponBearer.weapon",
+        "Locomotor": "unit.components.Mobile.speed",
+        "ExperienceValue": "veterancyTracks", "ExperienceRequired": "veterancyTracks.thresholds",
+        "Side": "unit.faction",
+        "KindOf": "unit.kindOf",                       # role flags, consulted by production+defeat
+        "BuildCompletion": "unit.buildCompletion",     # structure vs unit
+        "EnergyProduction": "unit.energyProduction",   # brownout halts production
+        "MaxSimultaneousOfType": "unit.maxSimultaneousOfType",
+        # Deliberately unmapped: no system consumes them yet, and a field that does
+        # nothing is worse than a missing one.
+        "VisionRange": None, "TransportSlotCount": None, "Buildable": None,
+        "RefundValue": None, "ShroudClearingRange": None, "IsTrainable": None,
+    },
+    "Weapon": {
+        "PrimaryDamage": "weapon.damage", "DamageType": "weapon.damageType",
+        "AttackRange": "weapon.range", "DelayBetweenShots": "weapon.cooldownTicks",
+        "ScatterRadius": "weapon.spread",
+        # Splash as ZH models it: two-band step function, no falloff.
+        "PrimaryDamageRadius": "weapon.primaryDamageRadius",
+        "SecondaryDamage": "weapon.secondaryDamage",
+        "SecondaryDamageRadius": "weapon.secondaryDamageRadius",
+        "ClipSize": "weapon.clipSize", "ClipReloadTime": "weapon.clipReloadSeconds",
+        "MinimumAttackRange": "weapon.minimumAttackRange",
+        "WeaponSpeed": None, "DeathType": None,
+        "ProjectileObject": None, "RadiusDamageAffects": None,
+    },
+    "Armor": {"Armor": "damageVsArmor"},
+    "Locomotor": {"Speed": "unit.components.Mobile.speed", "Surfaces": None,
+                  "TurnRate": None, "Acceleration": None, "Braking": None,
+                  "MinSpeed": None, "SpeedDamaged": None, "Appearance": None},
+    "PlayerTemplate": {
+        "Side": "faction.id",
+        "StartingBuilding": "faction.startingBuilding",
+        # ZH declares StartingUnit0..9 as ten separate #define-capped fields and then uses
+        # NONE of them in retail. One list, no cap, no dead fields.
+        "StartingUnit0": "faction.startingUnits", "StartingUnit1": "faction.startingUnits",
+        "StartingUnit2": "faction.startingUnits", "StartingUnit3": "faction.startingUnits",
+        "StartingUnit4": "faction.startingUnits", "StartingUnit5": "faction.startingUnits",
+        "StartingUnit6": "faction.startingUnits", "StartingUnit7": "faction.startingUnits",
+        "StartingUnit8": "faction.startingUnits", "StartingUnit9": "faction.startingUnits",
+        "StartMoney": "faction.startMoney",
+        "PlayableSide": "faction.isStartable",
+        "IntrinsicSciences": None, "PurchaseScienceCommandSetRank1": None},
+    "Science": {"PrerequisiteSciences": "tech.requires",
+                "SciencePurchasePointCost": None, "IsGrantable": None},
+    "Upgrade": {"BuildCost": None, "BuildTime": None, "Type": None},
+    "SpecialPower": {"ReloadTime": None, "RequiredScience": None, "SharedSyncedTimer": None},
+}
+
+TARGET_TABLES = {
+    "Object": "ThingTemplate::s_objectFieldParseTable",
+    "Weapon": "WeaponTemplate::TheWeaponTemplateFieldParseTable",
+    "Locomotor": "TheFieldParse",
+    "PlayerTemplate": "TheFieldParseTable",
+}
+
+
+CAMEL_RE = re.compile(r'[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+')
+
+
+def words(name):
+    """Split a CamelCase field name into lowercase words.
+
+    Naive substring matching is wrong here and it was wrong in a way that FLATTERED us:
+    "StartingBuilding", "StartMoney" and StartingUnit0-9 all contain the substring "art"
+    (St-art-ing), so twelve of the most load-bearing PlayerTemplate fields were being
+    classified as art and dropped from the sim denominator. A smaller denominator is a
+    higher coverage percentage, so the bug inflated the only number we steer by.
+    """
+    return [w.lower() for w in CAMEL_RE.findall(name)]
+
+
+def classify(name):
+    ws = set(words(name))
+    if ws & AUDIO_HINTS: return "audio"
+    if ws & UI_HINTS: return "ui"
+    if ws & ART_HINTS: return "art"
+    return "sim"
+
+
+def cmd_coverage(a):
+    schema = json.load(open(os.path.join(a.out, "zh-schema.json")))
+    tables = schema["tables"]
+
+    def find(tname, filehint):
+        for k, v in tables.items():
+            if v["table"] == tname and filehint.lower() in v["file"].lower():
+                return v
+        return None
+
+    targets = [
+        ("Object", find("ThingTemplate::s_objectFieldParseTable", "ThingTemplate.cpp")),
+        ("Weapon", find("WeaponTemplate::TheWeaponTemplateFieldParseTable", "Weapon.cpp")),
+        ("Locomotor", find("TheFieldParse", "Locomotor.cpp")),
+        ("PlayerTemplate", find("TheFieldParseTable", "PlayerTemplate.cpp")),
+    ]
+
+    print("Coverage of ZH's content model. THEIR schema is the target; ours adapts to it.")
+    print("Presentation fields are excluded from the denominator — we do not inherit art.\n")
+    print(f"  {'content type':16s} {'sim':>5s} {'have':>5s} {'cov':>6s}   {'art':>5s} {'audio':>6s} {'ui':>4s}  total")
+    print("  " + "-" * 72)
+
+    grand_sim = grand_have = 0
+    gaps = defaultdict(list)
+    for label, tbl in targets:
+        if not tbl:
+            print(f"  {label:16s}  (table not found in extracted schema)")
+            continue
+        buckets = Counter()
+        sim_fields = []
+        for f in tbl["fields"]:
+            c = classify(f["field"])
+            buckets[c] += 1
+            if c == "sim":
+                sim_fields.append(f["field"])
+        mapped = OURS.get(label, {})
+        have = sum(1 for f in sim_fields if mapped.get(f))
+        for f in sim_fields:
+            if not mapped.get(f):
+                gaps[label].append(f)
+        grand_sim += len(sim_fields); grand_have += have
+        cov = 100.0 * have / max(1, len(sim_fields))
+        print(f"  {label:16s} {len(sim_fields):5d} {have:5d} {cov:5.1f}%   "
+              f"{buckets['art']:5d} {buckets['audio']:6d} {buckets['ui']:4d}  {tbl['fieldCount']:5d}")
+
+    print("  " + "-" * 72)
+    print(f"  {'TOTAL':16s} {grand_sim:5d} {grand_have:5d} "
+          f"{100.0*grand_have/max(1,grand_sim):5.1f}%")
+
+    if a.gaps:
+        print("\nUnimplemented sim fields (the roadmap, in their vocabulary):")
+        for label, fs in gaps.items():
+            print(f"\n  {label} ({len(fs)}):")
+            for i in range(0, len(fs), 4):
+                print("     " + "  ".join(f"{x:22s}" for x in fs[i:i + 4]))
+    return 0
+
+
+# ---------------------------------------------------------------- show
+def cmd_show(a):
+    cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
+    q = a.thing
+    for section in ("objects", "weapons", "locomotors", "upgrades", "sciences",
+                    "specialPowers", "terrain", "factions", "armor"):
+        d = cat.get(section, {})
+        if q in d:
+            print(f"== {q}  ({section})")
+            print(json.dumps(d[q], indent=2))
+            if section == "objects" and d[q].get("side"):
+                mates = cat["rosterBySide"].get(d[q]["side"], [])
+                print(f"\n   side '{d[q]['side']}' has {len(mates)} objects")
+            return 0
+    hits = [(s, k) for s in cat if isinstance(cat[s], dict)
+            for k in cat[s] if q.lower() in k.lower()][:20]
+    if hits:
+        print(f"no exact match for '{q}'; did you mean:")
+        for s, k in hits:
+            print(f"   {k}   ({s})")
+    else:
+        print(f"'{q}' not found. Build the catalogue first: zhasset catalogue")
+    return 1
+
+
+# ---------------------------------------------------------------- main
+def main():
+    p = argparse.ArgumentParser(prog="zhasset", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--game", default=DEF_GAME)
+    p.add_argument("--ini", default=DEF_INI)
+    p.add_argument("--src", default=DEF_SRC)
+    p.add_argument("--out", default=DEF_OUT)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    ar = sub.add_parser("archives", help="inspect the .big layer")
+    ar.add_argument("action", choices=["list", "tree", "names", "extract"])
+    ar.add_argument("--archive"); ar.add_argument("--glob"); ar.add_argument("--dest", default="/tmp/zh")
+    ar.set_defaults(fn=cmd_archives)
+
+    sc = sub.add_parser("schema", help="content types + fields from the GPL FieldParse tables")
+    sc.set_defaults(fn=cmd_schema)
+
+    ca = sub.add_parser("catalogue", help="resolved retail catalogue")
+    ca.set_defaults(fn=cmd_catalogue)
+
+    de = sub.add_parser("deps", help="INI -> art resolution, both directions")
+    de.add_argument("-v", "--verbose", action="store_true")
+    de.set_defaults(fn=cmd_deps)
+
+    cv = sub.add_parser("coverage", help="how much of THEIR model do we implement")
+    cv.add_argument("--gaps", action="store_true", help="list the unimplemented sim fields")
+    cv.set_defaults(fn=cmd_coverage)
+
+    sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
+    sh.add_argument("thing")
+    sh.set_defaults(fn=cmd_show)
+
+    a = p.parse_args()
+    return a.fn(a) or 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

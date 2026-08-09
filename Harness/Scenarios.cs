@@ -16,6 +16,31 @@ public sealed class DuelStats
     public ulong LastFinalHash;
 }
 
+public sealed class EconStats
+{
+    public required string OrderA;
+    public required string OrderB;
+    public int Runs;
+    public int WinsA;
+    public int WinsB;
+    public int Draws;
+    public double AvgTicks;
+    /// <summary>Money + undrawn pool + fielded army value at battle end; the
+    /// economic-damage metric that makes tick-cap draws readable.</summary>
+    public double AvgNetWorthA;
+    public double AvgNetWorthB;
+    public ulong LastFinalHash;
+    public bool DeterminismOk;
+    /// <summary>Units alive at the end, averaged. Distinguishes "never built" from
+    /// "built and died" — net worth alone cannot, because it counts money and army
+    /// together and so stays flat whether you spend or not.</summary>
+    public double AvgAliveA;
+    public double AvgAliveB;
+    /// <summary>Why each side's queue stalled, if it did. Silence here is the dangerous case.</summary>
+    public string? StallA;
+    public string? StallB;
+}
+
 /// <summary>
 /// The batch-evaluation side of the AI loop. Every scenario is a pure function of
 /// (content, seed, parameters) producing metrics — which is exactly the shape an
@@ -92,6 +117,263 @@ public static class Scenarios
             results.Add(RunDuelSeries(content, ids[i], ids[j], budget, runsPerPair, seed));
         }
         return results;
+    }
+
+    public const int EconDefaultMaxTicks = ContentDb.TicksPerSecond * 600; // 10 min cap
+
+    /// <summary>
+    /// Expands a build-order spec into a flat id list. Spec is comma-separated
+    /// unit/tech ids; `id*N` repeats N times; a trailing `id*` (units only)
+    /// auto-fills to what the team's total resources can ever pay for. Unknown
+    /// ids throw — build-order validation is a harness concern, the sim just
+    /// stalls on orders it can't execute.
+    /// </summary>
+    public static string[] ExpandOrder(ContentDb content, string spec, int totalResources)
+    {
+        var result = new List<string>();
+        var tokens = spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (int i = 0; i < tokens.Length; i++)
+        {
+            string tok = tokens[i];
+            int star = tok.IndexOf('*');
+            string id = star >= 0 ? tok[..star] : tok;
+            bool isUnit = content.UnitIndexById.ContainsKey(id);
+            if (!isUnit && !content.TechIndexById.ContainsKey(id))
+                throw new ArgumentException($"build order: unknown unit/tech id '{id}'");
+
+            int repeat = 1;
+            if (star >= 0)
+            {
+                string count = tok[(star + 1)..];
+                if (count.Length == 0)
+                {
+                    if (i != tokens.Length - 1)
+                        throw new ArgumentException($"build order: open repeat '{tok}' must be the last item");
+                    if (!isUnit)
+                        throw new ArgumentException($"build order: open repeat '{tok}' must name a unit");
+                    repeat = Math.Max(1, totalResources / content.Units[content.UnitIndexById[id]].Cost);
+                }
+                else repeat = int.Parse(count);
+            }
+            for (int r = 0; r < repeat; r++) result.Add(id);
+        }
+        return result.ToArray();
+    }
+
+    /// <summary>
+    /// Command log for a macro battle: each side gets a finite economy, a spawn
+    /// point on its own line, an attack-move rally through the enemy spawn
+    /// (unless holding), and its entire build order enqueued at tick 0 — the
+    /// stall-until-affordable queue rule turns that into a paced build order.
+    /// </summary>
+    /// <summary>
+    /// Start two FACTIONS against each other, from their own definitions.
+    ///
+    /// Everything else in this harness starts from a build ORDER — a list of ids someone
+    /// typed. This starts from the faction: its starting building is placed, its starting
+    /// units are fielded, its starting money is applied, and its own roster supplies the
+    /// production. That is the difference between "a roster" and "a playable side", and it
+    /// is what lets an agent author a faction and immediately measure it rather than also
+    /// having to author an opening for it.
+    ///
+    /// The build order is then generated FROM the roster: cheapest-first, repeated to the
+    /// resource cap. Crude on purpose — a real opening is a later slice, and a fixed rule
+    /// keeps faction-vs-faction results attributable to the factions.
+    /// </summary>
+    public static List<Command> BuildSkirmishCommands(ContentDb content, FactionDef a, FactionDef b,
+        int startingMoney, int incomePerSecond, int supplyPool)
+    {
+        var log = new List<Command>();
+        int seq = 0;
+        AddSkirmishTeam(content, log, ref seq, 0, a, -40, startingMoney, incomePerSecond, supplyPool);
+        AddSkirmishTeam(content, log, ref seq, 1, b, +40, startingMoney, incomePerSecond, supplyPool);
+        return log;
+    }
+
+    private static void AddSkirmishTeam(ContentDb content, List<Command> log, ref int seq, int team,
+        FactionDef f, int xSpawn, int money, int incomePerSecond, int pool)
+    {
+        int cash = f.StartMoney >= 0 ? f.StartMoney : money;
+        log.Add(new Command(0, seq++, CommandKind.SetupEconomy, team, pool,
+            Fix64.FromInt(cash), Fix64.FromRatio(incomePerSecond, ContentDb.TicksPerSecond)));
+        log.Add(new Command(0, seq++, CommandKind.SetSpawn, team, 0, Fix64.FromInt(xSpawn), Fix64.Zero));
+        log.Add(new Command(0, seq++, CommandKind.RallyTeam, team, 0, Fix64.FromInt(-xSpawn), Fix64.Zero));
+
+        // The base goes down first and does not move, so it sits at the spawn point.
+        if (f.StartingBuildingIdx >= 0)
+            log.Add(new Command(0, seq++, CommandKind.Spawn, f.StartingBuildingIdx, team,
+                                Fix64.FromInt(xSpawn), Fix64.Zero));
+
+        // Starting units fan out deterministically around it.
+        for (int i = 0; i < f.StartingUnitIdx.Length; i++)
+            log.Add(new Command(0, seq++, CommandKind.Spawn, f.StartingUnitIdx[i], team,
+                                Fix64.FromInt(xSpawn), Fix64.FromInt((i % 5 - 2) * 3)));
+
+        // Production: cheapest buildable non-structure in the roster, repeated. Ordinal tie
+        // break on the prototype id so two equally cheap units never race.
+        int best = -1;
+        foreach (int idx in f.OwnUnitIdx)
+        {
+            var p = content.Units[idx];
+            if (p.IsStructure || p.Cost <= 0) continue;
+            if (best < 0 || p.Cost < content.Units[best].Cost
+                || (p.Cost == content.Units[best].Cost
+                    && string.CompareOrdinal(p.Id, content.Units[best].Id) < 0))
+                best = idx;
+        }
+        if (best < 0) return;
+
+        // Research whatever that unit needs, first, in dependency order. Without this the
+        // queue stalls forever on an unmet tech and the run reads as a dull draw — which is
+        // exactly what QueueStallReason caught the first time this ran. A skirmish must be
+        // self-sufficient from the faction definition alone, or "author a faction and
+        // measure it" is not actually true.
+        var need = new List<int>();
+        void AddTech(int t)
+        {
+            if (need.Contains(t)) return;
+            foreach (int dep in content.Tech[t].RequiresIdx) AddTech(dep);   // parents first
+            need.Add(t);
+        }
+        foreach (int t in content.Units[best].PrereqTechIdx) AddTech(t);
+        foreach (int t in need)
+            log.Add(new Command(0, seq++, CommandKind.ResearchTech, team, t, Fix64.Zero, Fix64.Zero));
+
+        int spend = cash + pool - need.Sum(t => content.Tech[t].Cost);
+        int repeat = Math.Max(1, spend / content.Units[best].Cost);
+        for (int r = 0; r < repeat; r++)
+            log.Add(new Command(0, seq++, CommandKind.ProduceUnit, team, best, Fix64.Zero, Fix64.Zero));
+    }
+
+    public static List<Command> BuildEconCommands(ContentDb content, string[] orderA, string[] orderB,
+        int startingMoney, int incomePerSecond, int supplyPool, bool holdA = false, bool holdB = false)
+    {
+        var log = new List<Command>();
+        int seq = 0;
+        AddEconTeam(content, log, ref seq, team: 0, orderA, xSpawn: -40, holdA, startingMoney, incomePerSecond, supplyPool);
+        AddEconTeam(content, log, ref seq, team: 1, orderB, xSpawn: +40, holdB, startingMoney, incomePerSecond, supplyPool);
+        return log;
+    }
+
+    private static void AddEconTeam(ContentDb content, List<Command> log, ref int seq, int team,
+        string[] order, int xSpawn, bool hold, int money, int incomePerSecond, int pool)
+    {
+        log.Add(new Command(0, seq++, CommandKind.SetupEconomy, team, pool,
+            Fix64.FromInt(money), Fix64.FromRatio(incomePerSecond, ContentDb.TicksPerSecond)));
+        log.Add(new Command(0, seq++, CommandKind.SetSpawn, team, 0, Fix64.FromInt(xSpawn), Fix64.Zero));
+        if (!hold)
+            log.Add(new Command(0, seq++, CommandKind.RallyTeam, team, 0, Fix64.FromInt(-xSpawn), Fix64.Zero));
+        foreach (var id in order)
+            log.Add(content.UnitIndexById.TryGetValue(id, out int proto)
+                ? new Command(0, seq++, CommandKind.ProduceUnit, team, proto, Fix64.Zero, Fix64.Zero)
+                : new Command(0, seq++, CommandKind.ResearchTech, team, content.TechIndexById[id], Fix64.Zero, Fix64.Zero));
+    }
+
+    /// <summary>
+    /// N-run build-order series. The first seed is run twice and compared — the
+    /// determinism proof rides along with every econ experiment instead of being
+    /// a separate verb, because production is new replay-contract surface.
+    /// </summary>
+    /// <summary>
+    /// Faction vs faction, N runs, with the same determinism proof riding along. Shares
+    /// <see cref="EconStats"/> so every reader of econ results reads these unchanged.
+    /// </summary>
+    public static EconStats RunSkirmishSeries(ContentDb content, string idA, string idB,
+        int startingMoney, int incomePerSecond, int supplyPool,
+        int runs, ulong baseSeed, int maxTicks = EconDefaultMaxTicks)
+    {
+        if (!content.Factions.TryGetValue(idA, out var fa))
+            throw new ArgumentException($"unknown faction '{idA}'");
+        if (!content.Factions.TryGetValue(idB, out var fb))
+            throw new ArgumentException($"unknown faction '{idB}'");
+        if (!fa.IsStartable) throw new ArgumentException($"faction '{idA}' has no startingBuilding or startingUnits");
+        if (!fb.IsStartable) throw new ArgumentException($"faction '{idB}' has no startingBuilding or startingUnits");
+
+        var log = BuildSkirmishCommands(content, fa, fb, startingMoney, incomePerSecond, supplyPool);
+
+        var v1 = new Sim(content, baseSeed, log).Run(maxTicks);
+        var v2 = new Sim(content, baseSeed, log).Run(maxTicks);
+        bool deterministic = v1.FinalHash == v2.FinalHash && v1.Ticks == v2.Ticks;
+
+        var stats = new EconStats { OrderA = idA, OrderB = idB, Runs = runs, DeterminismOk = deterministic };
+        long tickSum = 0;
+        for (int r = 0; r < runs; r++)
+        {
+            var sim = new Sim(content, baseSeed + (ulong)r, log);
+            var result = sim.Run(maxTicks);
+            switch (result.WinnerTeam)
+            {
+                case 0: stats.WinsA++; break;
+                case 1: stats.WinsB++; break;
+                default: stats.Draws++; break;
+            }
+            tickSum += result.Ticks;
+            stats.AvgNetWorthA += NetWorth(sim.World, 0);
+            stats.AvgNetWorthB += NetWorth(sim.World, 1);
+            stats.AvgAliveA += sim.World.AliveCount(0);
+            stats.AvgAliveB += sim.World.AliveCount(1);
+            stats.StallA ??= sim.World.QueueStallReason(0);
+            stats.StallB ??= sim.World.QueueStallReason(1);
+            stats.LastFinalHash = result.FinalHash;
+        }
+        stats.AvgTicks = (double)tickSum / runs;
+        stats.AvgNetWorthA /= runs; stats.AvgNetWorthB /= runs;
+        stats.AvgAliveA /= runs; stats.AvgAliveB /= runs;
+        return stats;
+    }
+
+    public static EconStats RunEconSeries(ContentDb content, string specA, string specB,
+        int startingMoney, int incomePerSecond, int supplyPool, bool holdA, bool holdB,
+        int runs, ulong baseSeed, int maxTicks = EconDefaultMaxTicks)
+    {
+        int totalResources = startingMoney + supplyPool;
+        var orderA = ExpandOrder(content, specA, totalResources);
+        var orderB = ExpandOrder(content, specB, totalResources);
+        var log = BuildEconCommands(content, orderA, orderB, startingMoney, incomePerSecond, supplyPool, holdA, holdB);
+
+        var v1 = new Sim(content, baseSeed, log).Run(maxTicks);
+        var v2 = new Sim(content, baseSeed, log).Run(maxTicks);
+        bool deterministic = v1.FinalHash == v2.FinalHash
+                             && v1.Ticks == v2.Ticks
+                             && v1.HashTrace.Count == v2.HashTrace.Count
+                             && v1.HashTrace.Zip(v2.HashTrace).All(p => p.First == p.Second);
+
+        var stats = new EconStats { OrderA = specA, OrderB = specB, Runs = runs, DeterminismOk = deterministic };
+        long tickSum = 0;
+        for (int r = 0; r < runs; r++)
+        {
+            var sim = new Sim(content, baseSeed + (ulong)r, log);
+            var result = sim.Run(maxTicks);
+            switch (result.WinnerTeam)
+            {
+                case 0: stats.WinsA++; break;
+                case 1: stats.WinsB++; break;
+                default: stats.Draws++; break;
+            }
+            tickSum += result.Ticks;
+            stats.AvgNetWorthA += NetWorth(sim.World, 0);
+            stats.AvgNetWorthB += NetWorth(sim.World, 1);
+            stats.AvgAliveA += sim.World.AliveCount(0);
+            stats.AvgAliveB += sim.World.AliveCount(1);
+            stats.StallA ??= sim.World.QueueStallReason(0);
+            stats.StallB ??= sim.World.QueueStallReason(1);
+            stats.LastFinalHash = result.FinalHash;
+        }
+        stats.AvgTicks = (double)tickSum / runs;
+        stats.AvgNetWorthA /= runs;
+        stats.AvgNetWorthB /= runs;
+        stats.AvgAliveA /= runs;
+        stats.AvgAliveB /= runs;
+        return stats;
+    }
+
+    private static double NetWorth(World w, int team)
+    {
+        Fix64 v = w.Teams[team].Money + w.Teams[team].PoolRemaining;
+        for (int i = 0; i < w.UnitCount; i++)
+            if (w.Units[i].Alive && w.Units[i].Team == team)
+                v += Fix64.FromInt(w.Content.Units[w.Units[i].ProtoIdx].Cost);
+        return v.ToDoubleForDisplay();
     }
 
     /// <summary>

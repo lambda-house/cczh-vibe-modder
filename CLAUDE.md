@@ -1,16 +1,96 @@
 # rts-skeleton — Claude Code project memory
 
+**Goal: an AI modding engine for Command & Conquer: Generals Zero Hour.** An agent,
+using skills and templates, authors content — factions, generals, units, armies —
+which is validated and measured here and then **compiled to ZH `Data/INI` and run on
+the real engine**. ZH supplies the runtime and the packaging; we supply the authoring
+model, the validation, and the measurement.
+
+The division of labour, and the reason each half exists:
+
+- **ZH is the runtime.** `~/GeneralsX/GeneralsZH` (built native arm64) executes the
+  output. Packaging is already solved: loose files shadow the `.big` archives — that is
+  the engine's own mod mechanism, demonstrated live parsing 39,771 lines of loose INI
+  with no archive present. A `.big` writer is a convenience, never a blocker.
+- **Our sim is the pre-flight.** Lint, counter matrix and skirmish measure a pack in
+  seconds — what playtesting costs hours. Determinism is what makes that measurement
+  reproducible and attributable to a `contentHash`.
+- **The extracted model is the vocabulary.** Their `FieldParse` tables are the target
+  schema, so content and knowledge transfer in both directions.
+
+Two consequences that shape every slice:
+
+1. **Their caps are our caps.** 128 upgrade bits (82 used, 46 free), 14 usable command
+   slots, 3 weapon slots, 4 veterancy levels, 38 damage types, a closed SpecialPowerType
+   enum, `NUM_GENERALS 12`. A pack valid here but over their limits produces a mod that
+   will not load. `rts lint --target zh` must enforce them.
+2. **Emittable ≠ simulated.** A unit needs a `CommandButton`, a numbered `CommandSet`
+   slot and string labels or it is invisible in-game however correct its stats are. We
+   must EMIT fields we will never simulate. Coverage therefore has two axes; conflating
+   them ships packs that measure beautifully and never appear.
+
+**Divergence is the standing risk.** Two engines now compute the same battle. Where our
+model and theirs disagree — additive-in-excess bonuses, `ceil()` tick quantisation, the
+two-band splash step — our numbers stop being predictions. Everything copied verbatim
+from their source was for exactly this reason, and it is now testable rather than
+theoretical.
+
+**Art is deferred, not solved.** 32.9% of shipped models (2,928) are referenced by
+nothing and are free to adopt, so new content is playable on existing art immediately.
+That is a development accelerator and a personal-use path — **not** a distribution plan.
+
 Deterministic, data-driven RTS sim core (C&C Generals mold). Headless sim +
-content model + balancing harness. No rendering yet. Full context: README.md.
+content model + balancing harness + Godot inspection shell. Full context: README.md.
+
+## Reference material (on disk, no retail assets needed)
+
+Two measured studies justify the roadmap below; every slice cites a number from one
+of them.
+
+- `docs/ZERO-HOUR-ANATOMY.md` — the **content model**, measured from the community corpus.
+- `docs/ZERO-HOUR-ASSETS.md` — the **shipped assets** and what can be replaced, measured
+  from retail. Where the two disagree on a count, **retail wins** (the 104p patch adds
+  content: 363 weapons vs 420, 53 armor sets vs 57, 96 sciences vs 100).
+
+Sources on disk:
+
+- `~/work/oss/CnC_Generals_Zero_Hour` — EA's GPL v3 source. **Schema authority**:
+  the `FieldParse` tables enumerate every legal key of every content type.
+- `~/work/oss/zh-retail/Data/INI` — retail INI, 118 files / 538,362 lines, extracted
+  from `INIZH.big`. **Authoritative for planning.**
+- `~/work/oss/GeneralsGamePatch/.../Data/INI` — the 104p community corpus, 581,467 lines.
+- `~/GeneralsX/GeneralsZH` — retail install, **running natively on arm64**. 35 `.big`
+  archives in two layers (ZH is a delta over base Generals in `ZH_Generals/`):
+  26,264 files, 2.23 GB, 9,000 models, 7,891 textures.
+  `~/GeneralsX/content-mode.sh stock|104p|status` toggles the loose-file overlay.
+- `scratchpad/bigtool.py` — `.big` reader/extractor (`list|tree|names|extract`).
+
+**Legal, settled: the GPL covers the engine source only.** `Data/INI`, the `.big`
+archives, `generals.csf`, the maps and all art remain EA-copyrighted. No retail-derived
+content pack ever ships from this project. If we want the combat-core acceptance test,
+build a ZH-*shaped* pack from first principles and assert *qualitative* counter
+relationships, not retail values. Do not relitigate this.
+
+Quote measured numbers from these docs rather than reasoning from general RTS knowledge —
+the corpus repeatedly contradicts intuition (terrain is gameplay-dead; bonuses are
+additive-in-excess, not multiplicative; the generals are forks, not diffs; and art is
+110:1 of the bytes but 0% of the simulation).
 
 ## Build / verify
 
 - Build: `dotnet build -c Release` (needs .NET 8 SDK; zero NuGet deps by design)
-- Run: `dotnet bin/Release/net8.0/rts.dll <verb>` — verbs: `lint`, `duel`, `matrix`, `replay`
-- **After ANY change under Core/, Content/, or Runtime/, run all three and treat failure as a broken build:**
+- Run: `dotnet bin/Release/net8.0/rts.dll <verb>` — verbs: `lint`, `duel`, `matrix`,
+  `econ`, `faction`, `replay`
+- **`./e2e.sh` runs the whole gate below plus the demos and the shell check.** Prefer it.
+- **After ANY change under Core/, Content/, or Runtime/, run all four and treat failure as a broken build:**
   1. `rts lint`
   2. `rts replay --a crusader --b battlemaster --seed 7` → must print `DETERMINISM OK`
   3. `rts duel --a crusader --b technical --n 20 --seed 42` (smoke)
+  4. `rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42`
+     → must print `determinism: OK` (covers the production system's replay surface)
+- If `godot/` is touched, also run `./e2e.sh` — it asserts the shell reaches the
+  same final state hashes as the harness. A mismatch means presentation has
+  leaked into the sim; treat it as a determinism bug, not a rendering bug.
 
 ## Hard invariants — never violate, never "optimize away"
 
@@ -20,20 +100,50 @@ content model + balancing harness. No rendering yet. Full context: README.md.
   (`ToDoubleForDisplay`). Introducing a float into Runtime/ is a determinism
   bug even if all tests pass on this machine.
 - **System order in `Sim.Step` is part of the replay contract:** commands →
-  cooldowns → targeting → movement → combat. Do not reorder, merge, or
-  parallelize across units without an explicit design decision.
+  production/economy → **loadout/stat re-resolve** → cooldowns → targeting →
+  movement → combat. The loadout phase is not optional bookkeeping: a flag gained
+  this tick re-selects a conditional variant, which changes weapon and armor class —
+  i.e. stats. Without its own pinned phase, whether a shot used the old or new weapon
+  would depend on which system ran first, intermittently. Do not
+  reorder, merge, or parallelize across units without an explicit design
+  decision. Within production: income accrual, then research queue, then unit
+  queue, teams in ascending index — research has funding priority over units.
 - **Iteration is always ascending unit index.** No dictionary/hash-order
   iteration over sim state, no LINQ ordering that isn't explicitly `Ordinal`.
+  **This extends to pack loading:** when layered packs land (slice 1), a directory
+  scan must be sorted `Ordinal` by path before loading. ZH's `INI::loadDirectory`
+  sorts for exactly this reason — its comment reads *"This keeps things the same
+  between machines in a network game."* A directory-scan loader is the most likely
+  future source of hash-order nondeterminism in this codebase.
 - **Ties break deterministically** (e.g. targeting: `(distSq, unitIdx)`).
   Every new comparison needs a total order.
 - **New randomness gets its own `Pcg32` stream id** (next free integer in
   `Sim`'s constructor). Never share a stream between systems; never reuse an id.
 - **Every new sim-state field must be added to the state hash**
   (`World.HashInto` / `Sim.HashState`) in a fixed position.
+- **Prototype identity is name-derived, never ordinal.** `World.HashInto` folds in
+  `UnitProto.StableId` (FNV-1a64 of the id), *not* `ProtoIdx`. `ProtoIdx` is a
+  runtime array index and must never reach a hash, a replay, or the wire. This is
+  what makes content growth safe: adding a unit that sorts anywhere cannot change
+  what an existing replay means. Renaming a unit legitimately does.
+  *This was a real bug, not a hypothetical:* the earlier "append after the base
+  units" rule was enforced by alphabetical luck, and `laser_crusader` silently
+  renumbered `ranger`/`technical` — `technical vs ranger` moved
+  `c773f31f6888b7c8` → `2cdfb299cdae6006` while the two pinned hashes stayed put,
+  because they only observe units *alive in the final state*. Pinned hashes are a
+  weak guard for this class of bug; `e2e.sh` now also runs a **generative** check
+  (inject an unreferenced unit named to sort before and after everything, assert
+  every matchup is unchanged). Keep that check — it is the one that actually holds.
 - **Sim core stays engine- and package-agnostic**: no NuGet packages, no
   engine types, no wall clock, no I/O inside Core/, Content/ (post-load),
-  Runtime/, Harness/. Presentation projects added later may depend on things;
-  the sim may not.
+  Runtime/, Harness/. The root `NuGet.config` clears all package sources to
+  enforce this; `godot/NuGet.config` re-adds the source for presentation only.
+  Never relax the root one — scope an override to the consuming subtree.
+- **Presentation reads `Snapshot`, writes `Sim.Enqueue`, and nothing else.**
+  Snapshots are immutable, hand out doubles at the display boundary, and can
+  never flow back. `Enqueue` rejects commands stamped for the current or a past
+  tick, so input is always scheduled ahead — the rule lockstep needs. Do not add
+  a "just this once" mutable accessor for the renderer.
 - Content lives in `content/*.json`; behavior changes via data edits are
   preferred over code changes. `contentHash` in tool output is the provenance
   anchor — quote it when reporting balance numbers.
@@ -41,25 +151,126 @@ content model + balancing harness. No rendering yet. Full context: README.md.
 ## Architecture map
 
 - `Core/` — Fix64, Pcg32 (streamed RNG), Fnv1a64 (state/content hashing)
-- `Content/` — JSON schema DTOs; `ContentDb` compiles + lints packs
+- `Content/` — JSON schema DTOs; `ContentDb` compiles + lints packs, and
+  resolves faction inheritance (`extends`/`add`/`remove`/`modify`) into flat
+  rosters plus faction-local unit variants named `faction/unit`
 - `Runtime/` — `Command` (replay = contentHash + seed + command log),
-  `World` (flat archetype, tombstone slots), `StatSheet` (modifier algebra:
-  `(base + Σadd) × Πmul`), `Sim` (tick loop, hash trace)
-- `Harness/` — duel series, pairwise counter matrix, determinism verification
+  `World` (flat archetype, tombstone slots, per-team `TeamState`: money/finite
+  supply pool/income, research + unit queues, researched flags — all hashed),
+  `StatSheet` (modifier algebra: `(base + Σadd) × Πmul`), `Sim` (tick loop,
+  production system, hash trace)
+  `Snapshot` (immutable read seam for renderers; doubles, never flows back)
+- `Harness/` — duel series, pairwise counter matrix, build-order econ
+  scenarios (`RunEconSeries`; specs like `"war_factory,crusader*"`),
+  determinism verification
 - `Program.cs` — CLI verbs; `--json` output is the future MCP tool seam
+- `godot/` — Godot 4 presentation shell, its own csproj referencing the sim.
+  `SimHost` (fixed-step accumulator + snapshot pair, no Godot types) and
+  `Main` (Godot Node2D: draws, HUD, input). Excluded from the sim csproj.
 
 ## Known simplifications (intentional; see README for replacement plans)
 
 Flat archetype not ECS; tombstones not generational handles; no
-collision/pathing; cumulative-only modifier stacking; tech DAG linted but not
-yet driving production; factions are flat lists not base+delta patches.
+collision/pathing; cumulative-only modifier stacking; no upgrade/general's-power
+content types yet (the algebra exists, the vocabulary doesn't); content is one
+monolithic game.json rather than layered packs; economy is abstract (two team queues, income from a
+finite pool, cost deducted at build start, no power, no buildings — so rushes
+can only spawn-camp, there are no economic targets).
+
+**Anti-pattern, never adopt: a presentation-only or partial-field variant type.** ZH's
+`ObjectReskin` is restricted to ten appearance fields and cannot change Side, cost,
+prerequisites, name, portrait or voice — so EA cloned 477 objects wholesale instead,
+shipping 180,490 lines to express 5,385 lines of intent. **The restriction is what
+created the duplication.** Our `modify` patch stays unrestricted, however tempting a
+"just the visuals" variant looks once a renderer matures.
 Don't "fix" these in passing — each is a deliberate slice boundary.
 
-## Roadmap order (risk-retired first)
+## Roadmap order (evidence-first; every slice cites docs/ZERO-HOUR-ANATOMY.md)
 
-1. Production/economy system + build-order harness scenarios
-2. Godot 4 + C# shell reading interpolated sim snapshots (separate project
-   referencing the sim as a library — sim stays headless)
-3. MCP server wrapping harness verbs (`validate_mod`, `run_matchup`,
-   `query_counter_matrix`) keyed by contentHash
-4. Lockstep session layer (command-log exchange + per-tick hash desync check)
+Done: production/economy + build-order scenarios; Godot shell on snapshots;
+base + delta faction layering (`rts faction`); **`rts compile --target zh`** —
+packs leave the harness as additive `Data/INI` the retail engine loads (9 content
+types, 42/42 subsystems, 0 parse errors), with `rts lint --target zh` reporting
+caps / round-trip loss / unmappable mechanics as three separate failure kinds.
+
+0. ~~**Name-derived prototype identity**~~ — done. `UnitProto.StableId` replaced
+   `ProtoIdx` in the state hash; hashes re-pinned once, deliberately; `e2e.sh` gained
+   a generative renumbering guard. This was a verified live bug, not a precaution.
+
+1. ~~**Layered content packs + `rts diff`**~~ — done. N-layer `--mod` stacking, ordinal
+   sorted; `contentHash` is an ordered hash over `(ordinal, packName, version, bytesHash)`
+   plus resolved content; `rts diff` emits the delta taxonomy and duplication ratio.
+   *Rationale: this is the authoring substrate. Everything below is a sim verb, and
+   every one of them would otherwise be authored by hand-editing a single monolithic
+   `game.json` — which is precisely the workflow this product exists to replace. It
+   also converts every later slice into a measurable diff ("author a mod, measure the
+   delta against base"), which is the loop the whole agent layer assumes. Do it first
+   and the rest get cheaper to validate; do it last and you pay monolithic-edit cost
+   every time. ZH's `map.ini` proves the semantics (`AddModule`/`RemoveModule`/
+   `ReplaceModule`, subtractive list edits, override-creates-new-instance); what it
+   lacks is provenance, which is exactly what `contentHash` supplies.*
+
+2. ~~**Schema hygiene**~~ — done. `defaults` block, load-time duration→tick quantisation
+   with `ceil()`, `unitsPerPurchase`, explicit `default` on `damageVsArmor` rows.
+   *ZH's `DefaultThingTemplate` is 130 lines serving all 1,949 objects; without one,
+   every new field is a breaking change to every existing unit.*
+3. ~~**Modifier semantics**~~ — done. Additive-in-excess op; the upgrade condition is a
+   named **flag set**, not one bit; flag-keyed **conditional variant blocks** that
+   re-resolve in their own pinned `Sim.Step` phase.
+   *Our algebra covers 4.5% of ZH's real upgrade references; selectors cover the rest.
+   1,716 of ~2,300 real condition clauses are literally `None`, so the grammar is tiny.*
+4. **Faction-scoped reference resolution** + the lint rule "a variant must not reference
+   a base prototype that has a variant in this faction". (M)
+   *Would have caught 67 real defects in shipping ZH content. Cheap now while our
+   reference graph is trivial; impossible to retrofit later. Risk-retired-first.*
+5. ~~**Structures**~~ — done. A unit with speed 0, `KindOf` role flags and
+   `BuildCompletion`; prerequisites are objects, so razing a factory revokes buildability.
+   *Retail splits 570 buildables into 379 units / 261 structures, and a minimum viable ZH
+   faction is five objects of which THREE are buildings. We have no structure concept at
+   all — which is exactly why "rushes can only spawn-camp, there are no economic targets"
+   appears in Known simplifications. Smaller than upgrades, and it unblocks the harness's
+   biggest known gap.*
+6. ~~**Upgrades as a content type**~~ — done as tech nodes granting flags, which is their
+   model: an upgrade carries no effect data, it sets a bit and a keyed loadout is selected.
+   Compiles to a real `Upgrade` block + `WeaponSetUpgrade`/`ArmorUpgrade`/`MaxHealthUpgrade`.
+   **Their one PLAYER_UPGRADE bit per object is a reported divergence** for any unit with
+   more than one variant — the same restriction that forced 268 `ConflictsWith` lines on
+   retail. Ours keeps a flag *set*; only the first variant survives compilation.
+7. ~~**Rules engine** `{on, when, do}` (death event first) + **spawn lists**~~ — done.
+   Closed event enum (death), closed filter (required flags), closed effect enum
+   (spawn|grantMoney|damageInRadius|grantFlag) with open parameters. Cascades bounded at
+   4 generations and CLAMPED, never thrown — a content bug degrades a battle, it does not
+   crash a sweep. Spawn placement has its own `Pcg32` stream (id 2) so adding a wreck
+   cannot shift a single combat roll. Next events to add: damaged, built, timer.
+8. **Garrison + capturable structures**. (M)
+   *`GARRISONED` is the only terrain-shaped combat modifier in all of ZH and needs zero
+   geometry. Delivers terrain's tactical payoff before any heightfield exists.*
+9. **Powers + science/rank second currency**, `rts science-matrix`. (L)
+10. **Spatial index (uniform grid)** — before splash/aura, not after. (M)
+   *`Sim.TargetingSystem` is a full nested scan every tick with no broad phase. Splash
+   adds a radius scan per shot; auras add one per behavior per unit per tick; maps and
+   structures push counts from ~24 to hundreds. For a product whose value is BATCH
+   measurement (matrix = pairs × n × ticks), this is what decides whether the balance
+   corpus is cheap or unaffordable.*
+11. **MCP server** wrapping the harness verbs (`validate_mod`, `run_matchup`,
+   `query_counter_matrix`, `put_pack`, `compare_packs`) keyed by contentHash. (M)
+   *Lands here, not earlier: it is the agent-facing seam and should have a real design
+   space behind it — but it needs slice 1's pack substrate, which is why that moved to
+   the front.*
+12. **Passability grid** — one byte/cell + 3-bit surface mask, then pathing. (XL)
+   *Must deliberately re-baseline the pinned hashes. Chokepoints/flanking/water are
+   emergent from passability, not authored.*
+13. **Elevation as a boolean LOS gate only**. (M) *Conditional — defer until measurement
+    shows 7 and 11 didn't move the counter matrix enough.*
+
+Two design decisions this roadmap owes an answer to before the slice that needs them:
+**(a)** ~~flag changes re-select loadouts~~ — ANSWERED: `LoadoutSystem` runs between
+production and cooldowns; see the system-order invariant above. **(b)** `defaults` → entity `extends` → faction
+`modify` → pack `patch` is four inheritance mechanisms; state one total resolution order
+and what happens when a pack patch removes what a faction modify replaced.
+
+Deliberately out, on evidence: terrain types as content (ZH's are inert — 291 blocks,
+one call site, a flag nothing sets); art/FX/audio; prerequisite OR-expressions; slope-
+modulated speed; elevation damage/range/cover; chokepoints as a content type.
+
+Lockstep session layer stays last, unchanged.
