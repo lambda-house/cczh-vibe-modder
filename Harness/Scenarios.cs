@@ -89,7 +89,8 @@ public static class Scenarios
         }
     }
 
-    public static DuelStats RunDuelSeries(ContentDb content, string a, string b, int budget, int runs, ulong baseSeed, int maxTicks = DefaultMaxTicks)
+    public static DuelStats RunDuelSeries(ContentDb content, string a, string b, int budget, int runs,
+                                          ulong baseSeed, int maxTicks = DefaultMaxTicks, bool bruteForce = false)
     {
         int pa = content.UnitIndexById[a];
         int pb = content.UnitIndexById[b];
@@ -99,7 +100,7 @@ public static class Scenarios
         long tickSum = 0;
         for (int r = 0; r < runs; r++)
         {
-            var sim = new Sim(content, baseSeed + (ulong)r, log);
+            var sim = new Sim(content, baseSeed + (ulong)r, log) { UseSpatialIndex = !bruteForce };
             var result = sim.Run(maxTicks);
             switch (result.WinnerTeam)
             {

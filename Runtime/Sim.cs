@@ -52,6 +52,20 @@ public sealed class Sim
     private readonly List<PendingDeath> _deaths = new();
 
     /// <summary>
+    /// Broad phase over live positions, rebuilt once per tick. A pure accelerator: it must
+    /// never change an answer. <see cref="UseSpatialIndex"/> turns it off so the harness can
+    /// prove that by running both and comparing state hashes.
+    /// </summary>
+    private readonly SpatialGrid _grid = new();
+    private int[] _candidates = new int[256];
+
+    /// <summary>
+    /// Off = every radius query is the original full scan. Exists ONLY so equivalence is
+    /// testable; both paths must produce bit-identical state, and e2e asserts it.
+    /// </summary>
+    public bool UseSpatialIndex = true;
+
+    /// <summary>
     /// How many generations of death-triggered deaths may chain. ZH has NO bound here — a
     /// SlowDeathBehavior spawns an OCL whose objects carry their own death rules, and
     /// nothing caps the cascade. We clamp instead of failing: a content bug should degrade
@@ -135,8 +149,15 @@ public sealed class Sim
         HoldingSystem();
         LoadoutSystem();
         TickCooldowns();
+        // TWO rebuilds, not one, because the two consumers need different instants and a
+        // broad phase that is even slightly stale is a wrong answer rather than a slow one.
+        // Targeting must see units PRODUCED this tick — a unit finished this tick acts this
+        // tick — and combat must see positions AFTER this tick's movement. One rebuild would
+        // have to be stale for one of them. Two are still O(n) against the O(n^2) they replace.
+        if (UseSpatialIndex) _grid.Rebuild(World);
         TargetingSystem();
         MovementSystem();
+        if (UseSpatialIndex) _grid.Rebuild(World);
         CombatSystem();
         DeathRuleSystem();
 
@@ -558,14 +579,21 @@ public sealed class Sim
 
             Fix64 bestDist = Fix64.MaxValue;
             int best = -1;
-            for (int j = 0; j < World.UnitCount; j++)
+            int cand = Candidates(u.X, u.Y, weapon.AcquireRange);
+            for (int c = 0; c < cand; c++)
             {
+                int j = _candidates[c];
                 if (j == i) continue;
                 ref readonly var e = ref World.Units[j];
                 if (!e.Alive || e.Team == u.Team) continue;
                 if (e.GarrisonHost >= 0) continue;
                 Fix64 d = DistSq(in u, in e);
-                if (d <= weapon.AcquireRangeSq && d < bestDist)
+                // EXPLICIT total order on (distSq, unitIdx). The ascending scan plus a strict
+                // `<` already produced exactly this, so writing it out moves no hash — but it
+                // is what lets a broad phase visit candidates in any order it likes without
+                // changing which target is chosen.
+                if (d > weapon.AcquireRangeSq) continue;
+                if (d < bestDist || (d == bestDist && j < best) || best < 0)
                 {
                     bestDist = d;
                     best = j;
@@ -689,8 +717,10 @@ public sealed class Sim
                 // inside one blast cannot depend on who died first.
                 Fix64 secondary = weapon.SecondaryDamage * spreadMult;
                 Fix64 cx = t.X, cy = t.Y;
-                for (int v = 0; v < World.UnitCount; v++)
+                int blast = Candidates(cx, cy, weapon.SplashRadius);
+                for (int b = 0; b < blast; b++)
                 {
+                    int v = _candidates[b];
                     ref readonly var victim = ref World.Units[v];
                     if (!victim.Alive) continue;
                     // Splash never reaches an occupant directly either, or a blast beside a
@@ -894,6 +924,29 @@ public sealed class Sim
         ts.PowerCooldown[powerIdx] = power.RechargeTicks;
         var origin = new PendingDeath(-1, team, x, y, ts.Flags, depth: 0);
         foreach (var e in power.Effects) ApplyEffect(e, in origin);
+    }
+
+    /// <summary>
+    /// Candidate unit indices within <paramref name="radius"/> of a point, ASCENDING.
+    ///
+    /// Falls back to the full unit table whenever the broad phase cannot serve the query —
+    /// index disabled, or the candidate buffer too small. The fallback is the original scan,
+    /// so a fallback is slow but never wrong; the buffer then grows so the next query of the
+    /// same shape is served by the grid. Returning a truncated set instead would be a desync.
+    /// </summary>
+    private int Candidates(Fix64 x, Fix64 y, Fix64 radius)
+    {
+        if (UseSpatialIndex)
+        {
+            int n = _grid.Query(x, y, radius, _candidates);
+            if (n >= 0) return n;
+            _candidates = new int[Math.Max(_candidates.Length * 2, World.UnitCount)];
+            n = _grid.Query(x, y, radius, _candidates);
+            if (n >= 0) return n;
+        }
+        if (_candidates.Length < World.UnitCount) _candidates = new int[World.UnitCount];
+        for (int i = 0; i < World.UnitCount; i++) _candidates[i] = i;
+        return World.UnitCount;
     }
 
     private void AwardKillXp(int attackerIdx, int victimCost)

@@ -314,12 +314,23 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    science-owner's wins. Not politeness: ascending unit index makes team 0 resolve first, and
    an EMPTY loadout measured 11/12 for team 0 before the swap. A 50% baseline is what makes
    the column readable — read any mirror result here as a delta, never as an absolute.
-10. **Spatial index (uniform grid)** — before splash/aura, not after. (M)
-   *`Sim.TargetingSystem` is a full nested scan every tick with no broad phase. Splash
-   adds a radius scan per shot; auras add one per behavior per unit per tick; maps and
-   structures push counts from ~24 to hundreds. For a product whose value is BATCH
-   measurement (matrix = pairs × n × ticks), this is what decides whether the balance
-   corpus is cheap or unaffordable.*
+10. ~~**Spatial index (uniform grid)**~~ — done. `Runtime/SpatialGrid.cs`: counting-sort
+   buckets over Fix64 raw shifts, no floats and no hash containers, rebuilt **twice** a tick.
+   Two, not one, because targeting must see units produced this tick while combat must see
+   positions after this tick's movement — one rebuild would be stale for one of them, and a
+   stale broad phase is a wrong answer, not a slow one.
+   *Measured: ~2,000 units 6.9s → 2.1s; ~4,000 units 75.9s → 7.9s against the brute path.
+   Below ~800 units it is a wash, which is the honest crossover for this content.*
+   **`Query` returns candidates ASCENDING and that is load-bearing**, not tidiness: splash
+   applies damage in visit order, deaths feed the rule cascade, and the cascade draws from a
+   `Pcg32` stream — an unsorted broad phase would silently reorder RNG draws.
+   **The cell size ADAPTS to the occupied extent.** The first version clamped outliers into
+   edge cells: still correct, but at 4,000 units spread over 12,000 world units everything
+   past the cap piled into two rows and it degenerated to worse-than-quadratic (28.8s).
+   **`--brute` disables it so equivalence is TESTABLE** — e2e asserts identical state hashes
+   at three scales plus a splash case. Note `--brute` is an equivalence ORACLE, not a fair
+   performance baseline: it materialises the candidate list, so it is slower than the
+   pre-slice nested scan was.
 11. **MCP server** wrapping the harness verbs (`validate_mod`, `run_matchup`,
    `query_counter_matrix`, `put_pack`, `compare_packs`) keyed by contentHash. (M)
    *Lands here, not earlier: it is the agent-facing seam and should have a real design

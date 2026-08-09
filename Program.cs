@@ -295,7 +295,10 @@ public static class Program
         int n = int.Parse(Opt(args, "--n", "200"));
         ulong seed = ulong.Parse(Opt(args, "--seed", "42"));
 
-        var s = Scenarios.RunDuelSeries(db, a, b, budget, n, seed);
+        // --brute disables the spatial broad phase. It exists so equivalence is TESTABLE:
+        // the grid is a pure accelerator and both paths must produce identical state hashes.
+        var s = Scenarios.RunDuelSeries(db, a, b, budget, n, seed,
+                                        bruteForce: Flag(args, "--brute"));
 
         if (Flag(args, "--json"))
         {

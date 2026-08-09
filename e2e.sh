@@ -19,23 +19,23 @@ echo "build: OK"
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
 echo
-echo "== gate 1/15: content lint =="
+echo "== gate 1/16: content lint =="
 rts lint
 
 echo
-echo "== gate 2/15: replay determinism =="
+echo "== gate 2/16: replay determinism =="
 rts replay --a crusader --b battlemaster --seed 7
 
 echo
-echo "== gate 3/15: duel smoke =="
+echo "== gate 3/16: duel smoke =="
 rts duel --a crusader --b technical --n 20 --seed 42
 
 echo
-echo "== gate 4/15: econ determinism =="
+echo "== gate 4/16: econ determinism =="
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
 echo
-echo "== gate 5/15: faction layering resolves =="
+echo "== gate 5/16: faction layering resolves =="
 rts faction
 
 echo
@@ -51,7 +51,7 @@ echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
 echo
-echo "== gate 6/15: layered packs + diff =="
+echo "== gate 6/16: layered packs + diff =="
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -75,7 +75,7 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 echo "  base unaffected by the mod: $base_again"
 
 echo
-echo "== gate 7/15: structures are economic targets =="
+echo "== gate 7/16: structures are economic targets =="
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -98,7 +98,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 echo "  factory present => units build and win (A 3/3)"
 
 echo
-echo "== gate 8/15: flags and conditional variants =="
+echo "== gate 8/16: flags and conditional variants =="
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -128,7 +128,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
 echo
-echo "== gate 9/15: event rules {on, when, do} =="
+echo "== gate 9/16: event rules {on, when, do} =="
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -170,7 +170,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 echo "  stalled queues are reported, not silent"
 
 echo
-echo "== gate 10/15: factions are startable, not just rosters =="
+echo "== gate 10/16: factions are startable, not just rosters =="
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -190,7 +190,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 echo "  the loser's stall is reported, not silent"
 
 echo
-echo "== gate 11/15: compile to a Zero Hour mod =="
+echo "== gate 11/16: compile to a Zero Hour mod =="
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -217,7 +217,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
 echo "  emitted enum values are ones retail actually uses"
 
 echo
-echo "== gate 12/15: target-zh lint — caps, round-trip, divergence =="
+echo "== gate 12/16: target-zh lint — caps, round-trip, divergence =="
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -294,7 +294,7 @@ tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first co
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
 
 echo
-echo "== gate 13/15: faction-scoped reference resolution =="
+echo "== gate 13/16: faction-scoped reference resolution =="
 FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
 
 # A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
@@ -362,7 +362,7 @@ sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' require
 echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
 
 echo
-echo "== gate 14/15: garrison + capture =="
+echo "== gate 14/16: garrison + capture =="
 # GARRISONABLE is the only terrain-shaped combat modifier in all of Zero Hour and it needs
 # no geometry at all. Occupants cannot be targeted; damage reaches them only as spill from a
 # ClearsGarrison weapon hitting the HOST — 17 of retail's 363 weapons, 4.7% of the arsenal.
@@ -410,7 +410,7 @@ grep -q "AutoDepositUpdate" "$GOUT/Data/INI/Object/garrison.ini" \
 echo "  compiles to GarrisonContain + AutoDepositUpdate + AllowAttackGarrisonedBldgs"
 
 echo
-echo "== gate 15/15: sciences — a second currency earned by fighting =="
+echo "== gate 15/16: sciences — a second currency earned by fighting =="
 # Skill points come from KILLS and from nothing else; no economy converts into them. ZH's
 # whole ladder is five Rank.ini blocks: 0/800/1500/2500/5000 needed, 1/1/1/1/3 granted, so
 # seven points for a game against 13-20 purchasable sciences per faction. Every purchasable
@@ -467,6 +467,46 @@ grep -q "PrerequisiteSciences = sciences_marksmanship1" "$SOUT/zh/Data/INI/Scien
 rl=$(rts lint --target zh --mod content/mods/sciences.json | grep -c "rank ladder is NOT emitted" || true)
 [ "$rl" = "1" ] || { echo "  RANK LADDER DIVERGENCE NOT REPORTED"; exit 1; }
 echo "  Science blocks compile additively; the numbered Rank ladder is reported, not overwritten"
+
+echo
+echo "== gate 16/16: spatial index is a PURE accelerator =="
+# Every radius query used to be a full scan, so tick cost was O(n^2) — and this product's
+# value is BATCH measurement, where a matrix is pairs x runs x ticks. The grid must change
+# the COST and nothing else, so the gate is equivalence, not speed: same seed, same content,
+# grid vs --brute, identical final state hash. A broad phase that changes an answer is a
+# desync, and pinned hashes alone would not catch it at scales they never reach.
+for budget in 3600 30000 300000; do
+  gh=$(rts duel --a ranger --b technical --n 1 --seed 42 --budget $budget --json \
+       | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+  bh=$(rts duel --a ranger --b technical --n 1 --seed 42 --budget $budget --json --brute \
+       | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+  [ "$gh" = "$bh" ] || { echo "  BROAD PHASE CHANGED AN ANSWER at budget $budget: $gh != $bh"; exit 1; }
+done
+echo "  grid == brute force at 3 scales (~24, ~200, ~2000 units)"
+
+# Splash is the case that would fail silently: damage is applied in visit order, deaths feed
+# the rule cascade, and the cascade draws from a Pcg32 stream. An unsorted broad phase would
+# reorder RNG draws while still hitting the right units.
+sg=$(rts duel --a katyusha --b ranger --n 4 --seed 7 --budget 12000 --json \
+     --mod content/mods/artillery.json | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+sb=$(rts duel --a katyusha --b ranger --n 4 --seed 7 --budget 12000 --json --brute \
+     --mod content/mods/artillery.json | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p')
+[ "$sg" = "$sb" ] || { echo "  SPLASH ORDER DIVERGED: $sg != $sb"; exit 1; }
+echo "  splash order preserved under the grid (candidates come back ascending)"
+
+# And it has to actually be faster, or it is pure risk. Wall clock is noisy, so assert only
+# a large margin at a scale where the quadratic term dominates.
+gt=$( { time rts duel --a ranger --b technical --n 1 --seed 42 --budget 300000 >/dev/null; } 2>&1 \
+      | grep real | sed 's/.*m\([0-9.]*\)s/\1/')
+bt=$( { time rts duel --a ranger --b technical --n 1 --seed 42 --budget 300000 --brute >/dev/null; } 2>&1 \
+      | grep real | sed 's/.*m\([0-9.]*\)s/\1/')
+python3 -c "
+import sys
+g, b = float('$gt'), float('$bt')
+if g * 2.0 > b:
+    print(f'  BROAD PHASE NOT PAYING: grid {g:.2f}s vs brute {b:.2f}s at ~2000 units'); sys.exit(1)
+print(f'  ~2000 units: {g:.2f}s with the grid vs {b:.2f}s without ({b/g:.1f}x)')
+"
 
 echo
 echo "== regression: pinned replay hashes =="

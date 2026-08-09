@@ -11,6 +11,7 @@ public sealed class WeaponDef
     public Fix64 Damage;
     public Fix64 Range;
     public Fix64 RangeSq;
+    public Fix64 AcquireRange;
     public Fix64 AcquireRangeSq;
     public int CooldownTicks;
     public Fix64 Spread;
@@ -23,6 +24,8 @@ public sealed class WeaponDef
     /// <summary>0 = unlimited shots (no clip).</summary>
     public int ClipSize;
     public int ClipReloadTicks;
+    /// <summary>Outer splash radius (linear), for the spatial broad phase.</summary>
+    public Fix64 SplashRadius;
     /// <summary>Reaches infantry inside a garrisoned building. ZH: AllowAttackGarrisonedBldgs.</summary>
     public bool ClearsGarrison;
     public bool HasSplash => PrimaryRadiusSq > Fix64.Zero || SecondaryRadiusSq > Fix64.Zero;
@@ -397,6 +400,7 @@ public sealed class ContentDb
                 Damage = Fix64.FromDoubleAtLoadBoundary(w.Damage),
                 Range = range,
                 RangeSq = range * range,
+                AcquireRange = acquire,
                 AcquireRangeSq = acquire * acquire,
                 CooldownTicks = Math.Max(1, w.CooldownTicks),
                 Spread = Fix64.FromDoubleAtLoadBoundary(w.Spread),
@@ -404,6 +408,11 @@ public sealed class ContentDb
                 SecondaryDamage = Fix64.FromDoubleAtLoadBoundary(w.SecondaryDamage),
                 SecondaryRadiusSq = Sq(w.SecondaryDamageRadius),
                 MinRangeSq = Sq(w.MinimumAttackRange),
+                // Linear radii for the spatial broad phase. Derived from the SAME authored
+                // doubles at the load boundary, never by taking a square root of the squared
+                // value in the sim — a sqrt in Runtime/ would be a determinism bug.
+                SplashRadius = Fix64.FromDoubleAtLoadBoundary(
+                    Math.Max(w.PrimaryDamageRadius, w.SecondaryDamageRadius)),
                 ClipSize = Math.Max(0, w.ClipSize),
                 ClipReloadTicks = w.ClipReloadSeconds is double crs
                     ? (int)Math.Ceiling(crs * TicksPerSecond)
