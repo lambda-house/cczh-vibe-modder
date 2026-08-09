@@ -34,10 +34,28 @@ public static class KindOf
     /// <summary>Satisfies an object prerequisite for other buildables.</summary>
     public const string Prerequisite = "IS_PREREQUISITE";
 
+    // There is deliberately NO "GARRISONABLE" role here. It reads like a KindOf and is not
+    // one: their bit-name table (KindOf.cpp) has NO_GARRISON, STEALTH_GARRISON and
+    // GARRISONABLE_UNTIL_DESTROYED, and nothing else. Garrisonability is expressed by the
+    // PRESENCE OF THE GarrisonContain MODULE — which is why the engine asks
+    // contain->isGarrisonable() rather than testing a flag. We copy that: a structure is
+    // garrisonable exactly when it declares a garrisonCapacity.
+    //
+    // Emitting the invented name was a hard load error, caught only by booting the engine.
+    // It survived a grep because "GARRISONABLE" is a substring of
+    // "GARRISONABLE_UNTIL_DESTROYED", and the three bare hits in retail are all comments.
+
+    /// <summary>
+    /// Ownership flips to whoever holds it. 177 retail objects carry this; the tech
+    /// buildings among them pay their owner on a timer (<c>AutoDepositUpdate</c>), which is
+    /// what makes a neutral building worth fighting over rather than scenery.
+    /// </summary>
+    public const string Capturable = "CAPTURABLE";
+
     /// <summary>The roles the simulation consults. Lint warns on anything outside this set.</summary>
     public static readonly string[] Known =
     {
-        Structure, Factory, CashGenerator, CountForVictory, Prerequisite,
+        Structure, Factory, CashGenerator, CountForVictory, Prerequisite, Capturable,
         // Declared, not yet consulted — present so content can be authored ahead of the
         // systems that will read them, exactly as ZH does.
         "VEHICLE", "INFANTRY", "AIRCRAFT", "SELECTABLE", "CAN_ATTACK", "IMMOBILE",

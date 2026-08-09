@@ -100,8 +100,11 @@ additive-in-excess, not multiplicative; the generals are forks, not diffs; and a
   (`ToDoubleForDisplay`). Introducing a float into Runtime/ is a determinism
   bug even if all tests pass on this machine.
 - **System order in `Sim.Step` is part of the replay contract:** commands →
-  production/economy → **loadout/stat re-resolve** → cooldowns → targeting →
-  movement → combat. The loadout phase is not optional bookkeeping: a flag gained
+  production/economy → **garrison/capture** → **loadout/stat re-resolve** → cooldowns →
+  targeting → movement → combat. The holding phase is pinned ahead of loadout because
+  capture flips a structure's TEAM, and team is read by targeting (who is an enemy), by
+  production (whose factory) and by the defeat test — settle ownership before anything
+  asks whose it is. The loadout phase is not optional bookkeeping: a flag gained
   this tick re-selects a conditional variant, which changes weapon and armor class —
   i.e. stats. Without its own pinned phase, whether a shot used the old or new weapon
   would depend on which system ran first, intermittently. Do not
@@ -132,6 +135,13 @@ additive-in-excess, not multiplicative; the generals are forks, not diffs; and a
   reported by lint. Retail proves the cost of getting this wrong: 88 bad references / 68
   broken definitions shipped, and `Prerequisites` accounts for none of them — 64 are
   references reached through a shared intermediary.
+- **Never invent an enum value, and never confirm one by substring.** Every literal
+  `ZhCompiler` emits must be copied from a retail block that demonstrably loads, and closed
+  enums are checked against their C++ name table, not against a grep of the INI. Five have
+  bitten us: `NO_Z_MOTION` (real: `NO_Z_MOTIVE_FORCE`), `Options = CANCELABLE`,
+  `IS_PREREQUISITE`, `SpreadFormation = 32` (a BOOL), and `GARRISONABLE` — which greps as
+  present only because it is a substring of `GARRISONABLE_UNTIL_DESTROYED`. Each was a hard
+  load error found only by booting the engine.
 - **Ties break deterministically** (e.g. targeting: `(distSq, unitIdx)`).
   Every new comparison needs a total order.
 - **New randomness gets its own `Pcg32` stream id** (next free integer in
@@ -268,9 +278,21 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    4 generations and CLAMPED, never thrown — a content bug degrades a battle, it does not
    crash a sweep. Spawn placement has its own `Pcg32` stream (id 2) so adding a wreck
    cannot shift a single combat roll. Next events to add: damaged, built, timer.
-8. **Garrison + capturable structures**. (M)
-   *`GARRISONED` is the only terrain-shaped combat modifier in all of ZH and needs zero
-   geometry. Delivers terrain's tactical payoff before any heightfield exists.*
+8. ~~**Garrison + capturable structures**~~ — done. `garrisonCapacity` on a structure, a
+   `Garrison` command, occupants strictly untargetable, and `clearsGarrison` on a weapon as
+   the only way damage reaches them — through the HOST, which is ZH's model. Plus
+   `CAPTURABLE` + `AutoDepositUpdate`-style deposits, in a pinned `HoldingSystem` phase
+   between production and loadout because capture flips a TEAM.
+   *Terrain's tactical payoff with zero geometry, and the numbers are theirs: 17 of 363
+   weapons (4.7%) set `AllowAttackGarrisonedBldgs`, `ContainMax` is 10 on 204 of 236
+   buildings, the derrick is 200 cash per 12s on 2000 hitpoints.*
+   **`GARRISONABLE` is NOT a KindOf** — their bit table has only `NO_GARRISON`,
+   `STEALTH_GARRISON`, `GARRISONABLE_UNTIL_DESTROYED`. Garrisonability is the PRESENCE OF
+   THE `GarrisonContain` MODULE. Emitting the invented name was a hard load error; a grep
+   missed it because it is a substring of the real one. `e2e.sh` guards it.
+   *Known limit, stated not hidden:* capture is proximity-based and `World.TeamCount` is 2,
+   so there is no neutral owner — a capturable building is always someone's, and attackers
+   stop at weapon range and shell it rather than walk onto it.
 9. **Powers + science/rank second currency**, `rts science-matrix`. (L)
 10. **Spatial index (uniform grid)** — before splash/aura, not after. (M)
    *`Sim.TargetingSystem` is a full nested scan every tick with no broad phase. Splash

@@ -1,0 +1,111 @@
+{
+  // Garrison + capture — terrain's tactical payoff with no geometry at all.
+  //
+  //   rts duel --a ranger --b technical --n 40 --seed 42 --mod content/mods/garrison.json
+  //   rts econ --a "usa_factory,ranger*" --b "usa_factory,dragon_tank*" \
+  //            --n 20 --seed 42 --mod content/mods/garrison.json
+  //
+  // Why this before any heightfield: GARRISONABLE is the ONLY terrain-shaped combat
+  // modifier in all of Zero Hour, and it needs no elevation, no passability and no
+  // tileset. Occupants become untargetable — except by the 17 weapons of 363 (4.7%) that
+  // set AllowAttackGarrisonedBldgs: flame, toxin, flashbang, sniper, C4. A held building
+  // beats 95.3% of the arsenal and folds to the rest. That is a hard counter class
+  // produced entirely by data.
+  //
+  // The other half is the capturable tech building. Their AutoDepositUpdate pays a flat
+  // sum on a fixed period to whoever owns it — the oil derrick is 200 every 12s on 2000
+  // hitpoints. It is the first thing in this project that is worth FIGHTING OVER rather
+  // than merely destroying, which is what "no economic targets" in the README meant.
+  "meta": { "name": "garrison", "version": 1 },
+
+  // Two weapons IDENTICAL in every number — damage, range, cooldown, damage type — and
+  // differing in exactly one boolean. Any difference in outcome is therefore attributable
+  // to `clearsGarrison` and to nothing else. Range 6.0 is deliberately SHORTER than the
+  // rifle's 8.0: an attacker has to walk into the defenders' fire, which is the situation
+  // garrison is supposed to be about. (Base content's technical out-ranges the rifle by
+  // 0.5, and against an immobile occupant that alone decides the fight — a real result,
+  // but a measurement of immobility rather than of garrison.)
+  "weapons": {
+    "raider_gun": {
+      "damageType": "hmg", "damage": 16, "range": 6.0, "cooldownTicks": 9, "spread": 0.0
+    },
+    "flame_thrower": {
+      "damageType": "hmg", "damage": 16, "range": 6.0, "cooldownTicks": 9, "spread": 0.0,
+      "clearsGarrison": true
+    }
+  },
+
+  "units": {
+    // A civilian building. No weapon of its own — everything it does, it does by holding
+    // infantry. Capacity 10 is retail's own answer, and overwhelmingly so: of 236 buildings
+    // with a ContainMax, 204 hold exactly 10 and the rest hold 1, 4, 5 or 8.
+    "bunker": {
+      "faction": "usa", "cost": 1000, "buildSeconds": 10,
+      "kindOf": ["STRUCTURE", "SELECTABLE"],
+      "buildCompletion": "PLACED_BY_PLAYER",
+      "garrisonCapacity": 10,
+      "components": {
+        "Health": { "max": 4000, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 0 },
+        "WeaponBearer": { "weapon": "ranger_rifle" }
+      }
+    },
+
+    // A neutral prize. Nobody builds it — it is placed by the scenario and taken by
+    // walking a unit onto it. 2000 HP and 200 per 12s are retail's own numbers.
+    "oil_derrick": {
+      "faction": "usa", "cost": 1000, "buildSeconds": 10,
+      "kindOf": ["STRUCTURE", "CAPTURABLE", "SELECTABLE"],
+      "buildCompletion": "PLACED_BY_PLAYER",
+      "captureSeconds": 5.0,
+      "depositAmount": 200, "depositSeconds": 12.0,
+      "components": {
+        "Health": { "max": 2000, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 0 },
+        "WeaponBearer": { "weapon": "ranger_rifle" }
+      }
+    },
+
+    // The control. Ordinary gun, cannot reach inside a building.
+    "raider": {
+      "faction": "china", "cost": 600, "buildSeconds": 12,
+      "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],
+      "components": {
+        "Health": { "max": 320, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 5.0 },
+        "WeaponBearer": { "weapon": "raider_gun" }
+      }
+    },
+
+    // The treatment. Byte-for-byte the raider except for the weapon's clearsGarrison flag.
+    "dragon_tank": {
+      "faction": "china", "cost": 600, "buildSeconds": 12,
+      "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],
+      "components": {
+        "Health": { "max": 320, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 5.0 },
+        "WeaponBearer": { "weapon": "flame_thrower" }
+      }
+    }
+  },
+
+  // Adopted from models the archives already ship — no new art needed to play this.
+  "zh": {
+    "models": {
+      "bunker":      "CBBunker01",
+      "oil_derrick": "ZBODerrick",
+      "raider":      "NVDragon",
+      "dragon_tank": "NVDragon"
+    }
+  },
+
+  "factions": {
+    "usa_holding": {
+      "extends": "usa",
+      "add": ["bunker", "oil_derrick"],
+      "startingBuilding": "bunker",
+      "startMoney": 3000
+    },
+    "china_flame": { "extends": "china", "add": ["raider", "dragon_tank"] }
+  }
+}

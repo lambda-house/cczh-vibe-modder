@@ -25,6 +25,7 @@ public static class Program
             {
                 "lint" => Lint(args, Stack(args, content)),
                 "duel" => Duel(args, Stack(args, content)),
+                "hold" => Hold(args, Stack(args, content)),
                 "matrix" => Matrix(args, Stack(args, content)),
                 "econ" => Econ(args, Stack(args, content)),
                 "faction" => Faction(args, Stack(args, content)),
@@ -49,6 +50,7 @@ public static class Program
 
             usage:
               rts lint   [--content content/game.json] [--target zh]
+              rts hold   --host <structure> --holder <infantry> --attacker <unit> [--no-garrison]
                          --target zh also checks their caps, round-trip fidelity,
                          and what silently diverges once compiled
               rts duel   --a <unit> --b <unit> [--budget 3600] [--n 200] [--seed 42] [--json]
@@ -308,6 +310,49 @@ public static class Program
 
         Console.WriteLine($"duel {a} vs {b}  budget={budget}  n={n}  seed={seed}  contentHash={db.ContentHash:x16}");
         Console.WriteLine($"  {a}: {s.WinsA} wins ({100.0 * s.WinsA / s.Runs:0.#}%)   {b}: {s.WinsB} wins ({100.0 * s.WinsB / s.Runs:0.#}%)   draws: {s.Draws}");
+        Console.WriteLine($"  avg battle length: {s.AvgTicks / ContentDb.TicksPerSecond:0.#}s   last final hash: {s.LastFinalHash:x16}");
+        return 0;
+    }
+
+    private static int Hold(string[] args, IReadOnlyList<string> contentPath)
+    {
+        var db = LoadOrDie(contentPath, printReport: false);
+        string host = Opt(args, "--host", "");
+        string holder = Opt(args, "--holder", "");
+        string attacker = Opt(args, "--attacker", "");
+        if (host.Length == 0 || holder.Length == 0 || attacker.Length == 0) return Usage();
+        int budget = int.Parse(Opt(args, "--budget", "3600"));
+        int n = int.Parse(Opt(args, "--n", "40"));
+        ulong seed = ulong.Parse(Opt(args, "--seed", "42"));
+        // Default ON; --no-garrison is the ablation, so the comparison is one flag apart.
+        bool garrison = !Flag(args, "--no-garrison");
+        string prizeOpt = Opt(args, "--prize", "");
+        string? prize = prizeOpt.Length == 0 ? null : prizeOpt;
+
+        var h = Scenarios.RunHoldSeries(db, host, holder, attacker, budget, n, seed, garrison, prize);
+        var s = h.Duel;
+
+        if (Flag(args, "--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                contentHash = $"{db.ContentHash:x16}",
+                host, holder, attacker, garrison, prize, budget, s.Runs, s.WinsA, s.WinsB, s.Draws,
+                winRateA = (double)s.WinsA / s.Runs,
+                avgSeconds = s.AvgTicks / ContentDb.TicksPerSecond,
+                h.PrizeOwner, h.MoneyA, h.MoneyB,
+                lastFinalHash = $"{s.LastFinalHash:x16}",
+            }, JsonOpts));
+            return 0;
+        }
+
+        Console.WriteLine($"hold {holder} in {host} vs {attacker}  garrison={(garrison ? "on" : "OFF")}  " +
+                          $"budget={budget}  n={n}  seed={seed}  contentHash={db.ContentHash:x16}");
+        Console.WriteLine($"  defenders: {s.WinsA} wins ({100.0 * s.WinsA / s.Runs:0.#}%)   " +
+                          $"{attacker}: {s.WinsB} wins ({100.0 * s.WinsB / s.Runs:0.#}%)   draws: {s.Draws}");
+        if (prize is not null)
+            Console.WriteLine($"  prize '{prize}' ends owned by team {h.PrizeOwner}   " +
+                              $"money: A={h.MoneyA:0} B={h.MoneyB:0}");
         Console.WriteLine($"  avg battle length: {s.AvgTicks / ContentDb.TicksPerSecond:0.#}s   last final hash: {s.LastFinalHash:x16}");
         return 0;
     }

@@ -104,6 +104,7 @@ public static class ZhCompiler
                 sb.AppendLine($"  ClipReloadTime = {(int)Math.Floor(w.ClipReloadTicks * 1000.0 / ContentDb.TicksPerSecond)}");
             }
             sb.AppendLine("  ProjectileObject = None");
+            if (w.ClearsGarrison) sb.AppendLine("  AllowAttackGarrisonedBldgs = Yes");
             sb.AppendLine("  RadiusDamageAffects = ALLIES ENEMIES NEUTRALS");
             sb.AppendLine("End").AppendLine();
             r.Weapons++;
@@ -335,6 +336,32 @@ public static class ZhCompiler
                     sb.AppendLine("    ChangeType = ADD_CURRENT_HEALTH_TOO");
                     sb.AppendLine("  End");
                 }
+            }
+
+            // Garrison. Copied field-for-field from a retail GarrisonContain that loads;
+            // ImmuneToClearBuildingAttacks is spelled out as No rather than omitted because
+            // it is the switch our whole counter mechanic turns on, and a reader of the
+            // emitted file should see which way it points.
+            if (u.GarrisonCapacity > 0)
+            {
+                sb.AppendLine("  Behavior = GarrisonContain ModuleTag_Garrison");
+                sb.AppendLine($"    ContainMax = {u.GarrisonCapacity}");
+                sb.AppendLine("    EnterSound = GarrisonEnter");
+                sb.AppendLine("    ExitSound = GarrisonExit");
+                sb.AppendLine("    ImmuneToClearBuildingAttacks = No");
+                sb.AppendLine("  End");
+            }
+
+            // Their AutoDepositUpdate is milliseconds, and InitialCaptureBonus is present in
+            // every retail instance — emitted explicitly as 0 rather than left to a default
+            // we have not verified.
+            if (u.DepositAmount > 0 && u.DepositTicks > 0)
+            {
+                sb.AppendLine("  Behavior = AutoDepositUpdate ModuleTag_Deposit");
+                sb.AppendLine($"    DepositTiming = {(int)Math.Floor(u.DepositTicks * 1000.0 / ContentDb.TicksPerSecond)}");
+                sb.AppendLine($"    DepositAmount = {u.DepositAmount}");
+                sb.AppendLine("    InitialCaptureBonus = 0");
+                sb.AppendLine("  End");
             }
 
             int dieTag = 0;

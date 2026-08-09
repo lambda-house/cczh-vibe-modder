@@ -19,23 +19,23 @@ echo "build: OK"
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
 echo
-echo "== gate 1/13: content lint =="
+echo "== gate 1/14: content lint =="
 rts lint
 
 echo
-echo "== gate 2/13: replay determinism =="
+echo "== gate 2/14: replay determinism =="
 rts replay --a crusader --b battlemaster --seed 7
 
 echo
-echo "== gate 3/13: duel smoke =="
+echo "== gate 3/14: duel smoke =="
 rts duel --a crusader --b technical --n 20 --seed 42
 
 echo
-echo "== gate 4/13: econ determinism =="
+echo "== gate 4/14: econ determinism =="
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
 echo
-echo "== gate 5/13: faction layering resolves =="
+echo "== gate 5/14: faction layering resolves =="
 rts faction
 
 echo
@@ -51,7 +51,7 @@ echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
 echo
-echo "== gate 6/13: layered packs + diff =="
+echo "== gate 6/14: layered packs + diff =="
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -75,7 +75,7 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 echo "  base unaffected by the mod: $base_again"
 
 echo
-echo "== gate 7/13: structures are economic targets =="
+echo "== gate 7/14: structures are economic targets =="
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -98,7 +98,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 echo "  factory present => units build and win (A 3/3)"
 
 echo
-echo "== gate 8/13: flags and conditional variants =="
+echo "== gate 8/14: flags and conditional variants =="
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -128,7 +128,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
 echo
-echo "== gate 9/13: event rules {on, when, do} =="
+echo "== gate 9/14: event rules {on, when, do} =="
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -170,7 +170,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 echo "  stalled queues are reported, not silent"
 
 echo
-echo "== gate 10/13: factions are startable, not just rosters =="
+echo "== gate 10/14: factions are startable, not just rosters =="
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -190,7 +190,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 echo "  the loser's stall is reported, not silent"
 
 echo
-echo "== gate 11/13: compile to a Zero Hour mod =="
+echo "== gate 11/14: compile to a Zero Hour mod =="
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -217,7 +217,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
 echo "  emitted enum values are ones retail actually uses"
 
 echo
-echo "== gate 12/13: target-zh lint — caps, round-trip, divergence =="
+echo "== gate 12/14: target-zh lint — caps, round-trip, divergence =="
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -294,7 +294,7 @@ tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first co
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
 
 echo
-echo "== gate 13/13: faction-scoped reference resolution =="
+echo "== gate 13/14: faction-scoped reference resolution =="
 FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
 
 # A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
@@ -360,6 +360,54 @@ echo "  a variant's prerequisites resolve through its own faction"
 sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' requires 'usa_factory'" || true)
 [ "$sc" = "1" ] || { echo "  SHARED-REFERRER DEFECT NOT REPORTED: the retail bug class ships silently"; exit 1; }
 echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
+
+echo
+echo "== gate 14/14: garrison + capture =="
+# GARRISONABLE is the only terrain-shaped combat modifier in all of Zero Hour and it needs
+# no geometry at all. Occupants cannot be targeted; damage reaches them only as spill from a
+# ClearsGarrison weapon hitting the HOST — 17 of retail's 363 weapons, 4.7% of the arsenal.
+#
+# The evidence is a CONTROLLED experiment, not a win rate: raider and dragon_tank are
+# identical in cost, hitpoints, speed, damage, range, cooldown and damage type, and differ
+# in exactly one boolean. Anything that separates them is that boolean.
+rts lint --mod content/mods/garrison.json | tail -1
+
+hold_wins() { rts hold --host bunker --holder ranger --attacker "$1" --n 40 --seed 42 $2 \
+              --mod content/mods/garrison.json --json \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['WinsA'])"; }
+
+on_plain=$(hold_wins raider "")
+off_plain=$(hold_wins raider --no-garrison)
+[ "$on_plain" = "40" ] || { echo "  GARRISON INERT: held position won only $on_plain/40 vs an ordinary weapon"; exit 1; }
+[ "$off_plain" = "0" ]  || { echo "  ABLATION FAILED: same units unhoused still won $off_plain/40"; exit 1; }
+echo "  a held building decides it: $on_plain/40 garrisoned, $off_plain/40 not"
+
+on_clear=$(hold_wins dragon_tank "")
+[ "$on_clear" = "0" ] || { echo "  CLEARS-GARRISON INERT: flame attacker still lost, defenders won $on_clear/40"; exit 1; }
+echo "  and one boolean undoes it: clearsGarrison attacker wins 40/40 against the same position"
+
+# Capture moves both the building and the income it pays. Their AutoDepositUpdate pays the
+# CURRENT owner, so the money following the flag is the whole point.
+cap=$(rts hold --host bunker --holder ranger --attacker raider --prize oil_derrick \
+      --n 3 --seed 42 --mod content/mods/garrison.json --json \
+      | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['PrizeOwner'], int(d['MoneyA']), int(d['MoneyB']))")
+[ "$cap" = "1 0 200" ] || { echo "  CAPTURE/DEPOSIT DRIFT: (owner moneyA moneyB) = $cap, expected '1 0 200'"; exit 1; }
+echo "  a captured derrick changes hands and its deposit follows the new owner"
+
+# GARRISONABLE reads like a KindOf and is not one: their bit table has only NO_GARRISON,
+# STEALTH_GARRISON and GARRISONABLE_UNTIL_DESTROYED. Emitting it was a hard load error that
+# a grep missed, because it is a substring of the real name. Never let it back in.
+GOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT" "$GOUT"' EXIT
+rts compile --target zh --out "$GOUT" --mod content/mods/garrison.json >/dev/null
+grep -E "KindOf.*\bGARRISONABLE\b" "$GOUT/Data/INI/Object/garrison.ini" \
+  && { echo "  INVENTED ENUM: GARRISONABLE is not a real KindOf and will not load"; exit 1; }
+grep -q "GarrisonContain" "$GOUT/Data/INI/Object/garrison.ini" \
+  || { echo "  garrisonCapacity did not become a GarrisonContain module"; exit 1; }
+grep -q "AllowAttackGarrisonedBldgs = Yes" "$GOUT/Data/INI/Weapon/garrison.ini" \
+  || { echo "  clearsGarrison did not reach the weapon"; exit 1; }
+grep -q "AutoDepositUpdate" "$GOUT/Data/INI/Object/garrison.ini" \
+  || { echo "  depositAmount did not become an AutoDepositUpdate"; exit 1; }
+echo "  compiles to GarrisonContain + AutoDepositUpdate + AllowAttackGarrisonedBldgs"
 
 echo
 echo "== regression: pinned replay hashes =="

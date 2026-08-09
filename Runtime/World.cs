@@ -34,6 +34,21 @@ public struct UnitState
     public Fix64 RallyX;
     public Fix64 RallyY;
     public bool HasRally;
+
+    /// <summary>
+    /// Index of the structure this unit is garrisoned inside, or -1. An occupant keeps
+    /// firing, from the host's position, and cannot be targeted at all — not by direct fire,
+    /// not by splash. Damage reaches it only as spill from a ClearsGarrison weapon striking
+    /// the HOST, which is ZH's own model. That asymmetry IS the mechanic.
+    /// </summary>
+    public int GarrisonHost;
+
+    /// <summary>Ticks of uncontested enemy adjacency accrued against this structure.</summary>
+    public int CaptureProgress;
+    /// <summary>Team currently capturing, or -1. Progress resets when the claimant changes.</summary>
+    public int CaptureBy;
+    /// <summary>Ticks until this structure next pays its owner. Counts down.</summary>
+    public int DepositCountdown;
 }
 
 /// <summary>One item of team production/research work. Idx is a proto index in the
@@ -118,6 +133,9 @@ public sealed class World
         u.ClipRemaining = -1;      // uninitialised; filled from the prototype on first shot
         u.Flags = proto.BirthFlags;
         u.VariantIdx = -1;
+        u.GarrisonHost = -1;
+        u.CaptureBy = -1;
+        u.DepositCountdown = proto.DepositTicks;   // a fresh building pays after one full period
         SelectLoadout(idx);        // before RecomputeStats: the variant can change stats
         RecomputeStats(idx);
         u.Hp = Resolved(idx, Stat.MaxHp);
@@ -225,6 +243,49 @@ public sealed class World
         for (int i = 0; i < UnitCount; i++)
             if (Units[i].Alive && Units[i].Team == team && Units[i].ProtoIdx == protoIdx) n++;
         return n;
+    }
+
+    /// <summary>Live occupants of a garrisonable structure. Ascending index, like everything.</summary>
+    public int GarrisonCount(int hostIdx)
+    {
+        int n = 0;
+        for (int i = 0; i < UnitCount; i++)
+            if (Units[i].Alive && Units[i].GarrisonHost == hostIdx) n++;
+        return n;
+    }
+
+    /// <summary>
+    /// Move a unit into a structure. Rejected — silently, as a no-op — when the host is not
+    /// garrisonable, is full, belongs to another team, or either party is dead. A command
+    /// that cannot be honoured must not desync: it must do NOTHING, identically everywhere.
+    /// </summary>
+    public bool TryGarrison(int unitIdx, int hostIdx)
+    {
+        if (unitIdx < 0 || hostIdx < 0 || unitIdx >= UnitCount || hostIdx >= UnitCount) return false;
+        ref var u = ref Units[unitIdx];
+        ref var host = ref Units[hostIdx];
+        if (!u.Alive || !host.Alive || u.Team != host.Team) return false;
+        if (u.GarrisonHost >= 0) return false;
+        // A structure cannot take cover in another structure. Beyond being nonsense, it is
+        // what keeps the clear-building damage in ApplyDamage from recursing: with no
+        // structure ever an occupant, an A-inside-B-inside-A cycle cannot be built.
+        if (Content.Units[u.ProtoIdx].IsStructure) return false;
+        var hp = Content.Units[host.ProtoIdx];
+        if (hp.GarrisonCapacity <= 0) return false;
+        if (GarrisonCount(hostIdx) >= hp.GarrisonCapacity) return false;
+        u.GarrisonHost = hostIdx;
+        // Occupants fire from the building, so they take its position. Without this the
+        // occupant would keep shooting from wherever it was standing when it entered.
+        u.X = host.X;
+        u.Y = host.Y;
+        return true;
+    }
+
+    /// <summary>Turn every occupant out of a host, e.g. because the host died.</summary>
+    public void EvictGarrison(int hostIdx)
+    {
+        for (int i = 0; i < UnitCount; i++)
+            if (Units[i].GarrisonHost == hostIdx) Units[i].GarrisonHost = -1;
     }
 
     /// <summary>
@@ -356,6 +417,17 @@ public sealed class World
             h.AddInt32(u.TargetIdx);
             h.AddInt32(u.Xp);
             h.AddInt32(u.Rank);
+            // Same opt-in discipline as the flag fields above, and for the same reason: in a
+            // pack with no garrisonable building these are provably -1/0/0 for every unit for
+            // all time, so omitting them loses nothing and keeps every pin that predates this
+            // slice comparable. Appended last, never inserted: position is the contract.
+            if (Content.HasGarrison) h.AddInt32(u.GarrisonHost);
+            if (Content.HasCapture)
+            {
+                h.AddInt32(u.CaptureProgress);
+                h.AddInt32(u.CaptureBy);
+                h.AddInt32(u.DepositCountdown);
+            }
         }
 
         for (int t = 0; t < TeamCount; t++)

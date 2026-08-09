@@ -11,6 +11,7 @@ public enum CommandKind
     SetSpawn = 4,     // A = team, X/Y = where produced units enter the world
     ProduceUnit = 5,  // A = team, B = proto index → tail of the team's unit queue
     ResearchTech = 6, // A = team, B = tech index → tail of the team's research queue
+    Garrison = 7,     // A = unit index, B = host structure index. No-op if not admissible.
 }
 
 /// <summary>

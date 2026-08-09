@@ -34,6 +34,9 @@ public static class ZhLint
     {
         "STRUCTURE", "FS_FACTORY", "CASH_GENERATOR", "MP_COUNT_FOR_VICTORY",
         "VEHICLE", "INFANTRY", "AIRCRAFT", "SELECTABLE", "CAN_ATTACK", "IMMOBILE", "SCORE",
+        // CAPTURABLE is real (KindOf.cpp bit table, 177 retail uses). "GARRISONABLE" is NOT
+        // and must never be added back — see the note in Runtime/KindOf.cs.
+        "CAPTURABLE",
     };
 
     public static Report Check(ContentDb db, ZhTargetDto zh)
@@ -198,6 +201,22 @@ public static class ZhLint
             if (!RealKindOf.Contains(name))
                 r.Divergence.Add($"kindOf '{name}' is ours, not theirs — it drives our sim but is stripped on " +
                                  $"compile, so it has no in-game effect.");
+
+        // Capture DURATION has no ZH equivalent: theirs is driven by the capture animation's
+        // length, which is art we do not have and cannot emit. The building still compiles as
+        // CAPTURABLE and is still takeable in game — it just changes hands on their clock,
+        // not the one the harness measured against.
+        int capturable = db.Units.Count(u => u.CaptureTicks > 0);
+        if (capturable > 0)
+            r.Divergence.Add($"{capturable} capturable structure(s): captureTicks is NOT emitted. ZH times " +
+                             $"capture by the capture animation, so in-game capture speed is theirs, not ours. " +
+                             $"KindOf CAPTURABLE and any AutoDepositUpdate do compile.");
+
+        if (db.HasGarrison)
+            r.Divergence.Add("garrison: we make occupants strictly untargetable and let a ClearsGarrison " +
+                             "weapon spill its damage through the host. ZH resolves occupancy geometrically " +
+                             "— occupants fire from window positions and a big footprint extends their reach — " +
+                             "so engagement ranges around a held building will differ from the harness.");
 
         if (db.HasPower)
             r.Divergence.Add("power: we halt ALL production on a negative grid; ZH disables individual " +

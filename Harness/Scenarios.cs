@@ -16,6 +16,17 @@ public sealed class DuelStats
     public ulong LastFinalHash;
 }
 
+/// <summary>A hold run, plus what happened to the contested prize. Separate from DuelStats
+/// because ownership and payout are only meaningful in this scenario.</summary>
+public sealed class HoldStats
+{
+    public required DuelStats Duel;
+    /// <summary>Team owning the capturable prize at the end of the last run, or -1 if none.</summary>
+    public int PrizeOwner = -1;
+    /// <summary>Money each team finished the last run with — the deposit shows up here.</summary>
+    public double MoneyA, MoneyB;
+}
+
 public sealed class EconStats
 {
     public required string OrderA;
@@ -101,6 +112,84 @@ public static class Scenarios
         }
         stats.AvgTicks = (double)tickSum / runs;
         return stats;
+    }
+
+    /// <summary>
+    /// A held position: team 0 puts infantry inside a garrisonable structure, team 1 attacks.
+    ///
+    /// <paramref name="garrison"/> is an ABLATION SWITCH rather than a second content file.
+    /// Same pack, same seeds, same spawn positions, same budget — the only difference is
+    /// whether the Garrison commands are issued. A win-rate on its own cannot distinguish
+    /// "the building helped" from "rifles beat technicals anyway"; this can.
+    /// </summary>
+    public static HoldStats RunHoldSeries(ContentDb content, string host, string holder, string attacker,
+                                          int budget, int runs, ulong baseSeed, bool garrison,
+                                          string? prize = null, int maxTicks = DefaultMaxTicks)
+    {
+        int ph = content.UnitIndexById[host];
+        int pi = content.UnitIndexById[holder];
+        int pa = content.UnitIndexById[attacker];
+
+        var log = new List<Command>();
+        int seq = 0;
+        // The host takes unit index 0 because it spawns first, and every later index follows
+        // from the spawn order. That is only sound because ApplyCommands consumes the log in
+        // (tick, seq) order — the same property replays depend on.
+        log.Add(new Command(0, seq++, CommandKind.Spawn, ph, 0, Fix64.FromInt(-40), Fix64.Zero));
+
+        // Cost-normalised like every other scenario here: the defence spends the same
+        // budget as the attack, so a win is about the POSITION and not about who was
+        // handed more army. Capacity is the ceiling, the budget is usually the binding one.
+        var proto = content.Units[ph];
+        int affordable = (budget - proto.Cost) / Math.Max(1, content.Units[pi].Cost);
+        int occupants = Math.Clamp(affordable, 1, Math.Max(1, proto.GarrisonCapacity));
+        for (int i = 0; i < occupants; i++)
+            log.Add(new Command(0, seq++, CommandKind.Spawn, pi, 0, Fix64.FromInt(-40), Fix64.Zero));
+        if (garrison)
+            for (int i = 0; i < occupants; i++)
+                log.Add(new Command(0, seq++, CommandKind.Garrison, 1 + i, 0, Fix64.Zero, Fix64.Zero));
+
+        // The prize is team 0's but stands in team 1's staging area, so team 1's units are
+        // literally on top of it. Nothing scripts the capture — it happens because a unit is
+        // standing there, and it beats the demolition it is racing: 5s to take versus the
+        // ~15s six raiders need to chew through 2000 hitpoints.
+        //
+        // Placement matters and is the honest limit of this model. Capture is proximity-based
+        // and attackers stop at WEAPON range, so a prize anywhere on the approach gets shelled
+        // from 6 units away and never changes hands. A genuinely NEUTRAL owner would fix that,
+        // and World.TeamCount is 2 — there is no third side to own it. Stated, not papered over.
+        if (prize is not null)
+            log.Add(new Command(0, seq++, CommandKind.Spawn, content.UnitIndexById[prize], 0,
+                                Fix64.FromInt(40), Fix64.Zero));
+
+        SpawnLine(content, log, ref seq, pa, team: 1, xLine: +40, budget);
+        log.Add(new Command(0, seq++, CommandKind.RallyTeam, 1, 0, Fix64.FromInt(-40), Fix64.Zero));
+
+        // Unit indices follow spawn order exactly: host, occupants, then the prize if any.
+        int prizeUnit = prize is null ? -1 : 1 + occupants;
+
+        var stats = new DuelStats { A = $"{holder}@{host}", B = attacker, Runs = runs };
+        var hold = new HoldStats { Duel = stats };
+        long tickSum = 0;
+        for (int r = 0; r < runs; r++)
+        {
+            var sim = new Sim(content, baseSeed + (ulong)r, log);
+            var result = sim.Run(maxTicks);
+            if (prizeUnit >= 0 && prizeUnit < sim.World.UnitCount)
+                hold.PrizeOwner = sim.World.Units[prizeUnit].Team;
+            hold.MoneyA = sim.World.Teams[0].Money.ToDoubleForDisplay();
+            hold.MoneyB = sim.World.Teams[1].Money.ToDoubleForDisplay();
+            switch (result.WinnerTeam)
+            {
+                case 0: stats.WinsA++; break;
+                case 1: stats.WinsB++; break;
+                default: stats.Draws++; break;
+            }
+            tickSum += result.Ticks;
+            stats.LastFinalHash = result.FinalHash;
+        }
+        stats.AvgTicks = (double)tickSum / runs;
+        return hold;
     }
 
     /// <summary>Pairwise cost-normalized win-rate matrix over all prototypes: the counter table.</summary>

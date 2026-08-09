@@ -71,6 +71,14 @@ public sealed class WeaponDto
 
     /// <summary>Cannot fire closer than this. Artillery's defining weakness. 0 = none.</summary>
     public double MinimumAttackRange { get; set; }
+
+    /// <summary>
+    /// Can hit infantry garrisoned inside a building. ZH: <c>AllowAttackGarrisonedBldgs</c>,
+    /// set by 17 of retail's 363 weapons — flame, toxin, flashbang, sniper, C4. That 4.7%
+    /// is the entire counter to a held position, and it is the reason garrison is a
+    /// tactical mechanic rather than a free damage sponge.
+    /// </summary>
+    public bool ClearsGarrison { get; set; }
 }
 
 public sealed class VeterancyTrackDto
@@ -145,6 +153,32 @@ public sealed class UnitDto
 
     /// <summary>Hard cap on live instances per team. ZH: MaxSimultaneousOfType.</summary>
     public int? MaxSimultaneousOfType { get; set; }
+
+    /// <summary>
+    /// Occupants this structure holds. ZH: <c>GarrisonContain.ContainMax</c>, whose retail
+    /// distribution is startlingly flat — 204 of 236 civilian buildings hold exactly 10, the
+    /// rest 1, 4, 5 or 8. Requires KindOf GARRISONABLE; 0 means not garrisonable.
+    /// </summary>
+    public int? GarrisonCapacity { get; set; }
+
+    /// <summary>
+    /// Ticks of uncontested adjacency an enemy needs to flip ownership. Requires KindOf
+    /// CAPTURABLE. ZH gates capture on an infantry unit reaching the building; the duration
+    /// is ours, because theirs is animation-driven and we have no animations.
+    /// </summary>
+    public int? CaptureTicks { get; set; }
+    /// <summary>Seconds; quantised with ceil() at load. Wins over CaptureTicks.</summary>
+    public double? CaptureSeconds { get; set; }
+
+    /// <summary>
+    /// Cash paid to the owner every <see cref="DepositTicks"/>. ZH: <c>AutoDepositUpdate</c>
+    /// (the oil derrick pays 200 every 12s). This is what makes a neutral building an
+    /// economic target rather than scenery.
+    /// </summary>
+    public int? DepositAmount { get; set; }
+    public int? DepositTicks { get; set; }
+    /// <summary>Seconds; quantised with ceil() at load. Wins over DepositTicks.</summary>
+    public double? DepositSeconds { get; set; }
 
     /// <summary>Flags this unit carries from birth (e.g. "STEALTHED", "ELITE_TRAINING").</summary>
     public List<string>? Flags { get; set; }

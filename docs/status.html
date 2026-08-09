@@ -348,6 +348,12 @@
     <div class="ev">retail ships 88 bad references across 68 broken definitions · patch104p fixes several as tracked bugs</div>
   </div>
 
+  <div class="slice">
+    <div class="slice-h"><h3>Garrison + capture</h3><span class="pill p-done">done</span></div>
+    <p>Terrain's tactical payoff with no terrain. Infantry inside a building cannot be targeted at all — not by direct fire, not by splash — and damage reaches them only as spill from a clearing weapon striking the <em>host</em>, which is Zero Hour's own model. In retail that is 17 weapons of 363: a held position beats 95.3% of the arsenal and folds to flame, toxin, flashbang, sniper and C4. The other half is the capturable tech building, which pays its owner on a timer and so becomes the first thing here worth fighting <em>over</em> rather than merely destroying.</p>
+    <div class="ev">controlled: two attackers identical but for one boolean · 40/40 held, 0/40 unhoused, 0/40 against the clearing weapon</div>
+  </div>
+
   <h3>Decisions taken, closed</h3>
   <ul>
     <li><strong>Stacking:</strong> additive-in-excess added as a third op alongside Add and Mul; mixing them on one stat lints.</li>
@@ -378,6 +384,22 @@
       because a final-state hash only observes units <em>alive at the end</em>, and the
       renumbered units were on the losing side. Identity is now name-derived, and the guard is
       generative rather than a recorded constant.
+    </p>
+  </div>
+
+  <div class="fix">
+    <h3>A fifth invented enum value, and a grep that agreed with it</h3>
+    <p>
+      <code>GARRISONABLE</code> reads exactly like a Zero Hour <code>KindOf</code>, and a grep
+      of retail appeared to confirm it. It is not one: their bit-name table has
+      <code>NO_GARRISON</code>, <code>STEALTH_GARRISON</code> and
+      <code>GARRISONABLE_UNTIL_DESTROYED</code>, and nothing else — the grep matched a
+      <em>substring</em> of the real name, and the three bare hits in retail are all
+      comments. Garrisonability is expressed by the presence of the
+      <code>GarrisonContain</code> module, which is why the engine asks
+      <code>contain-&gt;isGarrisonable()</code> rather than testing a flag. Emitting it was a
+      hard load error caught only by booting the game. The rule is now stricter than "copy
+      from retail": closed enums are checked against the C++ name table, never against a grep.
     </p>
   </div>
 
@@ -449,8 +471,7 @@
     <table>
       <thead><tr><th>Slice</th><th>Why now</th><th>Size</th><th></th></tr></thead>
       <tbody>
-        <tr><td class="name">Garrison + capture</td><td>The only terrain-shaped modifier in all of ZH, needing zero geometry</td><td class="n">M</td><td><span class="pill p-next">next</span></td></tr>
-        <tr><td class="name">Powers + science currency</td><td>7 points against 13–18 sciences = 19,448 loadouts nobody has enumerated</td><td class="n">L</td><td></td></tr>
+        <tr><td class="name">Powers + science currency</td><td>7 points against 13–18 sciences = 19,448 loadouts nobody has enumerated</td><td class="n">L</td><td><span class="pill p-next">next</span></td></tr>
         <tr><td class="name">Spatial index</td><td>Before splash and auras scale, not after — decides whether batch measurement stays affordable</td><td class="n">M</td><td></td></tr>
         <tr><td class="name">MCP tool surface</td><td>The agent-facing seam, once there is a design space behind it</td><td class="n">M</td><td></td></tr>
         <tr><td class="name">Passability grid</td><td>Chokepoints and flanking are emergent from it, not authored</td><td class="n">XL</td><td></td></tr>

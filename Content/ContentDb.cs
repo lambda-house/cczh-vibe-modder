@@ -23,6 +23,8 @@ public sealed class WeaponDef
     /// <summary>0 = unlimited shots (no clip).</summary>
     public int ClipSize;
     public int ClipReloadTicks;
+    /// <summary>Reaches infantry inside a garrisoned building. ZH: AllowAttackGarrisonedBldgs.</summary>
+    public bool ClearsGarrison;
     public bool HasSplash => PrimaryRadiusSq > Fix64.Zero || SecondaryRadiusSq > Fix64.Zero;
 }
 
@@ -119,6 +121,13 @@ public sealed class UnitProto
     public int ArmorClassIdx;
     public int WeaponIdx;
     public int VetTrackIdx = -1;
+    /// <summary>Occupants held. 0 = not garrisonable. ZH: GarrisonContain.ContainMax.</summary>
+    public int GarrisonCapacity;
+    /// <summary>Ticks of uncontested enemy adjacency needed to flip ownership.</summary>
+    public int CaptureTicks;
+    /// <summary>Cash paid to the owner every DepositTicks. ZH: AutoDepositUpdate.</summary>
+    public int DepositAmount;
+    public int DepositTicks;
     /// <summary>Base stats indexed by <see cref="Stat"/>. Speed already per-tick.</summary>
     public Fix64[] BaseStats = new Fix64[StatResolver.StatCount];
 
@@ -214,6 +223,10 @@ public sealed class ContentDb
     public bool HasFactories;
     /// <summary>True once any prototype declares EnergyProduction; gates the brownout rule.</summary>
     public bool HasPower;
+    /// <summary>Any garrisonable structure. Gates the occupancy fields into the state hash.</summary>
+    public bool HasGarrison;
+    /// <summary>Any capturable or paying structure. Gates capture progress into the hash.</summary>
+    public bool HasCapture;
     /// <summary>
     /// True once any content mentions a flag. Gates BOTH the loadout phase and the hashing
     /// of flag state, so a pack that never uses flags is bit-identical to one compiled
@@ -362,6 +375,7 @@ public sealed class ContentDb
                 ClipReloadTicks = w.ClipReloadSeconds is double crs
                     ? (int)Math.Ceiling(crs * TicksPerSecond)
                     : Math.Max(0, w.ClipReloadTicks),
+                ClearsGarrison = w.ClearsGarrison,
             });
 
             // ZH asserts secondaryRadius >= primaryRadius (Weapon.cpp:1301) because the
@@ -586,6 +600,31 @@ public sealed class ContentDb
 
             proto.EnergyProduction = u.EnergyProduction ?? 0;
             proto.MaxSimultaneousOfType = u.MaxSimultaneousOfType ?? 0;
+            proto.GarrisonCapacity = Math.Max(0, u.GarrisonCapacity ?? 0);
+            proto.CaptureTicks = u.CaptureSeconds is double cs
+                ? (int)Math.Ceiling(cs * TicksPerSecond)
+                : Math.Max(0, u.CaptureTicks ?? 0);
+            proto.DepositAmount = Math.Max(0, u.DepositAmount ?? 0);
+            proto.DepositTicks = u.DepositSeconds is double ds
+                ? (int)Math.Ceiling(ds * TicksPerSecond)
+                : Math.Max(0, u.DepositTicks ?? 0);
+
+            // Garrisonability is the capacity itself — no paired role flag, because ZH has
+            // none: it is the presence of the GarrisonContain module that makes a building
+            // garrisonable. Declaring "GARRISONABLE" in kindOf would be an invented enum
+            // value and a hard load error on their side.
+            if (proto.GarrisonCapacity > 0 && !proto.IsStructure)
+                errors.Add($"unit '{id}': garrisonCapacity is only meaningful on a STRUCTURE");
+
+            bool capturable = proto.Is(Runtime.KindOf.Capturable);
+            if (capturable && proto.CaptureTicks <= 0)
+                errors.Add($"unit '{id}': KindOf CAPTURABLE needs captureTicks/captureSeconds > 0");
+            if (!capturable && proto.CaptureTicks > 0)
+                errors.Add($"unit '{id}': captureTicks without KindOf CAPTURABLE");
+            if (proto.DepositAmount > 0 && proto.DepositTicks <= 0)
+                errors.Add($"unit '{id}': depositAmount {proto.DepositAmount} with no deposit interval");
+            if (proto.DepositTicks > 0 && proto.DepositAmount <= 0)
+                warnings.Add($"unit '{id}': deposit interval set but depositAmount is 0 — pays nothing");
 
             // A structure that could walk would be a content bug the sim cannot express.
             if (proto.IsStructure && c.Mobile.Speed != 0)
@@ -748,6 +787,10 @@ public sealed class ContentDb
         // pre-structures semantics exactly, so adding the feature moved no existing hash.
         db.HasFactories = db.Units.Any(u => u.Is(Runtime.KindOf.Factory));
         db.HasPower = db.Units.Any(u => u.EnergyProduction != 0);
+        // Opt-in by content, like every gate before it: a pack with no garrisonable and no
+        // capturable building hashes exactly as it did before this slice existed.
+        db.HasGarrison = db.Units.Any(u => u.GarrisonCapacity > 0);
+        db.HasCapture = db.Units.Any(u => u.CaptureTicks > 0 || u.DepositAmount > 0);
 
         foreach (var u in db.Units)
             if (!u.IsVariant && !dto.Factions.ContainsKey(u.FactionId))

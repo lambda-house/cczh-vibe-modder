@@ -22,8 +22,8 @@ public sealed class SimResult
 /// session steps, and what the balancing harness runs at N× realtime.
 ///
 /// System order per tick (order is part of the determinism contract):
-///   commands → production/economy → loadout/stat re-resolve → cooldowns →
-///   targeting → movement → combat/deaths/veterancy → hash
+///   commands → production/economy → garrison/capture → loadout/stat re-resolve →
+///   cooldowns → targeting → movement → combat/deaths/veterancy → hash
 /// Production sits right after commands so an enqueue issued this tick can start
 /// building this tick, and a unit finished this tick acts (cooldown/targeting/
 /// movement/combat) this tick — the same treatment command-spawned units get.
@@ -31,6 +31,9 @@ public sealed class SimResult
 /// tick (research completing, an upgrade landing) re-selects the conditional loadout,
 /// which changes weapon and armor class — i.e. STATS. Resolving it in its own pinned
 /// phase is what stops damage depending on which system happened to run first.
+/// The holding phase sits ahead of it for the same class of reason: capture flips a
+/// structure's TEAM, which targeting, production and the defeat test all read. Settle
+/// ownership once, before anything asks whose it is.
 /// </summary>
 public sealed class Sim
 {
@@ -129,6 +132,7 @@ public sealed class Sim
         Tick++;
         ApplyCommands();
         ProductionSystem();
+        HoldingSystem();
         LoadoutSystem();
         TickCooldowns();
         TargetingSystem();
@@ -155,6 +159,11 @@ public sealed class Sim
             {
                 case CommandKind.Spawn:
                     World.Spawn(c.A, c.B, c.X, c.Y);
+                    break;
+                case CommandKind.Garrison:
+                    // Return value deliberately ignored: an inadmissible garrison is a no-op,
+                    // not an error. Every peer computes the same no-op.
+                    World.TryGarrison(c.A, c.B);
                     break;
                 case CommandKind.RallyTeam:
                     for (int i = 0; i < World.UnitCount; i++)
@@ -374,6 +383,104 @@ public sealed class Sim
     /// and BEFORE cooldowns/targeting/combat (so everything downstream sees one consistent
     /// loadout for the whole tick). Ascending unit index, as ever.
     /// </summary>
+    /// <summary>
+    /// Occupancy and ownership: eviction, capture progress, and what a held building pays.
+    ///
+    /// Its own pinned phase between production and loadout, for the same reason the loadout
+    /// phase exists. Capture flips a structure's TEAM, and team is read by targeting (who is
+    /// an enemy), by production (whose factory this is) and by the defeat test. If ownership
+    /// changed anywhere later, whether a shot this tick counted as friendly fire would depend
+    /// on which system happened to run first. Resolve it once, up front, before anything reads
+    /// a team.
+    ///
+    /// Deliberately NOT randomised: capture is a countdown, not a roll, so this phase adds no
+    /// Pcg32 stream. Adding garrison therefore cannot shift a single existing combat roll.
+    /// </summary>
+    private void HoldingSystem()
+    {
+        var content = World.Content;
+        if (!content.HasGarrison && !content.HasCapture) return;
+
+        for (int i = 0; i < World.UnitCount; i++)
+        {
+            ref var u = ref World.Units[i];
+
+            // A dead host turns its occupants out rather than killing them. ZH's rule is the
+            // harsher one — the building collapses on them — but ours keeps the counter play
+            // legible: flame the building, the infantry spill out and are shootable.
+            if (!u.Alive)
+            {
+                if (content.HasGarrison) World.EvictGarrison(i);
+                continue;
+            }
+
+            // An occupant whose host died in an earlier phase this tick is already out.
+            if (u.GarrisonHost >= 0 && !World.Units[u.GarrisonHost].Alive) u.GarrisonHost = -1;
+
+            var proto = content.Units[u.ProtoIdx];
+
+            // --- capture ------------------------------------------------------------
+            // A structure is claimed by the nearest live enemy standing on it, and only when
+            // no unit of the owning team is there to contest. Ascending index breaks the tie,
+            // as everywhere else.
+            if (proto.CaptureTicks > 0)
+            {
+                int claimant = -1;
+                bool contested = false;
+                for (int j = 0; j < World.UnitCount; j++)
+                {
+                    ref readonly var c = ref World.Units[j];
+                    if (!c.Alive || j == i || c.GarrisonHost >= 0) continue;
+                    if (content.Units[c.ProtoIdx].IsStructure) continue;
+                    if (DistSq(in u, in c) > CaptureRadiusSq) continue;
+                    if (c.Team == u.Team) { contested = true; break; }
+                    if (claimant < 0) claimant = c.Team;
+                }
+
+                if (contested || claimant < 0)
+                {
+                    u.CaptureProgress = 0;
+                    u.CaptureBy = -1;
+                }
+                else
+                {
+                    if (u.CaptureBy != claimant) { u.CaptureBy = claimant; u.CaptureProgress = 0; }
+                    if (++u.CaptureProgress >= proto.CaptureTicks)
+                    {
+                        u.Team = claimant;
+                        u.CaptureProgress = 0;
+                        u.CaptureBy = -1;
+                        // Occupants belonged to the previous owner; they do not change sides.
+                        if (content.HasGarrison) World.EvictGarrison(i);
+                    }
+                }
+            }
+
+            // --- deposit ------------------------------------------------------------
+            // ZH's AutoDepositUpdate: a flat sum on a fixed period, paid to whoever owns the
+            // building now. Money is credited directly and does NOT draw down the supply
+            // pool — a captured derrick is new income, which is exactly why it is worth
+            // taking rather than a faster way to spend a shared pool.
+            if (proto.DepositAmount > 0 && proto.DepositTicks > 0 && (uint)u.Team < World.TeamCount)
+            {
+                if (--u.DepositCountdown <= 0)
+                {
+                    u.DepositCountdown = proto.DepositTicks;
+                    World.Teams[u.Team].Money += Fix64.FromInt(proto.DepositAmount);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// How close a unit must be to claim a structure: 2 world units, squared. Not arbitrary —
+    /// formation spacing in every scenario here is 3 units, so a radius under 1.5 can never
+    /// be reached by anything but the one unit that spawned on the spot. It is also the right
+    /// order for a building: the compiler scales our world by 16 for ZH, where retail
+    /// structure footprints run 13-40, i.e. roughly 1-2.5 of our units.
+    /// </summary>
+    private static readonly Fix64 CaptureRadiusSq = Fix64.FromInt(4);
+
     private void LoadoutSystem()
     {
         if (!World.Content.HasFlags) return;
@@ -422,10 +529,16 @@ public sealed class Sim
             // so targeting must agree with combat about which weapon is in force.
             var weapon = World.Content.Weapons[World.EffectiveWeaponIdx(i)];
 
+            // An occupant is never a target in its own right — you shoot the BUILDING. That
+            // is what AllowAttackGarrisonedBldgs means in ZH: the weapon is allowed to engage
+            // a garrisoned structure, and the damage reaches the people inside (which is why
+            // ImmuneToClearBuildingAttacks has to exist as an opt-out). Ordinary weapons hit
+            // the building and the occupants are untouched; the 17 weapons of 363 that clear
+            // — flame, toxin, flashbang, sniper, C4 — hit both. See ApplyDamage.
             if (u.TargetIdx >= 0)
             {
                 ref readonly var t = ref World.Units[u.TargetIdx];
-                if (t.Alive && DistSq(in u, in t) <= weapon.AcquireRangeSq) continue;
+                if (t.Alive && t.GarrisonHost < 0 && DistSq(in u, in t) <= weapon.AcquireRangeSq) continue;
                 u.TargetIdx = -1;
             }
 
@@ -436,6 +549,7 @@ public sealed class Sim
                 if (j == i) continue;
                 ref readonly var e = ref World.Units[j];
                 if (!e.Alive || e.Team == u.Team) continue;
+                if (e.GarrisonHost >= 0) continue;
                 Fix64 d = DistSq(in u, in e);
                 if (d <= weapon.AcquireRangeSq && d < bestDist)
                 {
@@ -458,6 +572,9 @@ public sealed class Sim
         {
             ref var u = ref World.Units[i];
             if (!u.Alive) continue;
+            // An occupant holds the building's position and does not chase. Letting it walk
+            // out to close range would quietly undo the immunity it just gained.
+            if (u.GarrisonHost >= 0) continue;
             Fix64 speed = World.Resolved(i, Stat.Speed);
 
             if (u.TargetIdx >= 0)
@@ -562,6 +679,10 @@ public sealed class Sim
                 {
                     ref readonly var victim = ref World.Units[v];
                     if (!victim.Alive) continue;
+                    // Splash never reaches an occupant directly either, or a blast beside a
+                    // held building would kill people a direct shot cannot touch. A clearing
+                    // weapon still gets them, through the host, in ApplyDamage.
+                    if (victim.GarrisonHost >= 0) continue;
                     Fix64 dx = victim.X - cx, dy = victim.Y - cy;
                     Fix64 d2 = dx * dx + dy * dy;
 
@@ -596,6 +717,24 @@ public sealed class Sim
             victim.Alive = false;
             AwardKillXp(attackerIdx, content.Units[victim.ProtoIdx].Cost);
             RaiseDeath(victimIdx, depth: 0);
+        }
+
+        // Clearing a building: the same blow that hits the structure hits everyone inside.
+        // This is the ONLY way damage reaches an occupant, which is what makes garrison a
+        // position rather than a hiding place — and it is ZH's own model, where the weapon
+        // engages the BUILDING and the occupants take it.
+        //
+        // Occupants are visited in ascending index and resolved against the host's state as
+        // it was before this blow, so whether the host died to this same shot cannot change
+        // who inside was hurt.
+        if (weapon.ClearsGarrison && content.HasGarrison
+            && content.Units[victim.ProtoIdx].GarrisonCapacity > 0)
+        {
+            for (int o = 0; o < World.UnitCount; o++)
+            {
+                if (World.Units[o].GarrisonHost != victimIdx || !World.Units[o].Alive) continue;
+                ApplyDamage(attackerIdx, o, amount, weapon);
+            }
         }
     }
 
