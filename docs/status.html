@@ -342,6 +342,12 @@
     <div class="ev">4 invented enum values caught only here · every emitted literal now copied from a block that demonstrably loads</div>
   </div>
 
+  <div class="slice">
+    <div class="slice-h"><h3>Faction-scoped reference resolution</h3><span class="pill p-done">done</span></div>
+    <p>A faction-local variant resolves its references through its own faction's roster — via the <em>resolved</em> roster, never by mangling a name, because inheritance means only the roster knows which fork applies. Scoping deliberately stops at variants: a shared prototype is used by every faction that did not fork it, so its reference array cannot mean different things to each. That case is linted rather than pretended away.</p>
+    <div class="ev">retail ships 88 bad references across 68 broken definitions · patch104p fixes several as tracked bugs</div>
+  </div>
+
   <h3>Decisions taken, closed</h3>
   <ul>
     <li><strong>Stacking:</strong> additive-in-excess added as a third op alongside Add and Mul; mixing them on one stat lints.</li>
@@ -372,6 +378,35 @@
       because a final-state hash only observes units <em>alive at the end</em>, and the
       renumbered units were on the losing side. Identity is now name-derived, and the guard is
       generative rather than a recorded constant.
+    </p>
+  </div>
+
+  <div class="fix">
+    <h3>A faction patch built a crippled clone</h3>
+    <p>
+      Faction variants were assembled by an object initializer listing nine fields, against a
+      type with twenty. Patch nothing but a war factory's cost and it lost its
+      <code>KindOf</code> — it stopped being a structure, and compiled with a
+      <em>Locomotor</em>. Rules, conditional variants, energy production and birth flags went
+      the same way, so a patched suicide truck no longer exploded. Found while exploring the
+      adjacent slice, not by a test: the pinned hashes could not see it, because the only
+      variant in base content has nothing in the dropped fields. It is now a memberwise clone,
+      so the next field added to the type is carried without anyone remembering to.
+    </p>
+  </div>
+
+  <div class="fix">
+    <h3>The defect count was off, and pointed at the wrong field</h3>
+    <p>
+      This page claimed <em>67</em> cross-fork defects in shipping content. Re-measured with an
+      explicit reachability graph rather than a text grep: <strong>88 bad references across 68
+      broken definitions</strong> — 67 was the right grain, off by one, and the three plausible
+      grains differ by 1.7×, so the number is quoted per grain from now on. The more useful
+      correction is <em>where</em>: prerequisites account for <strong>none</strong> of them.
+      Sixty-four of the eighty-eight are reached through a shared intermediary — one Paradrop
+      list, invoked by three generals who each forked their own Ranger, delivering the plain
+      one to all of them. The lint rule was aimed at prerequisites and would have caught
+      almost nothing; it now targets the shared referrer.
     </p>
   </div>
 
@@ -414,8 +449,7 @@
     <table>
       <thead><tr><th>Slice</th><th>Why now</th><th>Size</th><th></th></tr></thead>
       <tbody>
-        <tr><td class="name">Faction-scoped references</td><td>Would have caught 67 real defects in shipping content; impossible to retrofit once things reference each other</td><td class="n">M</td><td><span class="pill p-next">next</span></td></tr>
-        <tr><td class="name">Garrison + capture</td><td>The only terrain-shaped modifier in all of ZH, needing zero geometry</td><td class="n">M</td><td></td></tr>
+        <tr><td class="name">Garrison + capture</td><td>The only terrain-shaped modifier in all of ZH, needing zero geometry</td><td class="n">M</td><td><span class="pill p-next">next</span></td></tr>
         <tr><td class="name">Powers + science currency</td><td>7 points against 13–18 sciences = 19,448 loadouts nobody has enumerated</td><td class="n">L</td><td></td></tr>
         <tr><td class="name">Spatial index</td><td>Before splash and auras scale, not after — decides whether batch measurement stays affordable</td><td class="n">M</td><td></td></tr>
         <tr><td class="name">MCP tool surface</td><td>The agent-facing seam, once there is a design space behind it</td><td class="n">M</td><td></td></tr>

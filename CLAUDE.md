@@ -115,6 +115,23 @@ additive-in-excess, not multiplicative; the generals are forks, not diffs; and a
   sorts for exactly this reason — its comment reads *"This keeps things the same
   between machines in a network game."* A directory-scan loader is the most likely
   future source of hash-order nondeterminism in this codebase.
+- **A faction variant is a COMPLETE clone, never a hand-listed subset of fields.**
+  `UnitProto.CloneForFaction` is memberwise on purpose, so a field added to `UnitProto`
+  is carried automatically. *This was a live bug:* the old object initializer copied 9 of
+  20 fields, so patching nothing but a war factory's cost dropped its `KindOf` and the
+  building stopped being a structure — `rts compile` emitted it with a Locomotor. `Rules`,
+  conditional `Variants`, `EnergyProduction` and `BirthFlags` vanished the same way. If you
+  add a mutable array field, deep-copy it there; do not revert to an explicit list.
+  Note the ordering trap that made it worse: rules compile AFTER `ResolveFactions`, so the
+  clone sees an empty rule array and rules must be handed to variants in the rules pass.
+- **Reference resolution is faction-scoped for variants and global for everything else.**
+  `ContentDb.ResolveUnitRef` goes through the owning faction's *resolved roster* — never by
+  mangling a name into `fid/ref`, because inheritance means only the roster knows which
+  fork applies. A shared prototype must NOT be scoped: it is used by every faction that did
+  not fork it, so one reference array cannot mean different things to each. That case is
+  reported by lint. Retail proves the cost of getting this wrong: 88 bad references / 68
+  broken definitions shipped, and `Prerequisites` accounts for none of them — 64 are
+  references reached through a shared intermediary.
 - **Ties break deterministically** (e.g. targeting: `(distSq, unitIdx)`).
   Every new comparison needs a total order.
 - **New randomness gets its own `Pcg32` stream id** (next free integer in
@@ -219,10 +236,19 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    re-resolve in their own pinned `Sim.Step` phase.
    *Our algebra covers 4.5% of ZH's real upgrade references; selectors cover the rest.
    1,716 of ~2,300 real condition clauses are literally `None`, so the grammar is tiny.*
-4. **Faction-scoped reference resolution** + the lint rule "a variant must not reference
-   a base prototype that has a variant in this faction". (M)
-   *Would have caught 67 real defects in shipping ZH content. Cheap now while our
-   reference graph is trivial; impossible to retrofit later. Risk-retired-first.*
+4. ~~**Faction-scoped reference resolution**~~ — done. A faction-local variant resolves its
+   references through its OWN faction's resolved roster (never by mangling the name into
+   `fid/ref` — inheritance means only the roster knows which fork applies), falling back to
+   global. Covers object prerequisites and rule spawn targets.
+   *Re-measured against retail: 88 bad references across 68 broken definitions, all nine
+   multiplayer generals; `patch104p` ships fixes for several, so it is a tracked defect
+   class. The docs previously said 67 — right grain, off by one; quote the grain.*
+   **The corpus moved the target.** `Prerequisites` contributes ZERO of retail's defects;
+   64 of 88 are references reached through a SHARED INTERMEDIARY (their `ObjectCreationList`
+   `Transport`/`Payload`/`ObjectNames`). Our analogue is rule effects, not prerequisites.
+   **A shared prototype cannot be scoped and must not pretend to be**: it is used by every
+   faction that did not fork it, so one reference array cannot mean different things to
+   each. That case is LINTED, not resolved — the honest split.
 5. ~~**Structures**~~ — done. A unit with speed 0, `KindOf` role flags and
    `BuildCompletion`; prerequisites are objects, so razing a factory revokes buildability.
    *Retail splits 570 buildables into 379 units / 261 structures, and a minimum viable ZH

@@ -19,23 +19,23 @@ echo "build: OK"
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
 echo
-echo "== gate 1/4: content lint =="
+echo "== gate 1/13: content lint =="
 rts lint
 
 echo
-echo "== gate 2/4: replay determinism =="
+echo "== gate 2/13: replay determinism =="
 rts replay --a crusader --b battlemaster --seed 7
 
 echo
-echo "== gate 3/4: duel smoke =="
+echo "== gate 3/13: duel smoke =="
 rts duel --a crusader --b technical --n 20 --seed 42
 
 echo
-echo "== gate 4/4: econ determinism =="
+echo "== gate 4/13: econ determinism =="
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
 echo
-echo "== gate 5/12: faction layering resolves =="
+echo "== gate 5/13: faction layering resolves =="
 rts faction
 
 echo
@@ -51,7 +51,7 @@ echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
 echo
-echo "== gate 6/12: layered packs + diff =="
+echo "== gate 6/13: layered packs + diff =="
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -75,7 +75,7 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 echo "  base unaffected by the mod: $base_again"
 
 echo
-echo "== gate 7/12: structures are economic targets =="
+echo "== gate 7/13: structures are economic targets =="
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -98,7 +98,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 echo "  factory present => units build and win (A 3/3)"
 
 echo
-echo "== gate 8/12: flags and conditional variants =="
+echo "== gate 8/13: flags and conditional variants =="
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -128,7 +128,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
 echo
-echo "== gate 9/12: event rules {on, when, do} =="
+echo "== gate 9/13: event rules {on, when, do} =="
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -170,7 +170,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 echo "  stalled queues are reported, not silent"
 
 echo
-echo "== gate 10/12: factions are startable, not just rosters =="
+echo "== gate 10/13: factions are startable, not just rosters =="
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -190,7 +190,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 echo "  the loser's stall is reported, not silent"
 
 echo
-echo "== gate 11/12: compile to a Zero Hour mod =="
+echo "== gate 11/13: compile to a Zero Hour mod =="
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -217,7 +217,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
 echo "  emitted enum values are ones retail actually uses"
 
 echo
-echo "== gate 12/12: target-zh lint — caps, round-trip, divergence =="
+echo "== gate 12/13: target-zh lint — caps, round-trip, divergence =="
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -292,6 +292,74 @@ PY
 tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first compiles" || true)
 [ "$tv" = "1" ] || { echo "  ONE-BIT LIMIT NOT REPORTED: extra variants silently never fire"; exit 1; }
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
+
+echo
+echo "== gate 13/13: faction-scoped reference resolution =="
+FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
+
+# A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
+# by a 9-field initializer against a 20-field type, so patching nothing but a war factory's
+# cost dropped its KindOf and the building stopped being a structure — it compiled WITH a
+# Locomotor. Rules, conditional variants, energy production and birth flags went the same way.
+# Structures skip locomotor emission, so counting locomotors is the sharpest available probe.
+python3 - > "$FOUT/clone.json" <<'PY'
+import json, re
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/structures.json').read(), flags=re.M))
+d['meta']['name'] = 'clone'
+d['factions']['usa_probe'] = {"extends": "usa_base", "modify": {"usa_factory": {"cost": 1900}}}
+print(json.dumps(d))
+PY
+rts compile --target zh --out "$FOUT/clone" --mod "$FOUT/clone.json" >/dev/null
+grep -q "usa_probe_usa_factoryLoco" "$FOUT/clone/Data/INI/Locomotor/clone.ini" \
+  && { echo "  A PATCHED STRUCTURE LOST ITS KindOf: the factory compiled with a Locomotor"; exit 1; }
+echo "  a faction patch clones every field, not the nine someone remembered"
+
+# Retail's dominant defect, in our model: a fork whose reference still points at the base.
+# 64 of their 88 bad references are this shape (shared OCL, forked payload). A faction that
+# forks BOTH a tank and the wreck it leaves must get its own wreck.
+python3 - > "$FOUT/scope.json" <<'PY'
+import json, re
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/deathrules.json').read(), flags=re.M))
+d['meta']['name'] = 'scope'
+d['factions']['gla_fork'] = {"extends": "gla_scrap", "add": ["wreck"],
+                             "modify": {"scrap_tank": {"cost": 850}, "wreck": {"cost": 2}}}
+print(json.dumps(d))
+PY
+rts compile --target zh --out "$FOUT/scope" --mod "$FOUT/scope.json" >/dev/null
+grep -A2 "OCL_scope_gla_fork_scrap_tank_Death" "$FOUT/scope/Data/INI/ObjectCreationList/scope.ini" \
+  | grep -q "ObjectNames = scope_gla_fork_wreck" \
+  || { echo "  A FORKED UNIT SPAWNED THE BASE PROTOTYPE: spawn did not resolve faction-scoped"; exit 1; }
+# ...and the base must be unaffected, or "scoping" is just a global rewrite.
+grep -A2 "OCL_scope_scrap_tank_Death" "$FOUT/scope/Data/INI/ObjectCreationList/scope.ini" \
+  | grep -q "ObjectNames = scope_wreck" \
+  || { echo "  scoping leaked into the base prototype"; exit 1; }
+echo "  a variant's spawn resolves through its own faction; the base is untouched"
+
+# Same for object prerequisites: the forked crusader is gated on the forked factory.
+python3 - > "$FOUT/prereq.json" <<'PY'
+import json, re
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/structures.json').read(), flags=re.M))
+d['meta']['name'] = 'prereq'
+d['factions']['usa_fork'] = {"extends": "usa_base",
+                             "modify": {"usa_factory": {"cost": 1900}, "crusader": {"cost": 880}}}
+print(json.dumps(d))
+PY
+rts compile --target zh --out "$FOUT/prereq" --mod "$FOUT/prereq.json" >/dev/null
+# Emitted INI is CRLF (their parser is a 2003 Windows line reader), so strip CR before
+# anchoring — a bare /^End$/ never matches and the range silently reads empty.
+tr -d '\r' < "$FOUT/prereq/Data/INI/Object/prereq.ini" \
+  | awk '/^Object prereq_usa_fork_crusader$/,/^End$/' \
+  | grep -q "Object = prereq_usa_fork_usa_factory" \
+  || { echo "  A FORKED UNIT REQUIRED THE BASE BUILDING: prerequisite did not resolve scoped"; exit 1; }
+echo "  a variant's prerequisites resolve through its own faction"
+
+# What resolution CANNOT fix must be reported. A shared prototype is used by several
+# factions, so its reference array cannot mean different things to each — the position
+# EA's shared Paradrop OCL is in. Fork the factory but not what depends on it and the
+# dependency still names the base object.
+sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' requires 'usa_factory'" || true)
+[ "$sc" = "1" ] || { echo "  SHARED-REFERRER DEFECT NOT REPORTED: the retail bug class ships silently"; exit 1; }
+echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
 
 echo
 echo "== regression: pinned replay hashes =="

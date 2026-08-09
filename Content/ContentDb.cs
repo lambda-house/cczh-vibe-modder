@@ -121,6 +121,31 @@ public sealed class UnitProto
     public int VetTrackIdx = -1;
     /// <summary>Base stats indexed by <see cref="Stat"/>. Speed already per-tick.</summary>
     public Fix64[] BaseStats = new Fix64[StatResolver.StatCount];
+
+    /// <summary>
+    /// A faction patch produces a COMPLETE copy that then has the patch applied — never a
+    /// hand-listed subset of fields. That distinction is not stylistic: this was a real bug.
+    /// The old field-by-field initializer copied 9 of 20 fields, so patching nothing but a
+    /// war factory's cost dropped its <c>KindOf</c> and it stopped being a structure —
+    /// <c>rts compile</c> emitted the building with a Locomotor. Rules, conditional variants,
+    /// energy production and birth flags vanished the same way.
+    ///
+    /// Memberwise so that ADDING a field to this class carries it automatically. A field
+    /// added to the type but forgotten here is precisely the failure being designed out, so
+    /// deep-copy the mutable arrays below rather than reverting to an explicit list.
+    /// </summary>
+    public UnitProto CloneForFaction(string fid, string rosterId)
+    {
+        var c = (UnitProto)MemberwiseClone();
+        c.Id = $"{fid}/{rosterId}";
+        c.StableId = ContentDb.StableIdOf(c.Id);
+        c.FactionId = fid;
+        c.RosterId = rosterId;
+        c.IsVariant = true;
+        c.SelfIdx = -1;                       // reassigned once the table is complete
+        c.BaseStats = (Fix64[])BaseStats.Clone();   // shared array would alias the base unit
+        return c;
+    }
 }
 
 /// <summary>
@@ -169,6 +194,18 @@ public sealed class ContentDb
     public static ulong StableIdOf(string id) =>
         Fnv1a64.HashBytes(System.Text.Encoding.UTF8.GetBytes(id));
 
+    /// <summary>
+    /// Resolve a unit reference as the prototype holding it would see it: a faction-local
+    /// variant looks in its own faction's roster first, everything else resolves globally.
+    /// Returns -1 when the name is not a unit at all (prerequisites may name a tech node).
+    /// </summary>
+    public static int ResolveUnitRef(ContentDb db, UnitProto from, string name)
+    {
+        if (from.IsVariant && db.RosterOf.TryGetValue(from.FactionId, out var roster)
+            && roster.TryGetValue(name, out int own)) return own;
+        return db.UnitIndexById.TryGetValue(name, out int glob) ? glob : -1;
+    }
+
     public required string PackName;
     public ulong ContentHash;
     /// <summary>The ordered pack stack this db was composed from. Base first.</summary>
@@ -199,6 +236,9 @@ public sealed class ContentDb
     public VetTrackDef[] VetTracks = Array.Empty<VetTrackDef>();
     public UnitProto[] Units = Array.Empty<UnitProto>();
     public Dictionary<string, int> UnitIndexById = new();
+    /// <summary>Per-faction resolved roster: faction id -> (roster id -> prototype index).
+    /// The scope a faction-local variant resolves its references through.</summary>
+    public Dictionary<string, Dictionary<string, int>> RosterOf = new(StringComparer.Ordinal);
     public Dictionary<string, FactionDef> Factions = new();
     /// <summary>Faction ids in resolution order (parents before children).</summary>
     public string[] FactionOrder = Array.Empty<string>();
@@ -573,12 +613,40 @@ public sealed class ContentDb
         db.Units = units.ToArray();
         for (int i = 0; i < db.Units.Length; i++) db.Units[i].SelfIdx = i;
 
+        // Faction-scoped reference resolution.
+        //
+        // A reference inside a faction-local variant must prefer that faction's OWN roster
+        // entry over the global prototype of the same name. Measured from retail: 88 bad
+        // references across 68 broken definitions ship in Zero Hour because their generals
+        // are forks and a fork kept pointing at the base — the Laser General's Paradrop
+        // delivers the plain Ranger, not the Laser Ranger. patch104p carries fixes for
+        // several of them, so this is a tracked defect class, not a theoretical one.
+        //
+        // Resolution goes through the faction's RESOLVED ROSTER, never by mangling the name
+        // into "fid/ref". Inheritance is why: a general that does not patch the war factory
+        // still inherits its PARENT's patched one, and only the roster knows that.
+        //
+        // The scoping stops at variants, and that limit is the honest one. A base prototype
+        // is shared by every faction that did not fork it, so its reference array cannot be
+        // faction-dependent — exactly the position EA's shared SUPERWEAPON_Paradrop1 OCL is
+        // in. Lint reports that case instead of pretending to resolve it.
+        var rosterOf = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
+        foreach (var fid in db.FactionOrder)
+        {
+            var f = db.Factions[fid];
+            var map = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < f.RosterIds.Length; i++) map[f.RosterIds[i]] = f.OwnUnitIdx[i];
+            rosterOf[fid] = map;
+        }
+        db.RosterOf = rosterOf;
+
         // Object prerequisites resolve here, once every prototype exists — forward
         // references are legal, so declaration order in the pack does not matter.
         foreach (var p in db.Units)
             p.PrereqObjectIdx = p.Prerequisites
-                                 .Where(r => db.UnitIndexById.ContainsKey(r))
-                                 .Select(r => db.UnitIndexById[r])
+                                 .Where(r => ResolveUnitRef(db, p, r) >= 0)
+                                 .Select(r => ResolveUnitRef(db, p, r))
+                                 .Distinct()
                                  .OrderBy(i => i)                 // ascending, always
                                  .ToArray();
 
@@ -649,6 +717,31 @@ public sealed class ContentDb
                 });
             }
             db.Units[owner].Rules = compiled.ToArray();
+
+            // Rules compile AFTER faction resolution — a spawn may name a prototype declared
+            // later — so the variant clone above copied an empty rule array. Hand each
+            // variant its own copy here, with spawn targets re-resolved through the owning
+            // faction's roster. Without this a patched suicide truck stops exploding, and a
+            // patched scrap tank leaves the BASE faction's wreck: our exact analogue of the
+            // shared-OCL defect, where 64 of retail's 88 bad references live.
+            foreach (var v in db.Units)
+            {
+                if (!v.IsVariant || !string.Equals(v.RosterId, id, StringComparison.Ordinal)) continue;
+                v.Rules = compiled.Select(rule => new RuleDef
+                {
+                    On = rule.On,
+                    RequiredFlags = rule.RequiredFlags,
+                    Effects = rule.Effects.Select(e => e.Kind != EffectKind.Spawn || e.ProtoIdx < 0
+                        ? e
+                        : new EffectDef
+                        {
+                            Kind = e.Kind, Count = e.Count, Spread = e.Spread, Amount = e.Amount,
+                            WeaponIdx = e.WeaponIdx, RadiusSq = e.RadiusSq, FlagBit = e.FlagBit,
+                            TeamScope = e.TeamScope,
+                            ProtoIdx = ResolveUnitRef(db, v, db.Units[e.ProtoIdx].RosterId),
+                        }).ToArray(),
+                }).ToArray();
+            }
         }
         db.HasRules = db.Units.Any(p => p.Rules.Length > 0);
         // Structural gates are opt-in per pack: a pack that declares no factory keeps the
@@ -659,6 +752,46 @@ public sealed class ContentDb
         foreach (var u in db.Units)
             if (!u.IsVariant && !dto.Factions.ContainsKey(u.FactionId))
                 warnings.Add($"unit '{u.Id}': faction '{u.FactionId}' not declared in factions table");
+
+        // --- Faction-scoped reference lint --------------------------------------
+        //
+        // Resolution above fixes the case it CAN fix: a variant belongs to one faction, so
+        // its references are scoped to that faction's roster. The case it cannot fix is the
+        // one that actually ships broken in Zero Hour — a SHARED prototype, used unforked by
+        // several factions, referencing something that one of them HAS forked. A single
+        // reference array cannot mean different things to different factions.
+        //
+        // Retail is the proof: 88 bad references across 68 definitions, and the largest
+        // cluster is exactly this shape — one shared Paradrop list delivering the base
+        // Ranger to all three USA generals that forked it. There is no resolution rule that
+        // rescues that; the author has to fork the referrer too. So we report it.
+        foreach (var fid in db.FactionOrder)
+        {
+            var f = db.Factions[fid];
+            var forked = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < f.RosterIds.Length; i++)
+                if (db.Units[f.OwnUnitIdx[i]].IsVariant) forked.Add(f.RosterIds[i]);
+            if (forked.Count == 0) continue;
+
+            for (int i = 0; i < f.RosterIds.Length; i++)
+            {
+                var p = db.Units[f.OwnUnitIdx[i]];
+                if (p.IsVariant) continue;              // scoped already; nothing to warn about
+
+                foreach (var req in p.Prerequisites.Where(forked.Contains))
+                    warnings.Add($"faction '{fid}': shared unit '{p.Id}' requires '{req}', but this " +
+                                 $"faction patched '{req}' into '{fid}/{req}'. The shared prototype is used " +
+                                 $"by other factions too, so its requirement still names the base object and " +
+                                 $"this faction's own '{req}' will not satisfy it. Patch '{p.RosterId}' here too.");
+
+                foreach (var e in p.Rules.SelectMany(rule => rule.Effects))
+                    if (e.Kind == EffectKind.Spawn && e.ProtoIdx >= 0 && forked.Contains(db.Units[e.ProtoIdx].RosterId))
+                        warnings.Add($"faction '{fid}': shared unit '{p.Id}' spawns " +
+                                     $"'{db.Units[e.ProtoIdx].RosterId}', but this faction patched it. The " +
+                                     $"spawn is on the shared prototype, so this faction gets the base one. " +
+                                     $"Patch '{p.RosterId}' here too.");
+            }
+        }
 
         // --- Coarse balance lint: raw DPS per 1000 cost -------------------------
         var band = db.LintConfig.DpsPer1000CostBand;
@@ -757,21 +890,9 @@ public sealed class ContentDb
                 }
 
                 var b = units[baseIdx];
-                var variant = new UnitProto
-                {
-                    Id = $"{fid}/{uid}",
-                    StableId = StableIdOf($"{fid}/{uid}"),
-                    FactionId = fid,
-                    RosterId = uid,
-                    IsVariant = true,
-                    Cost = patch.Cost ?? b.Cost,
-                    BuildTicks = patch.BuildTicks ?? b.BuildTicks,
-                    Prerequisites = b.Prerequisites,
-                    PrereqTechIdx = b.PrereqTechIdx,
-                    ArmorClassIdx = b.ArmorClassIdx,
-                    WeaponIdx = b.WeaponIdx,
-                    VetTrackIdx = b.VetTrackIdx,
-                };
+                var variant = b.CloneForFaction(fid, uid);
+                variant.Cost = patch.Cost ?? b.Cost;
+                variant.BuildTicks = patch.BuildTicks ?? b.BuildTicks;
                 // Bake the patch into base stats once, at load. Veterancy then layers on
                 // top through the same algebra at runtime — one mechanism, not two.
                 StatResolver.Resolve(b.BaseStats, mods, variant.BaseStats);

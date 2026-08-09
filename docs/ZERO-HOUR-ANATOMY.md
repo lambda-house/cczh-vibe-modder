@@ -52,11 +52,28 @@ Field-level overrides alone would not have fixed this. A general is **six pointe
 Dozer → new buildings → new CommandSets → new units. Without reference rewriting, expressing a
 diff still forces you to restate the transitive closure.
 
-The cost is measurable, and it shipped as bugs. **67 places** inside prefixed objects still
-reference an un-prefixed base object that has a same-general twin — e.g.
-`LaserGeneral.ini:7084` sets `PayloadTemplateName = AmericaTankAvengerLaserTurret` inside
-`Object Lazr_AmericaTankAvenger`, while `Lazr_AmericaTankAvengerLaserTurret` exists 261 lines
-earlier. The community patch's fix for a GLA hole leak was to clone the hole 39 more times
+The cost is measurable, and it shipped as bugs. Re-measured against retail with an explicit
+reachability graph (not a text grep): **88 bad references across 68 distinct broken
+definitions**, spread over all nine multiplayer generals. A reference counts only when the
+same general's fork of the referenced object demonstrably exists.
+
+An earlier pass here reported **67**; the right number at that grain is **68**, and 88 if you
+count each bad field rather than each broken definition (52 if you collapse tier-1/2/3
+duplicates of one logical power). The count is quoted per grain from now on, because the three
+differ by 1.7x.
+
+Where they are matters more than the total. **`Prerequisites` contributes zero.** The volume is
+in references reached THROUGH A SHARED INTERMEDIARY: `ObjectCreationList` `Transport`/`Payload`/
+`ObjectNames` (64) and `CommandButton.Object` (15). The archetype is `SUPERWEAPON_Paradrop1` —
+one shared list, invoked by all three USA generals, delivering the plain `AmericaInfantryRanger`
+to generals that each forked their own. `patch104p` independently ships fixes for three of
+these (e.g. `Chem_Command_PurchaseScienceMarauderTank`, annotated *"Use correct object for
+tooltip. (#2166)"*), which is external confirmation that this is a tracked defect class rather
+than an artifact of our methodology.
+
+Per-general: SuperWeapon 19, Laser 18, AirForce 17, Nuke 7, Toxin 6, Tank 6, Infantry 6, Demo 5,
+Stealth 4 (bad references). `BossGeneral` and the General's-Challenge `GC_*` forks carry the
+same defects and are excluded as single-player-only. The community patch's fix for a GLA hole leak was to clone the hole 39 more times
 across 6 files. One bugfix appears 113 times across 18 files; 58.9% of all patch annotations
 in `Object/` land in the ten general files.
 
@@ -276,7 +293,7 @@ Each slice is justified by a specific measurement above.
 |---|---|---|---|
 | 1 | **Schema hygiene**: a `defaults` block, load-time duration→tick quantisation with `ceil()`, `unitsPerPurchase`, explicit `default` on `damageVsArmor` rows | S | ZH's `DefaultThingTemplate` is 130 lines serving all 1,949 objects. Without one, every new field is a breaking change to every unit. Trivial now, expensive once packs exist. |
 | 2 | **Modifier semantics**: additive-in-excess op; replace the single upgrade condition with a named **flag set**; flag-keyed **conditional variant blocks** | M | Our algebra covers 61 of 1,348 real upgrade references (4.5%). Selectors cover armor 220 + weapon-swap 123 + menu-swap 122. Grammar stays trivial: 1,716 of ~2,300 real condition clauses are literally `None`. |
-| 3 | **Faction-scoped reference resolution** + lint: "a variant must not reference a base prototype that has a variant in this faction" | M | Would have caught **67 real defects in shipping content**. Cheap now, impossible to retrofit — this is the risk-retired-first slice. |
+| 3 | ~~**Faction-scoped reference resolution**~~ — DONE | M | The defect class is real: **68 broken definitions / 88 bad references** in retail. Resolution is scoped for variants; the shared-referrer case, which no resolution rule can fix, is linted. |
 | 4 | **Upgrades as a content type**: named boolean + cost + ticks + scope | M | ZH's whole upgrade schema is 8 fields, 3 sim-relevant; an upgrade carries no effect data. Makes `rts matrix` a matrix over (prototype × upgrade state). |
 | 5 | **Rules engine** `{on, when, do}`, death event first; **spawn lists** as the single "make objects" indirection | L | Death/damage response is **30.5% of all module instances** (5,083) and collapses to one rule shape. We have zero death vocabulary today. |
 | 6 | **Garrison + capturable structures** | M | `GARRISONED` is the only terrain-shaped combat modifier in the entire game and needs no geometry. Attacks the README's own "rushes can only spawn-camp" diagnosis. |
