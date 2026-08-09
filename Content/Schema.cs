@@ -23,6 +23,10 @@ public sealed class ContentPackDto
     public Dictionary<string, WeaponDto> Weapons { get; set; } = new();
     public Dictionary<string, VeterancyTrackDto> VeterancyTracks { get; set; } = new();
     public TechDto Tech { get; set; } = new();
+    /// <summary>Commander ranks in ascending order. Empty = no second currency in this pack.</summary>
+    public List<RankDto> Ranks { get; set; } = new();
+    public Dictionary<string, ScienceDto> Sciences { get; set; } = new();
+    public Dictionary<string, PowerDto> Powers { get; set; } = new();
     public Dictionary<string, UnitDto> Units { get; set; } = new();
     public Dictionary<string, FactionDto> Factions { get; set; } = new();
     public ZhTargetDto Zh { get; set; } = new();
@@ -79,6 +83,49 @@ public sealed class WeaponDto
     /// tactical mechanic rather than a free damage sponge.
     /// </summary>
     public bool ClearsGarrison { get; set; }
+}
+
+/// <summary>
+/// One commander rank. ZH's Rank.ini is five of these and that is the entire second
+/// currency: skill points earned by KILLING cross a threshold, the rank grants purchase
+/// points, and purchase points buy sciences. Their numbers are 0/800/1500/2500/5000 needed
+/// and 1/1/1/1/3 granted — seven points, total, for a whole game.
+/// </summary>
+public sealed class RankDto
+{
+    public int SkillPointsNeeded { get; set; }
+    public int PurchasePointsGranted { get; set; } = 1;
+}
+
+/// <summary>
+/// A purchasable science. In ZH a science carries no effect data of its own — exactly like
+/// an upgrade, it is a name you own, and content keys off it. All 78 purchasable retail
+/// sciences cost exactly 1 point; the tree's shape comes entirely from prerequisites.
+/// </summary>
+public sealed class ScienceDto
+{
+    public int Cost { get; set; } = 1;
+    /// <summary>Other sciences that must already be owned. ZH: PrerequisiteSciences.</summary>
+    public List<string>? Requires { get; set; }
+    /// <summary>Minimum commander rank. ZH spells this as a SCIENCE_RankN prerequisite.</summary>
+    public int RequiresRank { get; set; }
+    /// <summary>Team flags granted on purchase — the seam to conditional variants.</summary>
+    public List<string>? GrantsFlags { get; set; }
+}
+
+/// <summary>
+/// An activated commander power: gated by a flag (so a science unlocks it), on a recharge,
+/// firing the same closed effect vocabulary the death rules use. ZH's SpecialPowerTemplate
+/// plus an OCLSpecialPower module, minus the closed SpecialPowerType enum we cannot extend.
+/// </summary>
+public sealed class PowerDto
+{
+    /// <summary>Flag that must be present on the team. Usually granted by a science.</summary>
+    public string RequiresFlag { get; set; } = "";
+    public int RechargeTicks { get; set; }
+    /// <summary>Seconds; quantised with ceil() at load. Wins over RechargeTicks.</summary>
+    public double? RechargeSeconds { get; set; }
+    public List<EffectDto> Do { get; set; } = new();
 }
 
 public sealed class VeterancyTrackDto

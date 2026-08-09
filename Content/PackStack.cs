@@ -105,6 +105,12 @@ public static class PackStack
             Units = MergeKeyed(b.Units, over.Units),
             Factions = MergeKeyed(b.Factions, over.Factions),
             Tech = new TechDto { Nodes = MergeKeyed(b.Tech.Nodes, over.Tech.Nodes) },
+            Sciences = MergeKeyed(b.Sciences, over.Sciences),
+            Powers = MergeKeyed(b.Powers, over.Powers),
+            // Ranks are an ORDERED ladder, not a keyed table: a later pack replaces the whole
+            // ladder or inherits it whole. Merging them per index would let a mod that only
+            // wants a cheaper rank 2 silently reorder the thresholds.
+            Ranks = over.Ranks.Count > 0 ? over.Ranks : b.Ranks,
             DamageVsArmor = MergeMatrix(b.DamageVsArmor, over.DamageVsArmor),
         };
         return m;

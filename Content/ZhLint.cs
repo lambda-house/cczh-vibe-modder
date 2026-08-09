@@ -218,6 +218,28 @@ public static class ZhLint
                              "— occupants fire from window positions and a big footprint extends their reach — " +
                              "so engagement ranges around a held building will differ from the harness.");
 
+        // The rank ladder is a GLOBAL SINGLETON in ZH: Rank.ini blocks are numbered 1..5, not
+        // named, so emitting ours would REPLACE retail's rather than add to it — the one place
+        // in this compiler where additive emission is impossible by construction. A pack that
+        // retunes the ladder therefore plays on retail's thresholds in game.
+        if (db.Ranks.Length > 0)
+            r.Divergence.Add($"the {db.Ranks.Length}-rank ladder is NOT emitted. ZH's Rank blocks are numbered, " +
+                             $"not named, so writing ours would overwrite retail's 0/800/1500/2500/5000 instead " +
+                             $"of adding to it. Sciences compile; the thresholds that pay for them do not.");
+
+        // A science compiles as a Science block, but what OUR sciences DO has no carrier:
+        // theirs gate CommandButtons and OCLSpecialPowers, they do not set an upgrade bit.
+        int granting = db.Sciences.Count(sc => sc.GrantsFlags != 0);
+        if (granting > 0)
+            r.Divergence.Add($"{granting} science(s) grant team flags, which is NOT emitted. A ZH science gates " +
+                             $"buttons and special powers; it does not set the PLAYER_UPGRADE bit a conditional " +
+                             $"variant keys off. The Science block compiles, the loadout switch it drives does not.");
+
+        if (db.Powers.Length > 0)
+            r.Divergence.Add($"{db.Powers.Length} activated power(s) are NOT emitted. Their SpecialPowerType is a " +
+                             $"CLOSED C++ enum — an invented name is a hard load error — so a genuinely new power " +
+                             $"cannot be added by data at all. This is their wall, not ours.");
+
         if (db.HasPower)
             r.Divergence.Add("power: we halt ALL production on a negative grid; ZH disables individual " +
                              "KINDOF_POWERED structures instead. Brownout behaviour will differ.");

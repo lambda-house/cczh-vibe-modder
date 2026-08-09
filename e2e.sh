@@ -19,23 +19,23 @@ echo "build: OK"
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
 echo
-echo "== gate 1/14: content lint =="
+echo "== gate 1/15: content lint =="
 rts lint
 
 echo
-echo "== gate 2/14: replay determinism =="
+echo "== gate 2/15: replay determinism =="
 rts replay --a crusader --b battlemaster --seed 7
 
 echo
-echo "== gate 3/14: duel smoke =="
+echo "== gate 3/15: duel smoke =="
 rts duel --a crusader --b technical --n 20 --seed 42
 
 echo
-echo "== gate 4/14: econ determinism =="
+echo "== gate 4/15: econ determinism =="
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
 echo
-echo "== gate 5/14: faction layering resolves =="
+echo "== gate 5/15: faction layering resolves =="
 rts faction
 
 echo
@@ -51,7 +51,7 @@ echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
 echo
-echo "== gate 6/14: layered packs + diff =="
+echo "== gate 6/15: layered packs + diff =="
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -75,7 +75,7 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 echo "  base unaffected by the mod: $base_again"
 
 echo
-echo "== gate 7/14: structures are economic targets =="
+echo "== gate 7/15: structures are economic targets =="
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -98,7 +98,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 echo "  factory present => units build and win (A 3/3)"
 
 echo
-echo "== gate 8/14: flags and conditional variants =="
+echo "== gate 8/15: flags and conditional variants =="
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -128,7 +128,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
 echo
-echo "== gate 9/14: event rules {on, when, do} =="
+echo "== gate 9/15: event rules {on, when, do} =="
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -170,7 +170,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 echo "  stalled queues are reported, not silent"
 
 echo
-echo "== gate 10/14: factions are startable, not just rosters =="
+echo "== gate 10/15: factions are startable, not just rosters =="
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -190,7 +190,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 echo "  the loser's stall is reported, not silent"
 
 echo
-echo "== gate 11/14: compile to a Zero Hour mod =="
+echo "== gate 11/15: compile to a Zero Hour mod =="
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -217,7 +217,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
 echo "  emitted enum values are ones retail actually uses"
 
 echo
-echo "== gate 12/14: target-zh lint — caps, round-trip, divergence =="
+echo "== gate 12/15: target-zh lint — caps, round-trip, divergence =="
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -294,7 +294,7 @@ tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first co
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
 
 echo
-echo "== gate 13/14: faction-scoped reference resolution =="
+echo "== gate 13/15: faction-scoped reference resolution =="
 FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
 
 # A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
@@ -362,7 +362,7 @@ sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' require
 echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
 
 echo
-echo "== gate 14/14: garrison + capture =="
+echo "== gate 14/15: garrison + capture =="
 # GARRISONABLE is the only terrain-shaped combat modifier in all of Zero Hour and it needs
 # no geometry at all. Occupants cannot be targeted; damage reaches them only as spill from a
 # ClearsGarrison weapon hitting the HOST — 17 of retail's 363 weapons, 4.7% of the arsenal.
@@ -408,6 +408,65 @@ grep -q "AllowAttackGarrisonedBldgs = Yes" "$GOUT/Data/INI/Weapon/garrison.ini" 
 grep -q "AutoDepositUpdate" "$GOUT/Data/INI/Object/garrison.ini" \
   || { echo "  depositAmount did not become an AutoDepositUpdate"; exit 1; }
 echo "  compiles to GarrisonContain + AutoDepositUpdate + AllowAttackGarrisonedBldgs"
+
+echo
+echo "== gate 15/15: sciences — a second currency earned by fighting =="
+# Skill points come from KILLS and from nothing else; no economy converts into them. ZH's
+# whole ladder is five Rank.ini blocks: 0/800/1500/2500/5000 needed, 1/1/1/1/3 granted, so
+# seven points for a game against 13-20 purchasable sciences per faction. Every purchasable
+# retail science costs exactly 1 — the tree's shape is entirely in its prerequisites.
+rts lint --mod content/mods/sciences.json | tail -1
+
+# Prerequisites PRUNE the space; that is what makes brute-forcing subsets wrong. Three
+# sciences give 8 subsets, but marksmanship2 requires marksmanship1, so 2 are unreachable.
+legal=$(rts science-matrix --mod content/mods/sciences.json --n 1 --seed 42 --json \
+        | python3 -c "import sys,json; print(len(json.load(sys.stdin)['rows']))")
+[ "$legal" = "6" ] || { echo "  SCIENCE TREE DRIFT: $legal legal loadouts, expected 6 of 8 subsets"; exit 1; }
+echo "  prerequisites prune the space: 6 legal loadouts of 8 subsets"
+
+# The matrix plays every loadout from BOTH sides and counts the science-owner's wins. That
+# swap is load-bearing: ascending unit index makes team 0 resolve first, and an EMPTY loadout
+# measured 11/12 for team 0 before it. A 50% baseline is what makes the rest readable.
+rows=$(rts science-matrix --mod content/mods/sciences.json --n 12 --seed 42 --json \
+       | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+w={r['Sciences']: r['Wins'] for r in d['rows']}
+print(w['(none)'], w['marksmanship1+marksmanship2'])")
+base=$(echo "$rows" | cut -d' ' -f1); best=$(echo "$rows" | cut -d' ' -f2)
+[ "$base" = "12" ] || { echo "  SIDE BIAS NOT CANCELLED: empty loadout won $base/24, expected 12"; exit 1; }
+[ "$best" -gt "$base" ] || { echo "  SCIENCES INERT: best loadout $best/24 vs baseline $base/24"; exit 1; }
+echo "  mirror baseline is exactly $base/24; the best loadout reaches $best/24"
+
+# Sciences reach the battlefield through the flag/variant machinery that already existed —
+# no new effect path. Ablate the variants and the same purchases must stop mattering.
+SOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT" "$GOUT" "$SOUT"' EXIT
+python3 - > "$SOUT/flat.json" <<'PY2'
+import json, re
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/sciences.json').read(), flags=re.M))
+d['meta']['name'] = 'sciences-ablated'
+d['units']['crusader'].pop('variants')
+print(json.dumps(d))
+PY2
+flat=$(rts science-matrix --mod "$SOUT/flat.json" --n 12 --seed 42 --json \
+       | python3 -c "
+import sys,json
+print(max(r['Wins'] for r in json.load(sys.stdin)['rows']))")
+[ "$flat" = "12" ] || { echo "  ABLATION FAILED: variants removed but a loadout still won $flat/24"; exit 1; }
+echo "  ablate the variants and every loadout falls back to $flat/24 — the flag seam is the whole effect"
+
+# Science blocks compile additively. Confirmed against the RUNNING engine, not the source:
+# EA's GameEngine.cpp passes no directory to TheScienceStore, but the build we target logs
+# loadDirectory('Data\INI\Science'). Schema authority is their source; load behaviour is not.
+rts compile --target zh --out "$SOUT/zh" --mod content/mods/sciences.json >/dev/null
+grep -q "SciencePurchasePointCost = 1" "$SOUT/zh/Data/INI/Science/sciences.ini" \
+  || { echo "  sciences did not compile to Science blocks"; exit 1; }
+grep -q "PrerequisiteSciences = sciences_marksmanship1" "$SOUT/zh/Data/INI/Science/sciences.ini" \
+  || { echo "  science prerequisites were not carried into the emitted tree"; exit 1; }
+# What CANNOT be additive must be reported: Rank blocks are numbered, not named.
+rl=$(rts lint --target zh --mod content/mods/sciences.json | grep -c "rank ladder is NOT emitted" || true)
+[ "$rl" = "1" ] || { echo "  RANK LADDER DIVERGENCE NOT REPORTED"; exit 1; }
+echo "  Science blocks compile additively; the numbered Rank ladder is reported, not overwritten"
 
 echo
 echo "== regression: pinned replay hashes =="

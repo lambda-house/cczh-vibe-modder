@@ -165,6 +165,12 @@ public sealed class Sim
                     // not an error. Every peer computes the same no-op.
                     World.TryGarrison(c.A, c.B);
                     break;
+                case CommandKind.PurchaseScience:
+                    World.TryPurchaseScience(c.A, c.B);
+                    break;
+                case CommandKind.FirePower:
+                    FirePower(c.A, c.B, c.X, c.Y);
+                    break;
                 case CommandKind.RallyTeam:
                     for (int i = 0; i < World.UnitCount; i++)
                     {
@@ -512,6 +518,14 @@ public sealed class Sim
             ref var u = ref World.Units[i];
             if (u.Alive && u.CooldownRemaining > 0) u.CooldownRemaining--;
         }
+        // Power recharge shares this phase with weapon cooldown because it is the same kind
+        // of clock, and teams tick in ascending index like everything else.
+        if (!World.Content.HasPowers) return;
+        for (int t = 0; t < World.TeamCount; t++)
+        {
+            var cd = World.Teams[t].PowerCooldown;
+            for (int p = 0; p < cd.Length; p++) if (cd[p] > 0) cd[p]--;
+        }
     }
 
     /// <summary>
@@ -858,9 +872,39 @@ public sealed class Sim
         }
     }
 
+    /// <summary>
+    /// Fire an activated power at a point. Gated on the team flag a science grants and on a
+    /// recharge, then it runs the SAME closed effect vocabulary the death rules use — which
+    /// is the payoff for keeping that vocabulary closed and its parameters open: a new
+    /// trigger costs one method, not a new effect system.
+    ///
+    /// Effects originate from a synthetic PendingDeath at depth 0: it is really "an effect
+    /// origin" (team, position, flags), and a power is one that no corpse produced. Depth 0
+    /// means a power's spawns are bounded by exactly the same 4-generation cascade clamp.
+    /// </summary>
+    private void FirePower(int team, int powerIdx, Fix64 x, Fix64 y)
+    {
+        var content = World.Content;
+        if ((uint)team >= World.TeamCount || (uint)powerIdx >= (uint)content.Powers.Length) return;
+        var ts = World.Teams[team];
+        if (ts.PowerCooldown[powerIdx] > 0) return;
+        var power = content.Powers[powerIdx];
+        if ((power.RequiresFlags & ~ts.Flags) != 0) return;   // science not owned
+
+        ts.PowerCooldown[powerIdx] = power.RechargeTicks;
+        var origin = new PendingDeath(-1, team, x, y, ts.Flags, depth: 0);
+        foreach (var e in power.Effects) ApplyEffect(e, in origin);
+    }
+
     private void AwardKillXp(int attackerIdx, int victimCost)
     {
         ref var a = ref World.Units[attackerIdx];
+        // The commander is paid first and unconditionally. ZH's default is that a thing's
+        // skill-point value IS its experience value — no retail object overrides it — so the
+        // same number feeds both ladders, but the PLAYER's ladder does not depend on whether
+        // the killer happens to carry a veterancy track.
+        World.AwardSkillPoints(a.Team, victimCost / 10);
+
         var proto = World.Content.Units[a.ProtoIdx];
         if (proto.VetTrackIdx < 0) return;
         a.Xp += victimCost / 10;

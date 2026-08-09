@@ -174,6 +174,33 @@ public static class ZhCompiler
             Write(r, Path.Combine(ini, "Upgrade", pack + ".ini"), sb);
         }
 
+        // ---- Sciences: the second currency ---------------------------------------------
+        // Additive like everything else, and confirmed against the RUNNING engine rather than
+        // the source: EA's GameEngine.cpp passes no directory to TheScienceStore, but the
+        // build we target logs loadDirectory('Data\\INI\\Science'). Schema authority is their
+        // source; LOADING behaviour is whatever the runtime actually does, and the two differ.
+        //
+        // Rank prerequisites are deliberately omitted rather than guessed: their SCIENCE_RankN
+        // are entries in a GLOBAL ladder we do not emit (see ZhLint), so naming one here would
+        // bind our science to a rank ladder whose thresholds are retail's, not the pack's.
+        if (db.Sciences.Length > 0)
+        {
+            sb = new StringBuilder();
+            Banner(sb, db, "Science");
+            foreach (var sc in db.Sciences)
+            {
+                sb.AppendLine($"Science {P(sc.Id)}");
+                string prereq = sc.RequiresIdx.Length == 0
+                    ? "None"
+                    : string.Join(" ", sc.RequiresIdx.Select(i => P(db.Sciences[i].Id)));
+                sb.AppendLine($"  PrerequisiteSciences = {prereq}");
+                sb.AppendLine($"  SciencePurchasePointCost = {sc.Cost}");
+                sb.AppendLine("  IsGrantable = Yes");
+                sb.AppendLine("End").AppendLine();
+            }
+            Write(r, Path.Combine(ini, "Science", pack + ".ini"), sb);
+        }
+
         // ---- ObjectCreationLists: the "make objects" indirection for spawn rules --------
         // ZH cannot spawn from a die module directly; the module names an OCL and the OCL
         // holds the nuggets. Only CreateObject matters to us — of their 7 nugget types just

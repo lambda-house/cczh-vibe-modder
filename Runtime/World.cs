@@ -81,11 +81,33 @@ public sealed class TeamState
     public int ProducedCount;
     /// <summary>Team-scope flags — ZH's PLAYER upgrades. Researched tech grants one.</summary>
     public ulong Flags;
+
+    /// <summary>
+    /// The SECOND currency. Skill points are earned by KILLING and by nothing else — no
+    /// economy converts into them — which is what makes them a different resource rather
+    /// than a slower kind of money. ZH's own default is that a unit's skill-point value IS
+    /// its experience value: not one retail object overrides SkillPointValue, so the number
+    /// that ranks a unit up is the same number that ranks its commander up.
+    /// </summary>
+    public int SkillPoints;
+    /// <summary>Commander rank, 0 before the first threshold. Grants purchase points.</summary>
+    public int CommanderRank;
+    /// <summary>Unspent science purchase points. ZH grants seven across a whole game.</summary>
+    public int PurchasePoints;
+    public readonly bool[] SciencesOwned;
+    /// <summary>Ticks until each power is ready. 0 = ready.</summary>
+    public readonly int[] PowerCooldown;
+
     public readonly bool[] Researched;
     public readonly List<QueueEntry> ResearchQueue = new();
     public readonly List<QueueEntry> UnitQueue = new();
 
-    public TeamState(int techCount) => Researched = new bool[techCount];
+    public TeamState(int techCount, int scienceCount, int powerCount)
+    {
+        Researched = new bool[techCount];
+        SciencesOwned = new bool[scienceCount];
+        PowerCooldown = new int[powerCount];
+    }
 }
 
 /// <summary>
@@ -111,7 +133,8 @@ public sealed class World
     {
         Content = content;
         Teams = new TeamState[TeamCount];
-        for (int t = 0; t < TeamCount; t++) Teams[t] = new TeamState(content.Tech.Length);
+        for (int t = 0; t < TeamCount; t++)
+            Teams[t] = new TeamState(content.Tech.Length, content.Sciences.Length, content.Powers.Length);
         Fix64 cheapest = Fix64.MaxValue;
         foreach (var u in content.Units) cheapest = Fix64.Min(cheapest, Fix64.FromInt(u.Cost));
         CheapestUnitCost = cheapest;
@@ -243,6 +266,49 @@ public sealed class World
         for (int i = 0; i < UnitCount; i++)
             if (Units[i].Alive && Units[i].Team == team && Units[i].ProtoIdx == protoIdx) n++;
         return n;
+    }
+
+    /// <summary>
+    /// Credit a team for a kill and promote it if that crosses a rank threshold.
+    ///
+    /// Deliberately independent of the KILLER's veterancy track: a unit with no track still
+    /// earns its commander skill points, because the currency belongs to the player and not
+    /// to the unit. Tying them together was the obvious shortcut and it would have made
+    /// whole rosters unable to rank up.
+    /// </summary>
+    public void AwardSkillPoints(int team, int amount)
+    {
+        if ((uint)team >= TeamCount || amount <= 0 || Content.Ranks.Length == 0) return;
+        var ts = Teams[team];
+        ts.SkillPoints += amount;
+        while (ts.CommanderRank < Content.Ranks.Length
+               && ts.SkillPoints >= Content.Ranks[ts.CommanderRank].SkillPointsNeeded)
+        {
+            ts.PurchasePoints += Content.Ranks[ts.CommanderRank].PurchasePointsGranted;
+            ts.CommanderRank++;
+        }
+    }
+
+    /// <summary>
+    /// Buy a science. Every failure path is a silent no-op for the same reason garrison is:
+    /// an inadmissible command must do NOTHING, identically on every machine, rather than
+    /// throw on one of them.
+    /// </summary>
+    public bool TryPurchaseScience(int team, int scienceIdx)
+    {
+        if ((uint)team >= TeamCount || (uint)scienceIdx >= (uint)Content.Sciences.Length) return false;
+        var ts = Teams[team];
+        var sc = Content.Sciences[scienceIdx];
+        if (ts.SciencesOwned[scienceIdx]) return false;
+        if (ts.PurchasePoints < sc.Cost) return false;
+        if (ts.CommanderRank < sc.RequiresRank) return false;
+        foreach (int req in sc.RequiresIdx)
+            if (!ts.SciencesOwned[req]) return false;
+
+        ts.PurchasePoints -= sc.Cost;
+        ts.SciencesOwned[scienceIdx] = true;
+        ts.Flags |= sc.GrantsFlags;   // the seam to conditional variants, already built
+        return true;
     }
 
     /// <summary>Live occupants of a garrisonable structure. Ascending index, like everything.</summary>
@@ -436,6 +502,17 @@ public sealed class World
             h.AddInt64(ts.Money.Raw);
             h.AddInt64(ts.IncomePerTick.Raw);
             h.AddInt64(ts.PoolRemaining.Raw);
+            // Gated like every currency before it: a pack with no rank ladder and no science
+            // has these provably zero forever, so omitting them keeps older pins comparable.
+            if (Content.HasSciences)
+            {
+                h.AddInt32(ts.SkillPoints);
+                h.AddInt32(ts.CommanderRank);
+                h.AddInt32(ts.PurchasePoints);
+                for (int i = 0; i < ts.SciencesOwned.Length; i++) h.AddBool(ts.SciencesOwned[i]);
+            }
+            if (Content.HasPowers)
+                for (int i = 0; i < ts.PowerCooldown.Length; i++) h.AddInt32(ts.PowerCooldown[i]);
             h.AddInt64(ts.SpawnX.Raw);
             h.AddInt64(ts.SpawnY.Raw);
             h.AddInt64(ts.RallyX.Raw);

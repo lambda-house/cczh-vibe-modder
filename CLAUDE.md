@@ -135,6 +135,12 @@ additive-in-excess, not multiplicative; the generals are forks, not diffs; and a
   reported by lint. Retail proves the cost of getting this wrong: 88 bad references / 68
   broken definitions shipped, and `Prerequisites` accounts for none of them — 64 are
   references reached through a shared intermediary.
+- **Schema authority is their source; LOADING behaviour is the running engine.** The two
+  differ. EA's `GameEngine.cpp` passes no directory to `TheScienceStore`, yet the build we
+  target logs `loadDirectory('Data\INI\Science')`. Before assuming a content type can be
+  emitted additively, check the boot log's `loadDirectory` lines — not the source.
+  The one type that genuinely cannot be additive is `Rank`: its blocks are NUMBERED, not
+  named, so emitting a ladder overwrites retail's instead of extending it.
 - **Never invent an enum value, and never confirm one by substring.** Every literal
   `ZhCompiler` emits must be copied from a retail block that demonstrably loads, and closed
   enums are checked against their C++ name table, not against a grep of the INI. Five have
@@ -293,7 +299,21 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    *Known limit, stated not hidden:* capture is proximity-based and `World.TeamCount` is 2,
    so there is no neutral owner — a capturable building is always someone's, and attackers
    stop at weapon range and shell it rather than walk onto it.
-9. **Powers + science/rank second currency**, `rts science-matrix`. (L)
+9. ~~**Powers + science/rank second currency**, `rts science-matrix`~~ — done. Skill points
+   are earned by KILLING and by nothing else; ranks convert them to purchase points;
+   sciences cost points and grant team flags, which the existing variant machinery already
+   consumes. Activated powers are flag-gated, on a recharge, and fire the SAME closed effect
+   vocabulary the death rules use — the payoff for having kept that vocabulary closed.
+   *Their whole ladder is five `Rank.ini` blocks (0/800/1500/2500/5000 needed, 1/1/1/1/3
+   granted = seven points a game) against 13-20 purchasable sciences per faction, every one
+   costing exactly 1. The tree's shape is entirely in its prerequisites.*
+   **Their default is that skill-point value IS experience value** — not one retail object
+   overrides `SkillPointValue` — so one number feeds both ladders. But the PLAYER's ladder
+   must not depend on the killer carrying a veterancy track, or whole rosters never rank up.
+   **`rts science-matrix` plays every legal loadout from BOTH sides** and counts the
+   science-owner's wins. Not politeness: ascending unit index makes team 0 resolve first, and
+   an EMPTY loadout measured 11/12 for team 0 before the swap. A 50% baseline is what makes
+   the column readable — read any mirror result here as a delta, never as an absolute.
 10. **Spatial index (uniform grid)** — before splash/aura, not after. (M)
    *`Sim.TargetingSystem` is a full nested scan every tick with no broad phase. Splash
    adds a radius scan per shot; auras add one per behavior per unit per tick; maps and

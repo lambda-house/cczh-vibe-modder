@@ -354,6 +354,12 @@
     <div class="ev">controlled: two attackers identical but for one boolean · 40/40 held, 0/40 unhoused, 0/40 against the clearing weapon</div>
   </div>
 
+  <div class="slice">
+    <div class="slice-h"><h3>Sciences: a second currency, earned by fighting</h3><span class="pill p-done">done</span></div>
+    <p>Skill points come from kills and from nothing else — no economy converts into them, which is what makes this a different resource rather than a slower kind of money. Zero Hour's entire ladder is five blocks: seven purchase points for a whole game, against 13–20 purchasable sciences per faction, every one costing exactly 1. The tree's shape lives in its prerequisites, not its prices. Sciences reach the battlefield through the flag-and-variant machinery that already existed, and activated powers fire the same closed effect vocabulary the death rules use.</p>
+    <div class="ev">rts science-matrix · 6 legal loadouts of 8 subsets · mirror baseline 12/24, best 20/24</div>
+  </div>
+
   <h3>Decisions taken, closed</h3>
   <ul>
     <li><strong>Stacking:</strong> additive-in-excess added as a third op alongside Add and Mul; mixing them on one stat lints.</li>
@@ -384,6 +390,20 @@
       because a final-state hash only observes units <em>alive at the end</em>, and the
       renumbered units were on the losing side. Identity is now name-derived, and the guard is
       generative rather than a recorded constant.
+    </p>
+  </div>
+
+  <div class="fix">
+    <h3>A mirror match was not 50/50</h3>
+    <p>
+      The first science matrix reported an <em>empty</em> loadout winning 11 of 12 — both
+      sides running the identical build order. Ascending unit index means team 0 resolves
+      first within a tick and therefore shoots first, so the harness had a structural bias
+      that no amount of content explains. Against a 92% baseline the actual effect of a
+      science was unreadable. Every loadout is now played from both sides with the
+      science-owner's wins counted; the baseline is exactly 12/24 and the signal is legible.
+      The bias was never a bug — it falls straight out of the determinism rules — but a
+      measurement that does not cancel it is worthless.
     </p>
   </div>
 
@@ -471,8 +491,7 @@
     <table>
       <thead><tr><th>Slice</th><th>Why now</th><th>Size</th><th></th></tr></thead>
       <tbody>
-        <tr><td class="name">Powers + science currency</td><td>7 points against 13–18 sciences = 19,448 loadouts nobody has enumerated</td><td class="n">L</td><td><span class="pill p-next">next</span></td></tr>
-        <tr><td class="name">Spatial index</td><td>Before splash and auras scale, not after — decides whether batch measurement stays affordable</td><td class="n">M</td><td></td></tr>
+        <tr><td class="name">Spatial index</td><td>Before splash and auras scale, not after — decides whether batch measurement stays affordable</td><td class="n">M</td><td><span class="pill p-next">next</span></td></tr>
         <tr><td class="name">MCP tool surface</td><td>The agent-facing seam, once there is a design space behind it</td><td class="n">M</td><td></td></tr>
         <tr><td class="name">Passability grid</td><td>Chokepoints and flanking are emergent from it, not authored</td><td class="n">XL</td><td></td></tr>
       </tbody>

@@ -35,6 +35,29 @@ public sealed class VetTrackDef
     public Modifier[][] RankBundles = Array.Empty<Modifier[]>();
 }
 
+public sealed class RankDef
+{
+    public int SkillPointsNeeded;
+    public int PurchasePointsGranted;
+}
+
+public sealed class ScienceDef
+{
+    public required string Id;
+    public int Cost;
+    public int[] RequiresIdx = Array.Empty<int>();
+    public int RequiresRank;
+    public ulong GrantsFlags;
+}
+
+public sealed class PowerDef
+{
+    public required string Id;
+    public ulong RequiresFlags;
+    public int RechargeTicks;
+    public EffectDef[] Effects = Array.Empty<EffectDef>();
+}
+
 public sealed class TechNodeDef
 {
     public required string Id;
@@ -227,6 +250,16 @@ public sealed class ContentDb
     public bool HasGarrison;
     /// <summary>Any capturable or paying structure. Gates capture progress into the hash.</summary>
     public bool HasCapture;
+    /// <summary>Any rank ladder or science. Gates the second currency into the state hash.</summary>
+    public bool HasSciences;
+    /// <summary>Any activated power. Gates per-team recharge state into the hash.</summary>
+    public bool HasPowers;
+
+    public RankDef[] Ranks = Array.Empty<RankDef>();
+    public ScienceDef[] Sciences = Array.Empty<ScienceDef>();
+    public Dictionary<string, int> ScienceIndexById = new(StringComparer.Ordinal);
+    public PowerDef[] Powers = Array.Empty<PowerDef>();
+    public Dictionary<string, int> PowerIndexById = new(StringComparer.Ordinal);
     /// <summary>
     /// True once any content mentions a flag. Gates BOTH the loadout phase and the hashing
     /// of flag state, so a pack that never uses flags is bit-identical to one compiled
@@ -467,10 +500,16 @@ public sealed class ContentDb
         // A researched tech grants a same-named flag, which is what lets a conditional
         // variant key off research without a second mechanism.
         flagNames.AddRange(dto.Tech.Nodes.Keys);
+        // Sciences grant flags, and powers are gated on one, so both contribute vocabulary.
+        foreach (var sc in dto.Sciences.Values)
+            if (sc.GrantsFlags is not null) flagNames.AddRange(sc.GrantsFlags);
+        foreach (var pw in dto.Powers.Values)
+            if (pw.RequiresFlag.Length > 0) flagNames.Add(pw.RequiresFlag);
         db.Flags = new FlagTable(flagNames);
         db.HasFlags = flagNames.Count > 0
-                      && dto.Units.Values.Any(u => (u.Flags?.Count ?? 0) > 0
-                                                   || (u.Variants?.Count ?? 0) > 0);
+                      && (dto.Units.Values.Any(u => (u.Flags?.Count ?? 0) > 0
+                                                    || (u.Variants?.Count ?? 0) > 0)
+                          || dto.Sciences.Count > 0 || dto.Powers.Count > 0);
         if (db.Flags.Count > FlagTable.MaxFlags)
             errors.Add($"flag vocabulary is {db.Flags.Count}; the mask holds {FlagTable.MaxFlags}");
 
@@ -708,51 +747,13 @@ public sealed class ContentDb
                     if (!db.Flags.TryBit(f, out _))
                         errors.Add($"unit '{id}': rule requires unknown flag '{f}'");
 
-                var effects = new List<EffectDef>();
-                foreach (var e in r.Do)
-                {
-                    if (!Enum.TryParse<EffectKind>(e.Kind, ignoreCase: true, out var kind))
-                    {
-                        errors.Add($"unit '{id}': unknown effect '{e.Kind}' " +
-                                   $"(expected: spawn|grantMoney|damageInRadius|grantFlag)");
-                        continue;
-                    }
-                    var def = new EffectDef { Kind = kind, Count = Math.Max(1, e.Count),
-                                              Amount = e.Amount, TeamScope = e.TeamScope,
-                                              Spread = Fix64.FromDoubleAtLoadBoundary(e.Spread),
-                                              RadiusSq = Sq(e.Radius) };
-
-                    if (kind == EffectKind.Spawn)
-                    {
-                        if (e.Proto is null || !db.UnitIndexById.TryGetValue(e.Proto, out int pi))
-                            errors.Add($"unit '{id}': spawn names unknown prototype '{e.Proto}'");
-                        else def.ProtoIdx = pi;
-                    }
-                    if (kind == EffectKind.DamageInRadius)
-                    {
-                        if (e.Weapon is null || !db.Weapons.Select(w => w.Id).Contains(e.Weapon, StringComparer.Ordinal))
-                            errors.Add($"unit '{id}': damageInRadius names unknown weapon '{e.Weapon}'");
-                        else def.WeaponIdx = Array.FindIndex(db.Weapons, w => w.Id == e.Weapon);
-                        if (e.Radius <= 0)
-                            errors.Add($"unit '{id}': damageInRadius needs a radius > 0");
-                    }
-                    if (kind == EffectKind.GrantFlag)
-                    {
-                        if (e.Flag is null || !db.Flags.TryBit(e.Flag, out int fb))
-                            errors.Add($"unit '{id}': grantFlag names unknown flag '{e.Flag}'");
-                        else def.FlagBit = fb;
-                    }
-                    if (kind == EffectKind.GrantMoney && e.Amount == 0)
-                        warnings.Add($"unit '{id}': grantMoney with amount 0 does nothing");
-
-                    effects.Add(def);
-                }
+                var effects = CompileEffects(db, $"unit '{id}'", r.Do, errors, warnings);
 
                 compiled.Add(new RuleDef
                 {
                     On = ev,
                     RequiredFlags = db.Flags.MaskOf(r.WhenFlags),
-                    Effects = effects.ToArray(),
+                    Effects = effects,
                 });
             }
             db.Units[owner].Rules = compiled.ToArray();
@@ -791,6 +792,86 @@ public sealed class ContentDb
         // capturable building hashes exactly as it did before this slice existed.
         db.HasGarrison = db.Units.Any(u => u.GarrisonCapacity > 0);
         db.HasCapture = db.Units.Any(u => u.CaptureTicks > 0 || u.DepositAmount > 0);
+
+        // --- Second currency: ranks, sciences, powers ---------------------------------
+        // Skill points are earned by KILLING, never by economy — that is the whole point of
+        // a second currency, and it is why this is not just another tech tree. ZH's default
+        // ladder is 0/800/1500/2500/5000 needed and 1/1/1/1/3 granted: seven points for an
+        // entire game, against 13-20 purchasable sciences per faction.
+        var ranks = new List<RankDef>();
+        foreach (var rk in dto.Ranks)
+            ranks.Add(new RankDef
+            {
+                SkillPointsNeeded = Math.Max(0, rk.SkillPointsNeeded),
+                PurchasePointsGranted = Math.Max(0, rk.PurchasePointsGranted),
+            });
+        db.Ranks = ranks.ToArray();
+        for (int i = 1; i < db.Ranks.Length; i++)
+            if (db.Ranks[i].SkillPointsNeeded <= db.Ranks[i - 1].SkillPointsNeeded)
+                errors.Add($"ranks: rank {i + 1} needs more skill points than rank {i} " +
+                           $"({db.Ranks[i].SkillPointsNeeded} <= {db.Ranks[i - 1].SkillPointsNeeded})");
+
+        var scienceIds = dto.Sciences.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
+        for (int i = 0; i < scienceIds.Length; i++) db.ScienceIndexById[scienceIds[i]] = i;
+        var sciences = new List<ScienceDef>();
+        foreach (var id in scienceIds)
+        {
+            var sc = dto.Sciences[id];
+            foreach (var req in sc.Requires ?? new List<string>())
+                if (!dto.Sciences.ContainsKey(req))
+                    errors.Add($"science '{id}': unknown prerequisite science '{req}'");
+            if (sc.Cost <= 0) errors.Add($"science '{id}': cost must be > 0");
+            if (sc.RequiresRank > db.Ranks.Length)
+                errors.Add($"science '{id}': requiresRank {sc.RequiresRank} but only {db.Ranks.Length} ranks exist");
+
+            // Prerequisites resolve against the FULL index, which is already built above, so
+            // a science may name one declared later in the file.
+            var reqIdx = new List<int>();
+            foreach (var rq in sc.Requires ?? new List<string>())
+                if (db.ScienceIndexById.TryGetValue(rq, out int ri)) reqIdx.Add(ri);
+            reqIdx.Sort();
+
+            sciences.Add(new ScienceDef
+            {
+                Id = id,
+                Cost = sc.Cost,
+                RequiresRank = Math.Max(0, sc.RequiresRank),
+                RequiresIdx = reqIdx.ToArray(),
+                GrantsFlags = db.Flags.MaskOf(sc.GrantsFlags ?? new List<string>()),
+            });
+        }
+        db.Sciences = sciences.ToArray();
+        // A cycle would make a science unbuyable forever rather than erroring at runtime.
+        for (int i = 0; i < db.Sciences.Length; i++)
+            if (db.Sciences[i].RequiresIdx.Contains(i))
+                errors.Add($"science '{db.Sciences[i].Id}': requires itself");
+
+        var powerIds = dto.Powers.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
+        for (int i = 0; i < powerIds.Length; i++) db.PowerIndexById[powerIds[i]] = i;
+        var powers = new List<PowerDef>();
+        foreach (var id in powerIds)
+        {
+            var pw = dto.Powers[id];
+            int recharge = pw.RechargeSeconds is double rs
+                ? (int)Math.Ceiling(rs * TicksPerSecond)
+                : pw.RechargeTicks;
+            if (recharge <= 0) errors.Add($"power '{id}': needs a recharge > 0");
+            if (pw.RequiresFlag.Length > 0 && !db.Flags.TryBit(pw.RequiresFlag, out _))
+                errors.Add($"power '{id}': unknown flag '{pw.RequiresFlag}'");
+            if (pw.Do.Count == 0) errors.Add($"power '{id}': has no effects");
+            powers.Add(new PowerDef
+            {
+                Id = id,
+                RequiresFlags = pw.RequiresFlag.Length == 0
+                    ? 0UL : db.Flags.MaskOf(new List<string> { pw.RequiresFlag }),
+                RechargeTicks = Math.Max(1, recharge),
+                Effects = CompileEffects(db, $"power '{id}'", pw.Do, errors, warnings),
+            });
+        }
+        db.Powers = powers.ToArray();
+
+        db.HasSciences = db.Ranks.Length > 0 || db.Sciences.Length > 0;
+        db.HasPowers = db.Powers.Length > 0;
 
         foreach (var u in db.Units)
             if (!u.IsVariant && !dto.Factions.ContainsKey(u.FactionId))
@@ -991,6 +1072,57 @@ public sealed class ContentDb
                 StartMoney = f.StartMoney ?? parent?.StartMoney ?? -1,
             };
         }
+    }
+
+    /// <summary>
+    /// Compile the closed effect vocabulary. Shared by death rules and by activated powers,
+    /// which is the point of keeping the vocabulary closed and the parameters open: a new
+    /// TRIGGER costs nothing, because every trigger fires the same four effects.
+    /// <paramref name="ctx"/> is only for messages, e.g. "unit 'salvager'" or "power 'a10'".
+    /// </summary>
+    private static EffectDef[] CompileEffects(ContentDb db, string ctx, List<EffectDto> dos,
+                                              List<string> errors, List<string> warnings)
+    {
+        var effects = new List<EffectDef>();
+        foreach (var e in dos)
+        {
+            if (!Enum.TryParse<EffectKind>(e.Kind, ignoreCase: true, out var kind))
+            {
+                errors.Add($"{ctx}: unknown effect '{e.Kind}' " +
+                           $"(expected: spawn|grantMoney|damageInRadius|grantFlag)");
+                continue;
+            }
+            var def = new EffectDef { Kind = kind, Count = Math.Max(1, e.Count),
+                                      Amount = e.Amount, TeamScope = e.TeamScope,
+                                      Spread = Fix64.FromDoubleAtLoadBoundary(e.Spread),
+                                      RadiusSq = Sq(e.Radius) };
+
+            if (kind == EffectKind.Spawn)
+            {
+                if (e.Proto is null || !db.UnitIndexById.TryGetValue(e.Proto, out int pi))
+                    errors.Add($"{ctx}: spawn names unknown prototype '{e.Proto}'");
+                else def.ProtoIdx = pi;
+            }
+            if (kind == EffectKind.DamageInRadius)
+            {
+                if (e.Weapon is null || !db.Weapons.Select(w => w.Id).Contains(e.Weapon, StringComparer.Ordinal))
+                    errors.Add($"{ctx}: damageInRadius names unknown weapon '{e.Weapon}'");
+                else def.WeaponIdx = Array.FindIndex(db.Weapons, w => w.Id == e.Weapon);
+                if (e.Radius <= 0)
+                    errors.Add($"{ctx}: damageInRadius needs a radius > 0");
+            }
+            if (kind == EffectKind.GrantFlag)
+            {
+                if (e.Flag is null || !db.Flags.TryBit(e.Flag, out int fb))
+                    errors.Add($"{ctx}: grantFlag names unknown flag '{e.Flag}'");
+                else def.FlagBit = fb;
+            }
+            if (kind == EffectKind.GrantMoney && e.Amount == 0)
+                warnings.Add($"{ctx}: grantMoney with amount 0 does nothing");
+
+            effects.Add(def);
+        }
+        return effects.ToArray();
     }
 
     private static Dictionary<string, int> IndexOf(string[] items)

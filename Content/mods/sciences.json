@@ -1,0 +1,88 @@
+{
+  // The SECOND currency: rank, science points, and the powers they unlock.
+  //
+  //   rts science-matrix --a usa --n 12 --seed 42 --mod content/mods/sciences.json
+  //   rts econ --a "war_factory,crusader*" --b "war_factory,crusader*" \
+  //            --n 12 --seed 42 --mod content/mods/sciences.json
+  //
+  // What makes this a different resource and not a slower kind of money: skill points are
+  // earned by KILLING and by nothing else. No economy converts into them. ZH's whole ladder
+  // is five blocks in Rank.ini — 0/800/1500/2500/5000 needed, 1/1/1/1/3 granted — so a
+  // commander gets SEVEN points for an entire game against 13-20 purchasable sciences per
+  // faction. Every purchasable science in retail costs exactly 1. The tree's whole shape is
+  // in the prerequisites, not the prices.
+  //
+  // And their default is that a unit's skill-point value IS its experience value: not one
+  // of retail's objects overrides SkillPointValue. One number feeds both ladders.
+  "meta": { "name": "sciences", "version": 1 },
+
+  // Their thresholds, verbatim. The 1/1/1/1/3 shape is the interesting part: rank 5 is worth
+  // three ranks of choice at once, so the last promotion is the one that decides a game.
+  "ranks": [
+    { "skillPointsNeeded": 0,    "purchasePointsGranted": 1 },
+    { "skillPointsNeeded": 80,   "purchasePointsGranted": 1 },
+    { "skillPointsNeeded": 150,  "purchasePointsGranted": 1 },
+    { "skillPointsNeeded": 250,  "purchasePointsGranted": 1 },
+    { "skillPointsNeeded": 500,  "purchasePointsGranted": 3 }
+  ],
+
+  // Thresholds above are retail's divided by ten, because our kill award is cost/10 where
+  // theirs is a full experience value. The SHAPE — flat, flat, flat, then a triple — is what
+  // matters and is preserved exactly.
+
+  "sciences": {
+    // A chain: each tier needs the one below, so three of your seven points buy tier 3.
+    // This is retail's dominant shape (Paradrop1/2/3, A10Strike1/2/3, SpectreGunship1/2/3).
+    "marksmanship1": { "cost": 1, "requiresRank": 1, "grantsFlags": ["marksman_1"] },
+    "marksmanship2": { "cost": 1, "requiresRank": 2, "requires": ["marksmanship1"],
+                       "grantsFlags": ["marksman_2"] },
+
+    // A rank-gated standalone. Cheap in points, but locked until the commander has fought.
+    "airstrike":     { "cost": 1, "requiresRank": 3, "grantsFlags": ["airstrike_ready"] }
+  },
+
+  // An activated power reuses the death-rule effect vocabulary wholesale — the payoff for
+  // having kept that vocabulary closed and its parameters open.
+  "powers": {
+    "a10_strike": {
+      "requiresFlag": "airstrike_ready",
+      "rechargeSeconds": 60.0,
+      "do": [ { "kind": "damageInRadius", "weapon": "airstrike_bomb", "radius": 6.0 } ]
+    }
+  },
+
+  "weapons": {
+    "airstrike_bomb": {
+      "damageType": "cannon", "damage": 300, "range": 1.0, "cooldownTicks": 30, "spread": 0.0
+    },
+    // The science-fed variant weapon: same gun, more punch.
+    "crusader_cannon_marksman": {
+      "damageType": "cannon", "damage": 78, "range": 9.0, "cooldownTicks": 36, "spread": 0.08
+    }
+  },
+
+  "units": {
+    // Sciences reach the battlefield through the flag/variant machinery that already exists.
+    // A science grants a team flag; a conditional variant keys off it. No new effect path.
+    "crusader": {
+      "faction": "usa", "cost": 900, "buildSeconds": 15,
+      "prerequisites": ["war_factory"],
+      "components": {
+        "Health": { "max": 480, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.2 },
+        "WeaponBearer": { "weapon": "crusader_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      },
+      // First match wins, so order is the priority: two ranks of marksmanship, better first.
+      "variants": [
+        { "whenFlags": ["marksman_2"], "weapon": "crusader_cannon_marksman",
+          "modifiers": [ { "stat": "MaxHp", "op": "Excess", "value": 1.10 } ] },
+        { "whenFlags": ["marksman_1"], "weapon": "crusader_cannon_marksman" }
+      ]
+    }
+  },
+
+  "factions": {
+    "usa_command": { "extends": "usa" }
+  }
+}

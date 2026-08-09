@@ -192,6 +192,93 @@ public static class Scenarios
         return hold;
     }
 
+    public sealed class ScienceLoadout
+    {
+        public required string Sciences;   // ordinal-joined ids, or "(none)"
+        public int Points;
+        public int Wins, Runs;
+        public ulong LastFinalHash;
+    }
+
+    /// <summary>
+    /// Enumerate every LEGAL science loadout and measure each one against a fixed opponent.
+    ///
+    /// This is the verb the second currency exists for. Seven points against 13-20 sciences
+    /// is a space nobody has enumerated by hand — retail's own USA tree is C(13,7) = 1,716
+    /// root-level combinations before prerequisites prune it — and prerequisites are exactly
+    /// what makes brute force wrong: a chain of three costs three points and cannot be
+    /// entered at tier 2. So we enumerate the REACHABLE sets, not the subsets.
+    ///
+    /// Both sides run the same build order, and each loadout is played from BOTH SIDES with
+    /// the wins of the science-owning side counted. That swap is not politeness — a mirror
+    /// match here is NOT 50/50. Ascending unit index means team 0 resolves first within a
+    /// tick and therefore shoots first, and an empty loadout measured 11/12 for team 0 before
+    /// the swap. Against an 92% baseline a real effect is unreadable; against a 50% one it is
+    /// obvious. Reported runs are therefore 2x the --n given.
+    /// </summary>
+    public static List<ScienceLoadout> RunScienceMatrix(ContentDb content, string order, int points,
+                                                        int startingMoney, int incomePerSecond, int supplyPool,
+                                                        int runs, ulong baseSeed, int maxTicks = EconDefaultMaxTicks)
+    {
+        var results = new List<ScienceLoadout>();
+        int n = content.Sciences.Length;
+        if (n == 0) return results;
+
+        // Reachable sets: a subset is legal only if every science in it has its prerequisites
+        // inside the SAME set and its rank requirement is met by the points spent. Ordinal
+        // enumeration over the bitmask keeps the output order content-derived, not accidental.
+        var legal = new List<(int Mask, int Cost)>();
+        for (int mask = 0; mask < (1 << n); mask++)
+        {
+            int cost = 0;
+            bool ok = true;
+            for (int i = 0; i < n && ok; i++)
+            {
+                if ((mask & (1 << i)) == 0) continue;
+                cost += content.Sciences[i].Cost;
+                foreach (int req in content.Sciences[i].RequiresIdx)
+                    if ((mask & (1 << req)) == 0) { ok = false; break; }
+            }
+            if (ok && cost <= points) legal.Add((mask, cost));
+        }
+
+        foreach (var (mask, cost) in legal)
+        {
+            var owned = new List<int>();
+            for (int i = 0; i < n; i++) if ((mask & (1 << i)) != 0) owned.Add(i);
+
+            var row = new ScienceLoadout
+            {
+                Sciences = owned.Count == 0 ? "(none)" : string.Join("+", owned.Select(i => content.Sciences[i].Id)),
+                Points = cost,
+                Runs = runs * 2,
+            };
+
+            for (int side = 0; side < 2; side++)
+            for (int r = 0; r < runs; r++)
+            {
+                var expanded = ExpandOrder(content, order, startingMoney + supplyPool);
+                var log = BuildEconCommands(content, expanded, expanded,
+                                            startingMoney, incomePerSecond, supplyPool);
+                // Points are GRANTED here rather than earned, and that is the point of the
+                // verb: we are measuring what a loadout is WORTH, not how long it takes to
+                // afford. Earning it is what the econ scenarios already measure.
+                int seq = 1_000_000;   // after every scenario command, so ordering is stable
+                foreach (int i in owned)
+                    log.Add(new Command(1, seq++, CommandKind.PurchaseScience, side, i, Fix64.Zero, Fix64.Zero));
+
+                var sim = new Sim(content, baseSeed + (ulong)r, log);
+                sim.World.Teams[side].PurchasePoints = points;
+                sim.World.Teams[side].CommanderRank = content.Ranks.Length;
+                var result = sim.Run(maxTicks);
+                if (result.WinnerTeam == side) row.Wins++;
+                row.LastFinalHash = result.FinalHash;
+            }
+            results.Add(row);
+        }
+        return results;
+    }
+
     /// <summary>Pairwise cost-normalized win-rate matrix over all prototypes: the counter table.</summary>
     public static List<DuelStats> RunMatrix(ContentDb content, int budget, int runsPerPair, ulong baseSeed)
     {

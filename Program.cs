@@ -26,6 +26,7 @@ public static class Program
                 "lint" => Lint(args, Stack(args, content)),
                 "duel" => Duel(args, Stack(args, content)),
                 "hold" => Hold(args, Stack(args, content)),
+                "science-matrix" => ScienceMatrix(args, Stack(args, content)),
                 "matrix" => Matrix(args, Stack(args, content)),
                 "econ" => Econ(args, Stack(args, content)),
                 "faction" => Faction(args, Stack(args, content)),
@@ -51,6 +52,7 @@ public static class Program
             usage:
               rts lint   [--content content/game.json] [--target zh]
               rts hold   --host <structure> --holder <infantry> --attacker <unit> [--no-garrison]
+              rts science-matrix [--order <build>] [--points N]   (needs a pack with sciences)
                          --target zh also checks their caps, round-trip fidelity,
                          and what silently diverges once compiled
               rts duel   --a <unit> --b <unit> [--budget 3600] [--n 200] [--seed 42] [--json]
@@ -354,6 +356,49 @@ public static class Program
             Console.WriteLine($"  prize '{prize}' ends owned by team {h.PrizeOwner}   " +
                               $"money: A={h.MoneyA:0} B={h.MoneyB:0}");
         Console.WriteLine($"  avg battle length: {s.AvgTicks / ContentDb.TicksPerSecond:0.#}s   last final hash: {s.LastFinalHash:x16}");
+        return 0;
+    }
+
+    private static int ScienceMatrix(string[] args, IReadOnlyList<string> contentPath)
+    {
+        var db = LoadOrDie(contentPath, printReport: false);
+        if (db.Sciences.Length == 0) { Console.Error.WriteLine("error: this pack declares no sciences"); return 2; }
+
+        string order = Opt(args, "--order", "war_factory,crusader*");
+        int points = int.Parse(Opt(args, "--points", "0"));
+        if (points <= 0) points = db.Ranks.Sum(rk => rk.PurchasePointsGranted);
+        int n = int.Parse(Opt(args, "--n", "12"));
+        ulong seed = ulong.Parse(Opt(args, "--seed", "42"));
+        int money = int.Parse(Opt(args, "--money", "5000"));
+        int income = int.Parse(Opt(args, "--income", "50"));
+        int pool = int.Parse(Opt(args, "--pool", "20000"));
+
+        var rows = Scenarios.RunScienceMatrix(db, order, points, money, income, pool, n, seed);
+
+        if (Flag(args, "--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                contentHash = $"{db.ContentHash:x16}",
+                order, points, runs = n,
+                rows = rows.Select(r => new
+                {
+                    r.Sciences, r.Points, r.Wins, r.Runs,
+                    winRate = (double)r.Wins / r.Runs,
+                    lastFinalHash = $"{r.LastFinalHash:x16}",
+                }),
+            }, JsonOpts));
+            return 0;
+        }
+
+        Console.WriteLine($"science-matrix  order='{order}'  points={points}  n={n}  seed={seed}  " +
+                          $"contentHash={db.ContentHash:x16}");
+        Console.WriteLine($"  mirror match — both sides run the same build order, so the only variable");
+        Console.WriteLine($"  is which sciences team A owns. {rows.Count} legal loadout(s) of " +
+                          $"{db.Sciences.Length} science(s).");
+        Console.WriteLine();
+        foreach (var r in rows.OrderByDescending(x => x.Wins).ThenBy(x => x.Points).ThenBy(x => x.Sciences, StringComparer.Ordinal))
+            Console.WriteLine($"  {r.Wins,3}/{r.Runs,-3} ({100.0 * r.Wins / r.Runs,5:0.#}%)  {r.Points}pt  {r.Sciences}");
         return 0;
     }
 
