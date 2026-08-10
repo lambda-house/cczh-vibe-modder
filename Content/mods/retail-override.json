@@ -1,0 +1,54 @@
+{
+  // Modifying a unit that already exists in the RETAIL game — the other half of modding.
+  //
+  //   rts compile --target zh --out /tmp/ov --mod content/mods/retail-override.json
+  //   rsync -a /tmp/ov/Data/ ~/GeneralsX/GeneralsZH/Data/
+  //   cp /tmp/ov/map.ini "~/GeneralsX/GeneralsZH/Maps/Alpine Assault/map.ini"
+  //
+  // This pack is the hand-written proof from the vertical-slice session, promoted to content.
+  // Everything it declares was validated in a live match: damage, locomotion, scale and model
+  // on the retail US Ranger.
+  //
+  // The author states INTENT; the compiler picks the file and the mechanism, because getting
+  // that wrong is fatal in both directions:
+  //   - a new name in map.ini hangs the game on match teardown (LocomotorStore::reset)
+  //   - a redeclared block in Data/INI aborts the engine at 29 of 42 subsystems
+  //   - patching a shared leaf in place makes it UNREACHABLE and the weapon inert
+  // So `speed` becomes a new Locomotor in Data/INI plus a repoint in map.ini, and `weapon`
+  // names one of OUR weapons rather than editing theirs.
+  "meta": { "name": "override", "version": 1 },
+
+  "weapons": {
+    // Ours, emitted additively to Data/INI. The override repoints the retail Ranger at it.
+    // A brand-new template starts from ENGINE defaults, so every field is restated.
+    "ranger_super_rifle": {
+      "damageType": "rifle", "damage": 300, "range": 9.4, "cooldownTicks": 3, "spread": 0.0
+    }
+  },
+
+  "overrides": {
+    "buff_ranger": {
+      "object": "AmericaInfantryRanger",
+
+      // "base" touches the named object alone. Zero Hour's generals are FORKS, so there are
+      // four Ranger objects — switch to "all" with the prefixes below and the compiler fans
+      // the same edit across every one of them. Making this explicit is the whole point:
+      // guessing it wrong is what put 88 bad references into EA's shipping content.
+      "scope": "base",
+      "forks": ["SupW_", "Lazr_", "AirF_"],
+
+      "weapon": "ranger_super_rifle",
+      "speed": 2.7,
+      "scale": 2.0,
+
+      // ReplaceModule must name the module it replaces and give the replacement a new unique
+      // tag; the compiler adds the "_Override" suffix. Supplying only an idle animation means
+      // the unit idles while it moves — obvious, and harmless.
+      "model": "AIHERO_SKN",
+      "modelReplacesTag": "ModuleTag_01",
+      "idleAnimation": "AIHERO_SKL.AIHERO_STA 0 25"
+    }
+  },
+
+  "zh": { "models": { } }
+}

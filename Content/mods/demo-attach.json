@@ -30,9 +30,8 @@
 
   "units": {
     "hellhound": {
-      "faction": "hellfire", "cost": 800, "buildSeconds": 10,
+      "faction": "hellfire", "cost": 1, "buildSeconds": 1,
       "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],
-      "prerequisites": ["hellfire_works"],
       "components": {
         "Health": { "max": 420, "armorClass": "light_vehicle" },
         "Mobile": { "speed": 6.5 },
@@ -58,7 +57,7 @@
   "zh": {
     // Adopted art: 2,928 shipped models are referenced by nothing at all and are free to
     // use, so new content is playable immediately with no asset pipeline of our own.
-    "models": { "hellhound": "NVDragon", "hellfire_works": "ABWarFact" },
+    "models": { "hellhound": "AVCrusader", "hellfire_works": "ABWarFact" },
     "sides":  { "hellfire": "USA" }
   },
 

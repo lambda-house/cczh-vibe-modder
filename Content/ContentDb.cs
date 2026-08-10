@@ -61,6 +61,21 @@ public sealed class PowerDef
     public EffectDef[] Effects = Array.Empty<EffectDef>();
 }
 
+/// <summary>A validated modification to a unit that already exists in the target game.</summary>
+public sealed class OverrideDef
+{
+    public required string Id;
+    public required string Object;
+    /// <summary>Fully-expanded target names: the base object plus any fork prefixes.</summary>
+    public string[] Targets = Array.Empty<string>();
+    public int WeaponIdx = -1;
+    public Fix64 Speed = Fix64.Zero;          // Zero = not set; lint rejects an authored 0
+    public double Scale;
+    public string? Model;
+    public string? ModelReplacesTag;
+    public string? IdleAnimation;
+}
+
 public sealed class TechNodeDef
 {
     public required string Id;
@@ -263,6 +278,9 @@ public sealed class ContentDb
     public Dictionary<string, int> ScienceIndexById = new(StringComparer.Ordinal);
     public PowerDef[] Powers = Array.Empty<PowerDef>();
     public Dictionary<string, int> PowerIndexById = new(StringComparer.Ordinal);
+    public OverrideDef[] Overrides = Array.Empty<OverrideDef>();
+    /// <summary>Any override. Gates map.ini emission; overrides never affect the sim.</summary>
+    public bool HasOverrides;
     /// <summary>
     /// True once any content mentions a flag. Gates BOTH the loadout phase and the hashing
     /// of flag state, so a pack that never uses flags is bit-identical to one compiled
@@ -879,6 +897,63 @@ public sealed class ContentDb
             });
         }
         db.Powers = powers.ToArray();
+
+        // --- Overrides ------------------------------------------------------------------
+        // These NEVER touch the simulation: they describe edits to units that exist only in
+        // the target game, which our sim has no model of. They exist to be COMPILED. That is
+        // the "emittable is not simulated" axis taken to its limit, and it is why nothing
+        // here enters the content hash's view of the battle.
+        var ovIds = dto.Overrides.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
+        var ovs = new List<OverrideDef>();
+        foreach (var id in ovIds)
+        {
+            var o = dto.Overrides[id];
+            if (o.Object.Length == 0) { errors.Add($"override '{id}': needs an 'object' to modify"); continue; }
+
+            var targets = new List<string> { o.Object };
+            bool all = string.Equals(o.Scope, "all", StringComparison.OrdinalIgnoreCase);
+            if (!all && !string.Equals(o.Scope, "base", StringComparison.OrdinalIgnoreCase))
+                errors.Add($"override '{id}': scope must be 'base' or 'all', got '{o.Scope}'");
+            if (all)
+            {
+                // Fan out across the target's forks. The author must NAME them, because only
+                // they know the target game's prefixes — and silently guessing is the failure
+                // this field exists to prevent.
+                if ((o.Forks?.Count ?? 0) == 0)
+                    errors.Add($"override '{id}': scope 'all' needs 'forks' (e.g. [\"SupW_\",\"Lazr_\",\"AirF_\"])");
+                foreach (var pre in (o.Forks ?? new List<string>()).OrderBy(x => x, StringComparer.Ordinal))
+                    targets.Add(pre + o.Object);
+            }
+
+            int wi = -1;
+            if (o.Weapon is not null)
+            {
+                wi = Array.FindIndex(db.Weapons, w => string.Equals(w.Id, o.Weapon, StringComparison.Ordinal));
+                if (wi < 0) errors.Add($"override '{id}': unknown weapon '{o.Weapon}' — it must be one of OURS, " +
+                                       $"because an override repoints the object at a NEW leaf rather than " +
+                                       $"patching the target's own weapon in place");
+            }
+            if (o.Model is not null && string.IsNullOrEmpty(o.ModelReplacesTag))
+                errors.Add($"override '{id}': 'model' needs 'modelReplacesTag' — their ReplaceModule must name " +
+                           $"the module it replaces, and guessing the tag is a hard load error");
+            if (o.Scale is <= 0) errors.Add($"override '{id}': scale must be > 0");
+            if (o.Speed is <= 0) errors.Add($"override '{id}': speed must be > 0");
+
+            ovs.Add(new OverrideDef
+            {
+                Id = id,
+                Object = o.Object,
+                Targets = targets.ToArray(),
+                WeaponIdx = wi,
+                Speed = o.Speed is double sp ? Fix64.FromDoubleAtLoadBoundary(sp) : Fix64.Zero,
+                Scale = o.Scale ?? 0,
+                Model = o.Model,
+                ModelReplacesTag = o.ModelReplacesTag,
+                IdleAnimation = o.IdleAnimation,
+            });
+        }
+        db.Overrides = ovs.ToArray();
+        db.HasOverrides = db.Overrides.Length > 0;
 
         db.HasSciences = db.Ranks.Length > 0 || db.Sciences.Length > 0;
         db.HasPowers = db.Powers.Length > 0;

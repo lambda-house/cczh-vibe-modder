@@ -124,11 +124,45 @@ Retail's own 41 `map.ini` files corroborate the shape: `Object` 272, `Buildable`
 `ParticleSystem` 4 — and **zero** `GameData`. They override locomotors but never declare a new
 one there (rule 3), and touch weapons only alongside an object override (rule 4).
 
-**Validated end to end, in a real match:** a new faction is selectable in the skirmish
-dropdown; a retail unit's damage, locomotion, scale and MODEL are all modifiable. Open:
-`ControlBarScheme` is keyed by Side and retail ships only `America8x6`/`China8x6`/`GLA8x6`/
-`Observer8x6`, so a new faction has no command bar; and camera zoom is unresolved pending
-rule 7's retest through `map.ini`.
+8. **A new faction needs its own `ControlBarScheme` or it is selectable and UNPLAYABLE.**
+   `setControlBarSchemeByPlayer` matches `CBScheme->m_side` against the player's Side and
+   leaves the bar unset when nothing matches; retail ships schemes for America, China, GLA and
+   Observer only. We emit a DELIBERATELY MINIMAL one — retail's are 87 lines of layout, and
+   restating them would copy EA's content for no simulation benefit. Note the syntax: these
+   fields take NO `=` sign (`Side hellfire`, not `Side = hellfire`).
+
+9. **A parsing object is not a WORKING object.** Every gap below was silent — the file
+   parses, the engine boots 42/42, and something simply never happens. Found by field-diffing
+   our emitted objects against `AmericaWarFactory` and `AmericaTankCrusader`:
+
+   | Missing | Symptom |
+   |---|---|
+   | `ProductionUpdate` | build buttons render, clicking does nothing |
+   | `DefaultProductionExitUpdate` | no door to exit through |
+   | `NumDoorAnimations` > 0 with no door states | queue fills and never drains |
+   | `PhysicsBehavior` | unit is created but cannot move or be selected |
+   | `BuildCompletion` | authored in our content, never emitted |
+   | `FactoryExitWidth` | defaults to 0 |
+   | `SelectPortrait` / `ButtonImage` | blank tiles in the control bar |
+   | `ControlBarScheme` for the Side | faction selectable but has no command bar |
+
+10. **Adopting art means adopting its DIMENSIONS.** "2,928 unreferenced models are free to
+   use" is true for rendering and false for geometry. A structure emitted with an invented
+   22-radius box while borrowing the 53x60 `ABWarFact` mesh created every unit INSIDE the
+   visible building: production completed, the object existed, nothing was on screen.
+   Collision box, `UnitCreatePoint` and `NaturalRallyPoint` must all agree with the model.
+   *Currently every structure gets AmericaWarFactory's dimensions hardcoded — correct for the
+   demo, wrong in general. Geometry belongs in content next to the model reference.*
+
+**VALIDATED END TO END, IN A REAL MATCH.** A faction authored here is selectable in the
+skirmish dropdown, has a working command bar, builds a unit authored here, and that unit
+rolls out of the factory and is selectable and commandable. Separately, a
+RETAIL unit's damage, locomotion, scale and model are all modifiable from a pack. Both halves
+are emitted by `rts compile`, not hand-written.
+
+Still open: camera zoom. `GameData` is unreachable from `Data/INI` on this build (rule 7) and
+the `map.ini` route is untested — no retail `map.ini` overrides `GameData`, so it carries
+`DefaultStartingCash` as a witness field.
 
 ## Build / verify
 

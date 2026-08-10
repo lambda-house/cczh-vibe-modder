@@ -34,6 +34,20 @@ public static class ZhCompiler
         public int Objects, Weapons, Armors, Locomotors, Buttons, Sets, Templates;
     }
 
+    /// <summary>Footprint radius for a structure. Shared so the production exit's
+    /// NaturalRallyPoint stays equal to GeometryMajorRadius — retail's own comment insists on
+    /// it, and a smaller value spawns finished units inside the building.</summary>
+    /// <summary>
+    /// Footprint radius for a structure, and it must match the BORROWED MODEL's real size.
+    /// 22 was invented and it hid every unit we produced: the ABWarFact mesh is built for a
+    /// 53 radius, so a unit created at the exit point of a 22-radius box appeared INSIDE the
+    /// visible building. Production completed, the object existed, nothing was on screen.
+    /// 53/60 are AmericaWarFactory's own numbers — the object that uses this model.
+    /// Adopting art means adopting its dimensions; geometry is not a free parameter.
+    /// </summary>
+    private const string StructureRadius = "53.0";
+    private const string StructureMinorRadius = "60.0";
+
     private static string F(Fix64 v) => v.ToDoubleForDisplay().ToString("0.###", CultureInfo.InvariantCulture);
     private static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 
@@ -261,6 +275,11 @@ public static class ZhCompiler
 
             sb.AppendLine($"Object {P(u.Id)}");
             sb.AppendLine($"  Side = {Sanitize(u.FactionId)}");
+            // Portrait and button art. Without SelectPortrait the selected object shows an
+            // empty tile in the control bar — cosmetic, but it reads as "broken", and both
+            // are just names of images the player already has installed.
+            sb.AppendLine($"  SelectPortrait = {(u.IsStructure ? "SACWeaponsfact_L" : "SACLeopard_L")}");
+            sb.AppendLine($"  ButtonImage = {(u.IsStructure ? "SACWeaponsfact" : "SACLeopard")}");
             sb.AppendLine($"  EditorSorting = {(u.IsStructure ? "STRUCTURE" : "VEHICLE")}");
             sb.AppendLine($"  BuildCost = {u.Cost}");
             sb.AppendLine($"  BuildTime = {F(u.BuildTicks / (double)ContentDb.TicksPerSecond)}");
@@ -391,6 +410,47 @@ public static class ZhCompiler
                 sb.AppendLine("  End");
             }
 
+            // Every mobile retail object carries PhysicsBehavior, and without it a ground
+            // unit is never driven by its locomotor: it is created, it renders a shadow, and
+            // it sits inside the building it came from, unselectable and unable to leave.
+            // Mass is the only field retail sets — 50 for a tank, 5 for infantry.
+            if (!u.IsStructure)
+            {
+                sb.AppendLine("  Behavior = PhysicsBehavior ModuleTag_Physics");
+                sb.AppendLine($"    Mass = {(u.Is("INFANTRY") ? "5.0" : "50.0")}");
+                sb.AppendLine("  End");
+            }
+
+            // A factory with a CommandSet renders BUTTONS but cannot BUILD. Production needs
+            // two more modules, and their absence is silent: the menu appears, the buttons
+            // draw, and clicking one does nothing. Both copied from AmericaWarFactory.
+            //
+            // DefaultProductionExitUpdate is not optional decoration either — it is the door
+            // the finished unit walks out of, and its NaturalRallyPoint X must match
+            // GeometryMajorRadius or units spawn inside the building's own footprint.
+            if (u.Is(Runtime.KindOf.Factory))
+            {
+                sb.AppendLine("  Behavior = ProductionUpdate ModuleTag_Production");
+                // ZERO doors, and this is load-bearing. ProductionUpdate emits the finished
+                // unit when `m_numDoorAnimations == 0 || door->m_doorWaitOpenFrame != 0`
+                // (ProductionUpdate.cpp:819) — with a door count above zero it waits for a
+                // DOOR_1_OPENING model condition state to finish, and our Draw module has only
+                // a DefaultConditionState. The queue then stalls forever with no error: the
+                // menu works, the button clicks, and nothing is ever produced.
+                // Retail's 26 factories all use 1 because their models HAVE door animations.
+                sb.AppendLine("    NumDoorAnimations = 0");
+                sb.AppendLine("    ConstructionCompleteDuration = 0");
+                sb.AppendLine("  End");
+                sb.AppendLine("  Behavior = DefaultProductionExitUpdate ModuleTag_ProductionExit");
+                // Offset, not dead centre: retail's war factory uses X:-10 Y:-30 against a
+                // 53 radius, i.e. inside the footprint but away from the origin.
+                sb.AppendLine("    UnitCreatePoint = X:-10.0 Y:-30.0 Z:0.0");
+                // Y matches the create point so the unit drives straight out of the same
+                // side it was made on, exactly as AmericaWarFactory does.
+                sb.AppendLine($"    NaturalRallyPoint = X:{StructureRadius} Y:-30.0 Z:0.0");
+                sb.AppendLine("  End");
+            }
+
             int dieTag = 0;
             foreach (var rule in u.Rules)
             {
@@ -424,9 +484,17 @@ public static class ZhCompiler
             sb.AppendLine("  End");
 
             sb.AppendLine($"  Geometry = {(u.IsStructure ? "BOX" : "BOX")}");
-            sb.AppendLine($"  GeometryMajorRadius = {(u.IsStructure ? "22.0" : "13.0")}");
-            sb.AppendLine($"  GeometryMinorRadius = {(u.IsStructure ? "22.0" : "10.0")}");
-            sb.AppendLine($"  GeometryHeight = {(u.IsStructure ? "24.0" : "10.0")}");
+            sb.AppendLine($"  GeometryMajorRadius = {(u.IsStructure ? StructureRadius : "13.0")}");
+            if (u.IsStructure)
+            {
+                // Both were missing against retail's war factory. BuildCompletion is authored
+                // in our content and was simply never emitted; FactoryExitWidth defaults to 0
+                // and reserves the space a produced unit needs to get clear of the building.
+                sb.AppendLine($"  BuildCompletion = {(u.BuildCompletion == BuildCompletion.PlacedByPlayer ? "PLACED_BY_PLAYER" : "APPEARS_AT_RALLY_POINT")}");
+                if (u.Is(Runtime.KindOf.Factory)) sb.AppendLine("  FactoryExitWidth = 25");
+            }
+            sb.AppendLine($"  GeometryMinorRadius = {(u.IsStructure ? StructureMinorRadius : "10.0")}");
+            sb.AppendLine($"  GeometryHeight = {(u.IsStructure ? "40.0" : "10.0")}");
             sb.AppendLine($"  CommandSet = {P(u.Id)}CommandSet");
             sb.AppendLine("End").AppendLine();
             r.Objects++;
@@ -482,9 +550,18 @@ public static class ZhCompiler
                 foreach (var b in db.Units)
                 {
                     if (b.Cost <= 0 || b.IsStructure) continue;
+                    // Same faction only. A unit whose Side differs from the producing
+                    // structure's is filtered out by the control bar anyway, so listing it
+                    // burns one of the 14 slots on a button that can never do anything.
+                    if (!string.Equals(b.FactionId, u.FactionId, StringComparison.Ordinal)) continue;
                     if (slot > MaxCommandSlots) { r.Warnings.Add($"'{u.Id}' build menu truncated at {MaxCommandSlots} slots (their cap)"); break; }
                     sb.AppendLine($"  {slot++} = Command_Build{P(b.Id)}");
                 }
+                // Every retail factory carries these two in slots 13/14. Without them the bar
+                // shows only build tiles: no rally point, no sell. They are retail COMMANDS we
+                // reference by name, not content we define.
+                sb.AppendLine("  13 = Command_SetRallyPoint");
+                sb.AppendLine("  14 = Command_Sell");
                 // Upgrades share the factory's 14 slots with its units — their cap, not ours.
                 foreach (var up in upgradeFor.Values.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal))
                 {
@@ -552,6 +629,132 @@ public static class ZhCompiler
         }
         Write(r, Path.Combine(ini, "PlayerTemplate", pack + ".ini"), sb);
 
+        // ---- ControlBarSchemes: without one, a new faction has NO command bar -------------
+        // ControlBarSchemeManager::setControlBarSchemeByPlayer matches CBScheme->m_side
+        // against the player's Side and leaves the bar unset when nothing matches. Retail
+        // ships schemes for America, China, GLA and Observer only, so every faction we invent
+        // needs its own or it is selectable and unplayable.
+        //
+        // DELIBERATELY MINIMAL. Retail's blocks are 87 lines of layout, and restating them
+        // would copy EA's content into our output for no simulation benefit. We emit the few
+        // fields that decide whether the bar FUNCTIONS and reference their image names; the
+        // background art comes from ControlBar.wnd regardless. Expect a plain bar, not a
+        // broken one.
+        //
+        // Note the syntax: these fields take NO '=' sign. "Side America", not "Side = America".
+        if (db.FactionOrder.Any(fid => db.Factions[fid].IsStartable))
+        {
+            var cb = new StringBuilder();
+            Banner(cb, db, "ControlBarScheme");
+            foreach (var fid in db.FactionOrder)
+            {
+                if (!db.Factions[fid].IsStartable) continue;
+                var ui = UiChrome(zh.Sides.TryGetValue(fid, out var bs2) ? bs2 : "USA");
+                cb.AppendLine($"ControlBarScheme {Sanitize(fid)}8x6");
+                cb.AppendLine("  ScreenCreationRes X:800 Y:600");
+                cb.AppendLine($"  Side {Sanitize(fid)}");
+                cb.AppendLine("  QueueButtonImage SCBigButton");
+                cb.AppendLine($"  RightHUDImage {ui.HudLogo}");
+                cb.AppendLine("  CommandBarBorderColor R:0 G:21 B:126 A:255");
+                cb.AppendLine("  BuildUpClockColor R:0 G:0 B:0 A:160");
+                cb.AppendLine("  ButtonBorderBuildColor R:67 G:108 B:190 A:255");
+                cb.AppendLine("  ButtonBorderActionColor R:1 G:175 B:2 A:255");
+                cb.AppendLine("  ButtonBorderUpgradeColor R:208 G:108 B:0 A:255");
+                cb.AppendLine("  ButtonBorderSystemColor R:207 G:195 B:2 A:255");
+                cb.AppendLine($"  GenBarButtonIn {ui.GenBarIn}");
+                cb.AppendLine($"  GenBarButtonOn {ui.GenBarOn}");
+                cb.AppendLine("End").AppendLine();
+            }
+            Write(r, Path.Combine(ini, "ControlBarScheme", pack + ".ini"), cb);
+        }
+
+        // ---- Overrides: modifications to units that ALREADY EXIST in the target game -----
+        //
+        // Emitted to <mapdir>/map.ini, never to Data/INI, and the split is not stylistic:
+        //   - Redeclaring a block in Data/INI aborts the engine at 29 of 42 subsystems.
+        //   - map.ini is the sole INI_LOAD_CREATE_OVERRIDES path, so it is the only place a
+        //     redeclaration is legal. It reloads every match from startNewGame.
+        //
+        // Two rules are enforced BY CONSTRUCTION here rather than left to the author:
+        //   - A new weapon/locomotor leaf goes to Data/INI (already emitted above) and the
+        //     override only REPOINTS the object at it. Patching a shared leaf in place makes
+        //     it unreachable and the weapon inert — a Ranger's rifle went 5 damage -> zero.
+        //   - Nothing new is ever DECLARED in map.ini. A new name there is marked as an
+        //     override, and LocomotorStore::reset() erases without reassigning its iterator,
+        //     hanging the game on match teardown.
+        if (db.Overrides.Length > 0)
+        {
+            var mi = new StringBuilder();
+            Banner(mi, db, "map.ini overrides");
+            mi.AppendLine("; Drop this beside a .map as <mapdir>/map.ini. It is re-read on every match start,");
+            mi.AppendLine("; so iterating on these values costs a match restart, not a game restart.").AppendLine();
+
+            // Locomotors for speed overrides are NEW NAMES, so they belong in Data/INI.
+            var loco = new StringBuilder();
+            Banner(loco, db, "Locomotor (for overrides)");
+            bool anyLoco = false;
+
+            foreach (var o in db.Overrides)
+            {
+                string locoName = $"{pack}_{Sanitize(o.Id)}Loco";
+                if (o.Speed > Fix64.Zero)
+                {
+                    anyLoco = true;
+                    loco.AppendLine($"Locomotor {locoName}");
+                    loco.AppendLine("  Surfaces = GROUND RUBBLE");
+                    loco.AppendLine($"  Speed = {F(o.Speed.ToDoubleForDisplay() * ContentDb.TicksPerSecond * zh.WorldScale)}");
+                    loco.AppendLine("  TurnRate = 500");
+                    loco.AppendLine("  Acceleration = 200");
+                    loco.AppendLine("  Braking = 200");
+                    loco.AppendLine("  MinTurnSpeed = 0");
+                    loco.AppendLine("  ZAxisBehavior = NO_Z_MOTIVE_FORCE");
+                    loco.AppendLine("  Appearance = TWO_LEGS");
+                    loco.AppendLine("  StickToGround = Yes");
+                    loco.AppendLine("End").AppendLine();
+                }
+
+                foreach (var target in o.Targets)
+                {
+                    mi.AppendLine($"Object {target}");
+                    if (o.Scale > 0) mi.AppendLine($"  Scale = {F(o.Scale)}");
+                    if (o.Model is not null)
+                    {
+                        // ReplaceModule, not AddModule: same module type, and a NEW unique tag.
+                        mi.AppendLine($"  ReplaceModule {o.ModelReplacesTag}");
+                        mi.AppendLine($"    Draw = W3DModelDraw {o.ModelReplacesTag}_Override");
+                        mi.AppendLine("      OkToChangeModelColor = Yes");
+                        mi.AppendLine("      DefaultConditionState");
+                        mi.AppendLine($"        Model = {o.Model}");
+                        if (o.IdleAnimation is not null)
+                        {
+                            mi.AppendLine($"        IdleAnimation = {o.IdleAnimation}");
+                            mi.AppendLine("        AnimationMode = ONCE");
+                        }
+                        mi.AppendLine("      End");
+                        mi.AppendLine("    End");
+                        mi.AppendLine("  End");
+                    }
+                    if (o.WeaponIdx >= 0)
+                    {
+                        // Declaring one WeaponSet CLEARS every inherited one — setCopiedFromDefault
+                        // makes the first parsed set wipe the list. Total, never additive.
+                        mi.AppendLine("  WeaponSet");
+                        mi.AppendLine("    Conditions = None");
+                        mi.AppendLine($"    Weapon = PRIMARY {P(db.Weapons[o.WeaponIdx].Id)}");
+                        mi.AppendLine("  End");
+                    }
+                    if (o.Speed > Fix64.Zero)
+                        mi.AppendLine($"  Locomotor = SET_NORMAL {locoName}");
+                    mi.AppendLine("End").AppendLine();
+                }
+            }
+
+            Write(r, Path.Combine(outRoot, "map.ini"), mi);
+            if (anyLoco) Write(r, Path.Combine(ini, "Locomotor", pack + "_overrides.ini"), loco);
+            r.Warnings.Add($"{db.Overrides.Length} override(s) emitted to map.ini — copy it beside a .map " +
+                           $"(e.g. Maps/<name>/map.ini). Data/INI files install as usual.");
+        }
+
         if (withStrings)
         {
             var st = new StringBuilder();
@@ -601,18 +804,22 @@ public static class ZhCompiler
     /// </summary>
     private static (string Science, string ScoreScreen, string LoadScreen, string LoadMusic,
                     string ScoreMusic, string Watermark, string Enabled, string SideIcon,
-                    string General, string MedRegular, string MedHilite, string MedSelect)
+                    string General, string MedRegular, string MedHilite, string MedSelect,
+                    string HudLogo, string GenBarIn, string GenBarOn)
         UiChrome(string baseSide) => baseSide switch
     {
         "China" => ("SCIENCE_CHINA", "China_ScoreScreen", "SAFactionLogoPage_China", "Load_China",
                     "Score_China", "WatermarkChina", "SSObserverChina", "GameinfoChina",
-                    "China_Logo", "ChinaGeneral_slvr", "ChinaGeneral_blue", "ChinaGeneral_orng"),
+                    "China_Logo", "ChinaGeneral_slvr", "ChinaGeneral_blue", "ChinaGeneral_orng",
+                    "SNLogo", "SNBarButtonGen2IN", "SNBarButtonGen2ON"),
         "GLA" => ("SCIENCE_GLA", "GLA_ScoreScreen", "SAFactionLogoPage_GLA", "Load_GLA",
                   "Score_GLA", "WatermarkGLA", "SSObserverGLA", "GameinfoGLA",
-                  "GLA_Logo", "GLAGeneral_slvr", "GLAGeneral_blue", "GLAGeneral_orng"),
+                  "GLA_Logo", "GLAGeneral_slvr", "GLAGeneral_blue", "GLAGeneral_orng",
+                  "SULogo", "SUBarButtonGen2IN", "SUBarButtonGen2ON"),
         _ => ("SCIENCE_AMERICA", "America_ScoreScreen", "SAFactionLogoPage_US", "Load_USA",
               "Score_USA", "WatermarkUSA", "SSObserverUSA", "GameinfoAMRCA",
-              "USA_Logo", "USAGeneral_slvr", "USAGeneral_blue", "USAGeneral_orng"),
+              "USA_Logo", "USAGeneral_slvr", "USAGeneral_blue", "USAGeneral_orng",
+              "SALogo", "SABarButtonGen2IN", "SABarButtonGen2ON"),
     };
 
     private static string Sanitize(string s)

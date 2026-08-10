@@ -27,6 +27,9 @@ public sealed class ContentPackDto
     public List<RankDto> Ranks { get; set; } = new();
     public Dictionary<string, ScienceDto> Sciences { get; set; } = new();
     public Dictionary<string, PowerDto> Powers { get; set; } = new();
+    /// <summary>Modifications to units that already exist in the target game. Keyed by a
+    /// name of OUR choosing, so a later pack can amend or remove one by name.</summary>
+    public Dictionary<string, OverrideDto> Overrides { get; set; } = new();
     public Dictionary<string, UnitDto> Units { get; set; } = new();
     public Dictionary<string, FactionDto> Factions { get; set; } = new();
     public ZhTargetDto Zh { get; set; } = new();
@@ -126,6 +129,47 @@ public sealed class PowerDto
     /// <summary>Seconds; quantised with ceil() at load. Wins over RechargeTicks.</summary>
     public double? RechargeSeconds { get; set; }
     public List<EffectDto> Do { get; set; } = new();
+}
+
+/// <summary>
+/// A modification to a unit that ALREADY EXISTS in the target game.
+///
+/// Distinct from authoring a unit, and it compiles somewhere else entirely: new content goes
+/// to Data/INI, overrides go to a map.ini, and mixing them up is fatal in both directions
+/// (see "Modding the retail game" in CLAUDE.md). The author declares intent; the compiler
+/// picks the file and the mechanism.
+/// </summary>
+public sealed class OverrideDto
+{
+    /// <summary>Target object name IN THE TARGET GAME, e.g. "AmericaInfantryRanger".</summary>
+    public string Object { get; set; } = "";
+
+    /// <summary>
+    /// Which forks of the target to touch. "base" is the named object alone; "all" also
+    /// applies to every general's fork of it.
+    ///
+    /// Not a convenience. Zero Hour's generals are FORKS, so there are four Ranger objects,
+    /// and whether an edit propagates depends on whether the thing you happened to touch is
+    /// shared. Guessing wrong is exactly what put 88 bad references into EA's shipping
+    /// content; making the author state it is the fix.
+    /// </summary>
+    public string Scope { get; set; } = "base";
+
+    /// <summary>Prefixes of the target's forks, e.g. ["SupW_","Lazr_","AirF_"]. Required by scope=all.</summary>
+    public List<string>? Forks { get; set; }
+
+    /// <summary>Replacement weapon: OUR weapon id. Compiled as a new leaf plus a repoint.</summary>
+    public string? Weapon { get; set; }
+    /// <summary>Movement speed in OUR units/sec. Compiled as a new Locomotor plus a repoint.</summary>
+    public double? Speed { get; set; }
+    /// <summary>Visual scale multiplier. A plain ThingTemplate field, applied directly.</summary>
+    public double? Scale { get; set; }
+    /// <summary>Target-game model name to swap in, e.g. "AIHERO_SKN".</summary>
+    public string? Model { get; set; }
+    /// <summary>Draw module tag being replaced. Required with <see cref="Model"/>.</summary>
+    public string? ModelReplacesTag { get; set; }
+    /// <summary>Skeleton.animation for the idle pose, e.g. "AIHERO_SKL.AIHERO_STA 0 25".</summary>
+    public string? IdleAnimation { get; set; }
 }
 
 public sealed class VeterancyTrackDto

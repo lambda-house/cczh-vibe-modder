@@ -366,6 +366,18 @@
     <div class="ev">~2,000 units 10.3s → 2.1s · ~4,000 units 75.9s → 7.9s · identical hashes at every scale</div>
   </div>
 
+  <div class="slice">
+    <div class="slice-h"><h3>Overrides: modifying the retail game</h3><span class="pill p-done">done</span></div>
+    <p>Authoring content and <em>modifying</em> content are different problems that compile to different files, and confusing them is fatal in both directions — a redeclared block in <code>Data/INI</code> aborts the engine, a new name in <code>map.ini</code> hangs it on match teardown, and patching a shared weapon in place leaves it unreachable and inert. So the author declares intent and the compiler picks the mechanism. The one thing it refuses to guess is <em>scope</em>: Zero Hour's generals are forks, so there are four Ranger objects, and one word decides whether an edit reaches one or all four.</p>
+    <div class="ev">validated in a live match: damage, locomotion, scale and model on a retail unit</div>
+  </div>
+
+  <div class="slice">
+    <div class="slice-h"><h3>A faction you can actually play</h3><span class="pill p-done">done</span></div>
+    <p>The whole pipeline, end to end: a faction and a unit authored in our schema, measured in the sim, compiled to additive <code>Data/INI</code>, selectable in the skirmish dropdown, with a working command bar, building that unit in a real match. A playable faction turns out to be mostly presentation — score screen, watermark, medallions, and a <code>ControlBarScheme</code> keyed by side, without which it is selectable and unplayable. None of it is simulated; all of it is mandatory.</p>
+    <div class="ev">42/42 subsystems · 0 parse errors · custom unit built in-game</div>
+  </div>
+
   <h3>Decisions taken, closed</h3>
   <ul>
     <li><strong>Stacking:</strong> additive-in-excess added as a third op alongside Add and Mul; mixing them on one stat lints.</li>

@@ -107,6 +107,7 @@ public static class PackStack
             Tech = new TechDto { Nodes = MergeKeyed(b.Tech.Nodes, over.Tech.Nodes) },
             Sciences = MergeKeyed(b.Sciences, over.Sciences),
             Powers = MergeKeyed(b.Powers, over.Powers),
+            Overrides = MergeKeyed(b.Overrides, over.Overrides),
             // Ranks are an ORDERED ladder, not a keyed table: a later pack replaces the whole
             // ladder or inherits it whole. Merging them per index would let a mod that only
             // wants a cheaper rank 2 silently reorder the thresholds.
