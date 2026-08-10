@@ -217,10 +217,18 @@ are emitted by `rts compile`, not hand-written.
    *A grid texture rather than a flat colour was the reason it was visible at all — a solid
    colour proves the file loads and hides everything about the mapping.*
 
-   *Still not done, and not claimed: SMOOTH NORMALS (we emit per-face normals, correct for a
-   box and wrong for a cylinder — the render is visibly faceted), skinning
-   (`VERTEX_INFLUENCES` against a `HIERARCHY`) and animation (`ANIMATION_CHANNEL`). So this
-   authors static, flat-shaded props and buildings, not characters.*
+   **Smooth shading is per-VERTEX normals varying across a face, NOT shared vertices.**
+   Duplicated seam vertices are fine as long as they AGREE on their normal; sharing positions
+   is neither necessary nor sufficient. Curved surfaces now get analytic normals (radial on a
+   cylinder wall, face-blended-with-outward at a pyramid's base), and a box stays flat because
+   averaging a cube's corners rounds them into mush. Confirmed in-game.
+   *This exposed a latent bug: the `TRIANGLES` chunk carries the GEOMETRIC plane normal, and
+   the writer had been reusing a vertex normal there. Correct only while the two coincided
+   under flat shading — the moment smooth normals made them deliberately differ, culling and
+   the plane distance would have been fed a lie. It is now computed from the winding.*
+
+   *Still not done, and not claimed: skinning (`VERTEX_INFLUENCES` against a `HIERARCHY`) and
+   animation (`ANIMATION_CHANNEL`). So this authors static props and buildings, not characters.*
 
 ## Build / verify
 

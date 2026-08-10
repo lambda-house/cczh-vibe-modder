@@ -804,6 +804,45 @@ if ratio > 1.15:
     sys.exit(1)
 print(f"  texel density uniform across surfaces ({ratio:.2f}x side vs cap)")
 PY5
+
+  # Smooth shading is per-VERTEX normals varying across a face, not shared vertices. And the
+  # TRIANGLES chunk must still carry the GEOMETRIC face normal — reusing a vertex normal there
+  # was correct only while the two coincided under flat shading.
+  python3 - "$WOUT/cyl.w3d" <<'PY6'
+import struct, sys
+buf = open(sys.argv[1], "rb").read()
+def walk(off, end):
+    while off + 8 <= end:
+        t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+        if raw & 0x80000000: yield from walk(body, body + sz)
+        else: yield t, buf[body:body+sz]
+        off = body + sz
+V = N = T = None
+for t, p in walk(0, len(buf)):
+    if t == 0x0002: V = [struct.unpack_from("<3f", p, i*12) for i in range(len(p)//12)]
+    if t == 0x0003: N = [struct.unpack_from("<3f", p, i*12) for i in range(len(p)//12)]
+    if t == 0x0020: T = [struct.unpack_from("<3II3ff", p, i*32) for i in range(len(p)//32)]
+
+if not any(abs(N[0][k] - N[1][k]) > 1e-4 for k in range(3)):
+    print("  NOT SMOOTH: a curved surface has identical normals across a face"); sys.exit(1)
+# Every wall normal must be unit-length and radial (z=0) for a cylinder.
+for i in (0, 1, 2, 3):
+    ln = sum(c*c for c in N[i]) ** 0.5
+    if abs(ln - 1.0) > 1e-3 or abs(N[i][2]) > 1e-3:
+        print(f"  wall normal {i} is not a unit radial vector: {N[i]} len {ln:.4f}"); sys.exit(1)
+i0, i1, i2 = T[0][0], T[0][1], T[0][2]
+fn = (T[0][4], T[0][5], T[0][6])
+p0, p1, p2 = V[i0], V[i1], V[i2]
+u = [p1[k]-p0[k] for k in range(3)]; v = [p2[k]-p0[k] for k in range(3)]
+c = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]]
+ln = sum(x*x for x in c) ** 0.5
+c = [x/ln for x in c]
+if any(abs(fn[k] - c[k]) > 1e-3 for k in range(3)):
+    print(f"  TRIANGLES normal is not geometric: stored {fn}, computed {tuple(c)}"); sys.exit(1)
+if not any(abs(fn[k] - N[i0][k]) > 1e-3 for k in range(3)):
+    print("  face normal equals a vertex normal — smooth shading cannot be in effect"); sys.exit(1)
+print("  smooth: per-vertex radial normals, and TRIANGLES keeps the geometric face normal")
+PY6
 else
   echo "  (skipped: no local retail install at $W3DBIG)"
 fi
