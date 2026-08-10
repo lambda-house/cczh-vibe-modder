@@ -19,23 +19,23 @@ echo "build: OK"
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
 echo
-echo "== gate 1/19: content lint =="
+echo "== gate 1/20: content lint =="
 rts lint
 
 echo
-echo "== gate 2/19: replay determinism =="
+echo "== gate 2/20: replay determinism =="
 rts replay --a crusader --b battlemaster --seed 7
 
 echo
-echo "== gate 3/19: duel smoke =="
+echo "== gate 3/20: duel smoke =="
 rts duel --a crusader --b technical --n 20 --seed 42
 
 echo
-echo "== gate 4/19: econ determinism =="
+echo "== gate 4/20: econ determinism =="
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
 echo
-echo "== gate 5/19: faction layering resolves =="
+echo "== gate 5/20: faction layering resolves =="
 rts faction
 
 echo
@@ -51,7 +51,7 @@ echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
 echo
-echo "== gate 6/19: layered packs + diff =="
+echo "== gate 6/20: layered packs + diff =="
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -75,7 +75,7 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 echo "  base unaffected by the mod: $base_again"
 
 echo
-echo "== gate 7/19: structures are economic targets =="
+echo "== gate 7/20: structures are economic targets =="
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -98,7 +98,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 echo "  factory present => units build and win (A 3/3)"
 
 echo
-echo "== gate 8/19: flags and conditional variants =="
+echo "== gate 8/20: flags and conditional variants =="
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -128,7 +128,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
 echo
-echo "== gate 9/19: event rules {on, when, do} =="
+echo "== gate 9/20: event rules {on, when, do} =="
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -170,7 +170,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 echo "  stalled queues are reported, not silent"
 
 echo
-echo "== gate 10/19: factions are startable, not just rosters =="
+echo "== gate 10/20: factions are startable, not just rosters =="
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -190,7 +190,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 echo "  the loser's stall is reported, not silent"
 
 echo
-echo "== gate 11/19: compile to a Zero Hour mod =="
+echo "== gate 11/20: compile to a Zero Hour mod =="
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -217,7 +217,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
 echo "  emitted enum values are ones retail actually uses"
 
 echo
-echo "== gate 12/19: target-zh lint — caps, round-trip, divergence =="
+echo "== gate 12/20: target-zh lint — caps, round-trip, divergence =="
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -294,7 +294,7 @@ tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first co
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
 
 echo
-echo "== gate 13/19: faction-scoped reference resolution =="
+echo "== gate 13/20: faction-scoped reference resolution =="
 FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
 
 # A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
@@ -362,7 +362,7 @@ sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' require
 echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
 
 echo
-echo "== gate 14/19: garrison + capture =="
+echo "== gate 14/20: garrison + capture =="
 # GARRISONABLE is the only terrain-shaped combat modifier in all of Zero Hour and it needs
 # no geometry at all. Occupants cannot be targeted; damage reaches them only as spill from a
 # ClearsGarrison weapon hitting the HOST — 17 of retail's 363 weapons, 4.7% of the arsenal.
@@ -410,7 +410,7 @@ grep -q "AutoDepositUpdate" "$GOUT/Data/INI/Object/garrison.ini" \
 echo "  compiles to GarrisonContain + AutoDepositUpdate + AllowAttackGarrisonedBldgs"
 
 echo
-echo "== gate 15/19: sciences — a second currency earned by fighting =="
+echo "== gate 15/20: sciences — a second currency earned by fighting =="
 # Skill points come from KILLS and from nothing else; no economy converts into them. ZH's
 # whole ladder is five Rank.ini blocks: 0/800/1500/2500/5000 needed, 1/1/1/1/3 granted, so
 # seven points for a game against 13-20 purchasable sciences per faction. Every purchasable
@@ -469,7 +469,7 @@ rl=$(rts lint --target zh --mod content/mods/sciences.json | grep -c "rank ladde
 echo "  Science blocks compile additively; the numbered Rank ladder is reported, not overwritten"
 
 echo
-echo "== gate 16/19: spatial index is a PURE accelerator =="
+echo "== gate 16/20: spatial index is a PURE accelerator =="
 # Every radius query used to be a full scan, so tick cost was O(n^2) — and this product's
 # value is BATCH measurement, where a matrix is pairs x runs x ticks. The grid must change
 # the COST and nothing else, so the gate is equivalence, not speed: same seed, same content,
@@ -509,7 +509,7 @@ print(f'  ~2000 units: {g:.2f}s with the grid vs {b:.2f}s without ({b/g:.1f}x)')
 "
 
 echo
-echo "== gate 17/19: overrides compile to map.ini, and only there =="
+echo "== gate 17/20: overrides compile to map.ini, and only there =="
 # Modifying a unit that ALREADY EXISTS in the target game is a different problem from
 # authoring one, and the rules were each bought with a crash. The author states intent; the
 # compiler picks the file and the mechanism. This gate asserts it keeps picking correctly.
@@ -572,7 +572,7 @@ rts lint --mod "$OVO/theirs.json" >/dev/null 2>&1 \
 echo "  naming the target's own weapon is refused at lint, not discovered in a match"
 
 echo
-echo "== gate 18/19: an emitted object is PLAYABLE, not merely parseable =="
+echo "== gate 18/20: an emitted object is PLAYABLE, not merely parseable =="
 # Every check here corresponds to a silent in-game failure found by playing the compiled
 # output: the file parsed, the engine booted 42/42, and something just never happened.
 # A field-diff against AmericaWarFactory and AmericaTankCrusader is what surfaced them.
@@ -596,13 +596,29 @@ tr -d '\r' < "$OBJ" | awk '/^Object demo_hellhound$/,/^End$/' | grep -q "Behavio
   || { echo "  unit is missing PhysicsBehavior — it would spawn inert and unselectable"; exit 1; }
 echo "  unit: physics present, so the locomotor can actually drive it"
 
-# Geometry must match the BORROWED MODEL, not an invented number. ABWarFact is built for
-# 53x60; a 22-radius box put every produced unit inside the visible building.
-tr -d '\r' < "$OBJ" | awk '/^Object demo_hellfire_works$/,/^End$/' | grep -q "GeometryMajorRadius = 53.0" \
-  || { echo "  structure geometry no longer matches the borrowed mesh — units spawn inside it"; exit 1; }
-tr -d '\r' < "$OBJ" | awk '/^Object demo_hellfire_works$/,/^End$/' | grep -q "NaturalRallyPoint = X:53.0" \
-  || { echo "  NaturalRallyPoint must match GeometryMajorRadius (retail says so in a comment)"; exit 1; }
-echo "  geometry, create point and rally point all agree with the adopted mesh"
+# Geometry must be DERIVED FROM THE MESH, never an invented constant — a 22-radius box against
+# the 53x60 ABWarFact mesh put every produced unit inside the visible building. Assert the
+# relationship, not a number: an earlier version of this check hardcoded 53 and broke the
+# moment the demo switched meshes, which is a test asserting the wrong thing.
+python3 - "$OBJ" "$POUT/../.." <<'PY4'
+import json, os, re, sys
+obj = open(sys.argv[1], encoding="latin-1").read().replace("\r", "")
+blk = re.search(r"^Object demo_hellfire_works$(.*?)^End$", obj, re.S | re.M).group(1)
+model = re.search(r"Model\s*=\s*(\S+)", blk).group(1)
+radius = re.search(r"GeometryMajorRadius\s*=\s*(\S+)", blk).group(1)
+rally = re.search(r"NaturalRallyPoint\s*=\s*X:(\S+)", blk).group(1)
+prof = json.load(open("reference/art-profiles.json"))["models"]
+if model not in prof:
+    print(f"  structure adopts unprofiled mesh '{model}'"); sys.exit(1)
+want = prof[model]["majorRadius"]
+if float(radius) != float(want):
+    print(f"  geometry not derived: emitted {radius}, mesh '{model}' measures {want}"); sys.exit(1)
+# Retail's own comment: NaturalRallyPointX must match GeometryMajorRadius, or a produced unit
+# is released somewhere other than the edge of the building it came out of.
+if float(rally) != float(radius):
+    print(f"  rally point {rally} does not match geometry {radius}"); sys.exit(1)
+print(f"  geometry and rally point both derived from mesh '{model}' ({radius})")
+PY4
 
 # Presentation that is mandatory rather than cosmetic.
 grep -q "^ControlBarScheme hellfire8x6" <(tr -d '\r' < "$POUT/Data/INI/ControlBarScheme/demo.ini") \
@@ -634,8 +650,10 @@ if [ -f reference/art-profiles.json ]; then
     || { echo "  muzzle flash not derived from the mesh profile — expect a permanent flame"; exit 1; }
   tr -d '\r' < "$D" | awk '/^Object demo_hellhound$/,/^End$/' | grep -q "ControlledWeaponSlots = PRIMARY" \
     || { echo "  turret not derived from the mesh profile — the unit would never fire"; exit 1; }
-  tr -d '\r' < "$D" | awk '/^Object demo_hellfire_works$/,/^End$/' | grep -q "GeometryMajorRadius = 53.0" \
-    || { echo "  structure geometry not derived from the mesh — units spawn inside it"; exit 1; }
+  # The unit's rig is the interesting derivation here; the structure's geometry is asserted
+  # against the profile a few lines below, by relationship rather than by constant.
+  tr -d '\r' < "$D" | awk '/^Object demo_hellhound$/,/^End$/' | grep -q "WeaponLaunchBone = PRIMARY" \
+    || { echo "  weapon bones not derived from the mesh profile"; exit 1; }
   echo "  turret, bones, flash and geometry all derived from the mesh, none hand-authored"
 else
   echo "  (skipped: reference/art-profiles.json absent — run tools/zhasset artprofile)"
@@ -683,7 +701,62 @@ done
 echo "  reversing every keyed table in the pack emits byte-identical output"
 
 echo
-echo "== gate 19/19: MCP server — the agent-facing seam =="
+echo "== gate 19/20: W3D round-trip and authoring =="
+# Adopting art needs a retail install and caps what a standalone conversion can be. The
+# question is whether a model can be understood well enough to REMAKE, and the test is
+# byte-identity: the high bit of a chunk's size marks a container, so sizes must be recomputed
+# from children rather than remembered. Anything less than byte-identical means a re-model
+# built on this parser would silently drop chunks the engine needs.
+#
+# Conditional on a local retail install: the samples are EA's art, extracted locally and never
+# committed. Ship the extractor, never the extract.
+W3DBIG="$HOME/GeneralsX/GeneralsZH/ZH_Generals/W3D.big"
+if [ -f "$W3DBIG" ]; then
+  WOUT=$(mktemp -d); trap 'rm -rf "$WOUT"' EXIT
+  python3 - "$W3DBIG" "$WOUT" <<'PY2'
+import struct, sys, os
+big, out = sys.argv[1], sys.argv[2]
+with open(big, "rb") as f:
+    f.read(8); (n,) = struct.unpack(">I", f.read(4)); f.read(4)
+    ents = []
+    for _ in range(n):
+        off, size = struct.unpack(">II", f.read(8)); nm = b""
+        while True:
+            c = f.read(1)
+            if c in (b"\x00", b""): break
+            nm += c
+        ents.append((nm.decode("latin-1"), off, size))
+    for nm, off, size in ents:
+        base = nm.split("\\")[-1].upper()
+        if base in ("ABPWRPLANT_D01.W3D", "AVLEOPARD.W3D", "AIHERO_SKL.W3D"):
+            f.seek(off); open(os.path.join(out, base), "wb").write(f.read(size))
+PY2
+  for f in "$WOUT"/*.W3D; do
+    ./tools/zhasset w3dround "$f" | grep -q "BYTE-IDENTICAL" \
+      || { echo "  W3D round-trip is LOSSY for $(basename "$f") — a re-model would drop chunks"; exit 1; }
+  done
+  echo "  every sample model parses and re-emits byte-identically"
+
+  # Authoring: geometry computed here, written into a template that supplies only material
+  # state. A 24-vertex / 12-triangle template IS a box, so counts stay valid.
+  ./tools/zhasset w3dbox --template "$WOUT/ABPWRPLANT_D01.W3D" --out "$WOUT/box.w3d" \
+      --name E2EBOX --size 40 40 60 --out-dir "$WOUT" >/dev/null
+  ./tools/zhasset w3d "$WOUT/box.w3d" | grep -q "24 vertices, 12 triangles" \
+    || { echo "  authored mesh does not read back as 24 verts / 12 tris"; exit 1; }
+  # An authored mesh must DECLARE its contract, or the compiler falls back to guesses and a
+  # building swallows what it builds.
+  python3 -c "
+import json,sys
+p=json.load(open('$WOUT/art-profiles.json'))['models']['E2EBOX']
+assert p['majorRadius']=='20.0' and p['height']=='60.0', p
+" || { echo "  authored mesh did not declare its own art profile"; exit 1; }
+  echo "  authored geometry reads back correct and declares its own profile"
+else
+  echo "  (skipped: no local retail install at $W3DBIG)"
+fi
+
+echo
+echo "== gate 20/20: MCP server — the agent-facing seam =="
 # The whole project points at this: an agent authors a pack, is told exactly what is wrong,
 # measures it, and compiles it, with no human in the loop. JSON-RPC 2.0 over newline-delimited
 # stdio and ZERO dependencies, so the root NuGet.config's <clear/> stays untouched.

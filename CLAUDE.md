@@ -173,9 +173,28 @@ rolls out of the factory and is selectable and commandable. Separately, a
 RETAIL unit's damage, locomotion, scale and model are all modifiable from a pack. Both halves
 are emitted by `rts compile`, not hand-written.
 
-Still open: camera zoom. `GameData` is unreachable from `Data/INI` on this build (rule 7) and
-the `map.ini` route is untested — no retail `map.ini` overrides `GameData`, so it carries
-`DefaultStartingCash` as a witness field.
+11. **`GameData` IS NOT MODDABLE BY DATA on this build — from either channel.** Closed, not
+   open. A `GameData` block under `Data/INI/GameData/` parses and does nothing; the same block
+   in `map.ini` also does nothing. Both were probed with `DefaultStartingCash = 999999`, which
+   stayed at retail 10000 in both cases. That is why camera zoom could not be changed: every
+   `MaxCameraHeight` we set was never in play. Everything downstream checked out — the wheel
+   really does drive `View::zoomOut()` -> `setHeightAboveGround(+10)` clamped by
+   `m_maxCameraHeight`, `calcCameraConstraints` clamps x/y only, and `GlobalData::reset()` pops
+   to the original instance an in-place patch writes to. The wall is the LOAD PATH, and it is a
+   GeneralsX divergence: EA's `initSubsystem` passes no dirpath for `TheWritableGlobalData`, and
+   no retail `map.ini` overrides `GameData` either. Do not spend more time on it from content.
+
+12. **The model format is READ AND WRITTEN, verified byte-identically.** W3D is IFF-style
+   chunks and the taxonomy is EA's GPL header `Tools/WW3D/pluglib/w3d_file.h` — engine source,
+   the half the GPL covers. `zhasset w3dround` re-emits every sample byte-for-byte (the high
+   bit of `size` marks a container, so sizes are recomputed, not remembered), and
+   `zhasset w3dbox` AUTHORS geometry — vertices, normals, per-face normals with plane
+   distances, and UVs, all computed — into a template that supplies only material state.
+   **Confirmed rendering in-game.** Units are 220-245 triangles, so re-modelling is a modest
+   art task; the standalone zero-EA-art route is engineering, not aspiration.
+   *An authored mesh DECLARES its own art profile as it is written, so the catalogue is
+   measured for adopted art and declared for authored art. Not yet done: new TOPOLOGY (needs
+   `MESH_HEADER3` counts rewritten), skinning, and animation synthesis.*
 
 ## Build / verify
 

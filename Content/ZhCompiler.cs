@@ -458,11 +458,17 @@ public static class ZhCompiler
                 sb.AppendLine("  Behavior = DefaultProductionExitUpdate ModuleTag_ProductionExit");
                 // Offset, not dead centre: retail's war factory uses X:-10 Y:-30 against a
                 // 53 radius, i.e. inside the footprint but away from the origin.
+                // Exit points must agree with the MESH, not with a constant. Where the profile
+                // carries the real object's values, use them; otherwise derive from the mesh's
+                // own radius, because a hardcoded 53 against a 12-radius building is the same
+                // mismatch that put units inside the walls, just in the other direction.
                 art.TryGet(model, out var ep);
-                sb.AppendLine($"    UnitCreatePoint = {(ep?.UnitCreatePoint is string ucp ? ArtProfiles.NormalisePoint(ucp) : "X:-10.0 Y:-30.0 Z:0.0")}");
+                double exitR = double.TryParse(ep?.MajorRadius, System.Globalization.NumberStyles.Float,
+                                               CultureInfo.InvariantCulture, out var er) ? er : 53.0;
+                sb.AppendLine($"    UnitCreatePoint = {(ep?.UnitCreatePoint is string ucp ? ArtProfiles.NormalisePoint(ucp) : $"X:0.0 Y:{F(-exitR * 0.6)} Z:0.0")}");
                 // Y matches the create point so the unit drives straight out of the same
                 // side it was made on, exactly as AmericaWarFactory does.
-                sb.AppendLine($"    NaturalRallyPoint = {(ep?.NaturalRallyPoint is string nrp ? ArtProfiles.NormalisePoint(nrp) : $"X:{StructureRadius} Y:-30.0 Z:0.0")}");
+                sb.AppendLine($"    NaturalRallyPoint = {(ep?.NaturalRallyPoint is string nrp ? ArtProfiles.NormalisePoint(nrp) : $"X:{F(exitR)} Y:{F(-exitR * 0.6)} Z:0.0")}");
                 sb.AppendLine("  End");
             }
 

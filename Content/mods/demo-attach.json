@@ -64,7 +64,10 @@
     //
     // With a mesh retail uses, `zhasset artprofile` supplies the whole contract and no
     // artRig or turreted entry is needed here at all.
-    "models": { "hellhound": "AVLeopard", "hellfire_works": "ABWarFact" },
+    // hellfire_works points at RTSBOX: a mesh whose geometry was AUTHORED by
+    // `zhasset w3dbox`, not adopted. If the building renders as a box in game, the write path
+    // is real and the standalone zero-EA-art route is open.
+    "models": { "hellhound": "AVLeopard", "hellfire_works": "RTSBOX" },
     "sides":  { "hellfire": "USA" }
   },
 

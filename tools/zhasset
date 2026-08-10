@@ -676,6 +676,158 @@ def w3d_walk(buf, off=0, end=None, depth=0, acc=None):
         off = body + size
 
 
+def w3d_tree(buf, off=0, end=None):
+    """Parse into a tree of (type, payload, [children]). Lossless: a container's payload is
+    kept as None and rebuilt from children, a leaf keeps its exact bytes."""
+    end = len(buf) if end is None else end
+    nodes = []
+    while off + 8 <= end:
+        ctype, raw = struct.unpack_from("<II", buf, off)
+        size, has_sub = raw & 0x7FFFFFFF, bool(raw & 0x80000000)
+        body = off + 8
+        if has_sub:
+            nodes.append((ctype, None, w3d_tree(buf, body, body + size)))
+        else:
+            nodes.append((ctype, buf[body:body + size], []))
+        off = body + size
+    return nodes
+
+
+def w3d_emit(nodes):
+    """Serialise a tree back to bytes. The high bit of `size` marks a container, so it has to
+    be recomputed from the children rather than remembered — which is what makes this a real
+    writer and not a memcpy."""
+    out = bytearray()
+    for ctype, payload, kids in nodes:
+        if kids:
+            body = w3d_emit(kids)
+            out += struct.pack("<II", ctype, len(body) | 0x80000000) + body
+        else:
+            out += struct.pack("<II", ctype, len(payload)) + payload
+    return bytes(out)
+
+
+def cmd_w3dround(a):
+    """Parse a .w3d and write it back. Byte-identical output is the only honest proof that
+    the reader understands the container completely — anything less means a re-model built on
+    this parser would silently drop chunks the engine needs."""
+    src = open(a.file, "rb").read()
+    tree = w3d_tree(src)
+    out = w3d_emit(tree)
+    same = out == src
+    print(f"{os.path.basename(a.file)}: {len(src):,} bytes in, {len(out):,} out, "
+          f"{'BYTE-IDENTICAL' if same else 'DIFFERS'}")
+    if not same:
+        for i in range(min(len(src), len(out))):
+            if src[i] != out[i]:
+                print(f"  first difference at byte {i}: {src[i]:#04x} != {out[i]:#04x}")
+                break
+        return 1
+    if a.write:
+        open(a.write, "wb").write(out)
+        print(f"  wrote {a.write}")
+    return 0
+
+
+def cmd_w3dbox(a):
+    """Author NEW GEOMETRY into a real mesh: the first step of re-modelling.
+
+    Not a copy and not a scale. Vertices, normals, triangles and texture coordinates are all
+    computed here from box dimensions, then written into a template whose MATERIAL / SHADER /
+    TEXTURE chunks are kept. That split is deliberate for a first writer: geometry is the part
+    we can generate confidently, and material state is a pile of flag words whose defaults are
+    not documented anywhere we can verify. New shape on a known-good surface scaffold.
+
+    A 24-vertex / 12-triangle template is a box already, so counts are unchanged and
+    MESH_HEADER3's NumVertices / NumTris stay valid — only the bounds have to be recomputed.
+    Authoring a different TOPOLOGY means rewriting those counts too, which is the next step.
+    """
+    src = open(a.template, "rb").read()
+    tree = w3d_tree(src)
+
+    sx, sy, sz = a.size
+    hx, hy, hz = sx / 2.0, sy / 2.0, sz / 2.0
+    # Six faces, four unshared vertices each: a shared-vertex cube cannot carry per-face
+    # normals or a sane UV layout, and the template's 24/12 budget assumes this.
+    faces = [
+        ([(-hx,-hy, hz), ( hx,-hy, hz), ( hx, hy, hz), (-hx, hy, hz)], ( 0, 0, 1)),
+        ([( hx,-hy,-hz), (-hx,-hy,-hz), (-hx, hy,-hz), ( hx, hy,-hz)], ( 0, 0,-1)),
+        ([(-hx,-hy,-hz), ( hx,-hy,-hz), ( hx,-hy, hz), (-hx,-hy, hz)], ( 0,-1, 0)),
+        ([( hx, hy,-hz), (-hx, hy,-hz), (-hx, hy, hz), ( hx, hy, hz)], ( 0, 1, 0)),
+        ([( hx,-hy,-hz), ( hx, hy,-hz), ( hx, hy, hz), ( hx,-hy, hz)], ( 1, 0, 0)),
+        ([(-hx, hy,-hz), (-hx,-hy,-hz), (-hx,-hy, hz), (-hx, hy, hz)], (-1, 0, 0)),
+    ]
+    verts, norms, uvs, tris = [], [], [], []
+    for fi, (quad, n) in enumerate(faces):
+        base = fi * 4
+        verts += quad
+        norms += [n] * 4
+        uvs += [(0, 0), (1, 0), (1, 1), (0, 1)]
+        tris += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
+
+    vbuf = b"".join(struct.pack("<3f", *v) for v in verts)
+    nbuf = b"".join(struct.pack("<3f", *n) for n in norms)
+    tbuf = b"".join(struct.pack("<2f", *t) for t in uvs)
+    # W3dTriStruct: uint32 Vindex[3], uint32 Attributes, W3dVectorStruct Normal, float32 Dist.
+    fbuf = b""
+    for (i0, i1, i2) in tris:
+        fn = norms[i0]
+        # Plane distance from the origin: dot(normal, any vertex on the face).
+        dist = sum(fn[k] * verts[i0][k] for k in range(3))
+        fbuf += struct.pack("<3II3ff", i0, i1, i2, 0, *fn, dist)
+
+    def patch(nodes):
+        out = []
+        for ctype, payload, kids in nodes:
+            if ctype == 0x001F and payload is not None:          # MESH_HEADER3
+                h = bytearray(payload)
+                if a.name:
+                    h[8:24] = a.name.encode("latin-1")[:15].ljust(16, b"\0")
+                struct.pack_into("<3f", h, 76, -hx, -hy, -hz)     # Min
+                struct.pack_into("<3f", h, 88,  hx,  hy,  hz)     # Max
+                struct.pack_into("<3f", h, 100, 0.0, 0.0, 0.0)    # SphCenter
+                struct.pack_into("<f",  h, 112, (hx * hx + hy * hy + hz * hz) ** 0.5)
+                payload = bytes(h)
+            elif ctype == 0x0002: payload = vbuf                  # VERTICES
+            elif ctype == 0x0003: payload = nbuf                  # VERTEX_NORMALS
+            elif ctype == 0x0020: payload = fbuf                  # TRIANGLES
+            elif ctype == 0x004A: payload = tbuf                  # STAGE_TEXCOORDS
+            out.append((ctype, payload, patch(kids) if kids else []))
+        return out
+
+    tree = patch(tree)
+    data = w3d_emit(tree)
+    open(a.out, "wb").write(data)
+    print(f"authored {a.out}  {len(data):,} bytes")
+    print(f"  box {sx} x {sy} x {sz}: {len(verts)} vertices, {len(tris)} triangles, "
+          f"{len(uvs)} texcoords — all computed, not copied")
+    print(f"  template {os.path.basename(a.template)} supplied MATERIAL_INFO / SHADERS / "
+          f"TEXTURES / MATERIAL_PASS unchanged")
+
+    # An AUTHORED mesh knows its own contract — we chose the dimensions — so write the profile
+    # alongside it. Otherwise `rts compile` warns that geometry is guessed and falls back to
+    # AmericaWarFactory's numbers, which is how a unit ends up inside its own building. The
+    # catalogue is measured for adopted art and DECLARED for authored art; either way the
+    # compiler gets one answer.
+    if a.name:
+        cat = os.path.join(a.out_dir or DEF_OUT, "art-profiles.json")
+        data = {"models": {}}
+        if os.path.exists(cat):
+            data = json.load(open(cat))
+        data.setdefault("models", {})[a.name] = {
+            "model": a.name, "geometry": "BOX",
+            "majorRadius": f"{sx / 2.0:.1f}", "minorRadius": f"{sy / 2.0:.1f}",
+            "height": f"{sz:.1f}", "isSmall": None, "turret": False,
+            "launchBone": None, "fireFXBone": None, "muzzleFlash": None,
+            "unitCreatePoint": None, "naturalRallyPoint": None,
+            "kind": "authored", "usedBy": ["(authored by zhasset w3dbox)"],
+        }
+        os.makedirs(os.path.dirname(cat), exist_ok=True)
+        json.dump(data, open(cat, "w"), indent=1, sort_keys=True)
+        print(f"  profile declared in {cat}: BOX {sx/2:.1f} x {sy/2:.1f} x {sz:.1f}")
+    return 0
+
+
 def cmd_w3d(a):
     """Explain one .w3d: what a model IS, in chunks, so it can be re-authored not just adopted.
 
@@ -760,6 +912,16 @@ def main():
     w3 = sub.add_parser("w3d", help="explain one .w3d model: mesh, motion, textures")
     w3.add_argument("file"); w3.add_argument("-v", "--verbose", action="store_true")
     w3.set_defaults(fn=cmd_w3d)
+
+    wr = sub.add_parser("w3dround", help="parse a .w3d and re-emit it; proves the reader is lossless")
+    wr.add_argument("file"); wr.add_argument("--write")
+    wr.set_defaults(fn=cmd_w3dround)
+
+    wb = sub.add_parser("w3dbox", help="author new geometry into a mesh template")
+    wb.add_argument("--template", required=True); wb.add_argument("--out", required=True)
+    wb.add_argument("--name"); wb.add_argument("--size", type=float, nargs=3, default=[20, 20, 20])
+    wb.add_argument("--out-dir", dest="out_dir", help="where to write art-profiles.json")
+    wb.set_defaults(fn=cmd_w3dbox)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")
