@@ -598,9 +598,27 @@ def cmd_artprofile(a):
                     re.search(r"^\s*Turret\s*=\s*(\S+)", body, re.M)),
                 "launchBone": None, "fireFXBone": None, "muzzleFlash": None,
                 "unitCreatePoint": None, "naturalRallyPoint": None,
+                # Death presentation is part of the mesh's contract too: OCL_CrusaderTurret
+                # throws THIS tank's turret, so it only makes sense on this mesh. Taken from
+                # the peer's DEFAULT-death block — the SlowDeathBehavior whose DeathTypes
+                # include ALL — because the common ones in the corpus are toxin/crush variants
+                # that fire only for those damage types.
+                "deathFX": None, "deathOCL": None, "deathFXFinal": None, "deathOCLFinal": None,
                 "kind": "structure" if "STRUCTURE" in (field(lines, "KindOf") or "") else "mobile",
                 "usedBy": [name],
             }
+            for sd in re.finditer(r"Behavior\s*=\s*SlowDeathBehavior(.*?)^\s*End", body, re.S | re.M):
+                blk = sd.group(1)
+                if not re.search(r"DeathTypes\s*=\s*ALL", blk):
+                    continue                                    # a toxin/crush variant, not the default
+                for phase, name in re.findall(r"^\s*FX\s*=\s*(\w+)\s+(\S+)", blk, re.M):
+                    if phase == "INITIAL": entry["deathFX"] = name
+                    if phase == "FINAL": entry["deathFXFinal"] = name
+                for phase, name in re.findall(r"^\s*OCL\s*=\s*(\w+)\s+(\S+)", blk, re.M):
+                    if phase == "MIDPOINT": entry["deathOCL"] = name
+                    if phase == "FINAL": entry["deathOCLFinal"] = name
+                break
+
             for key, dest in (("WeaponLaunchBone", "launchBone"),
                               ("WeaponFireFXBone", "fireFXBone"),
                               ("WeaponMuzzleFlash", "muzzleFlash"),
@@ -656,6 +674,8 @@ def cmd_artprofile(a):
     print(f"  {structures} structures, {len(prof) - structures} mobile")
     print(f"  {turreted} turreted ({withbone_t} naming an art turret bone), "
           f"{withbone} with a launch bone, {withflash} with a muzzle flash")
+    withdeath = sum(1 for v in prof.values() if v.get("deathFX") or v.get("deathFXFinal"))
+    print(f"  {withdeath} carry default-death FX/OCL (explosion, debris, thrown turret)")
     print(f"  {shared} meshes are used by more than one object (profile taken from the first)")
     return 0
 

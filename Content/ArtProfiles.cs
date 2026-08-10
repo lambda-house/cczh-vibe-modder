@@ -38,6 +38,12 @@ public sealed class ArtProfiles
         public string? LaunchBone { get; set; }
         public string? FireFXBone { get; set; }
         public string? MuzzleFlash { get; set; }
+        /// <summary>Default-death presentation, measured from the peer's ALL-deathtype block.
+        /// Mesh-specific by nature: OCL_CrusaderTurret throws THAT tank's turret.</summary>
+        public string? DeathFX { get; set; }
+        public string? DeathOCL { get; set; }
+        public string? DeathFXFinal { get; set; }
+        public string? DeathOCLFinal { get; set; }
         public string? UnitCreatePoint { get; set; }
         public string? NaturalRallyPoint { get; set; }
         public string? Kind { get; set; }
@@ -79,6 +85,10 @@ public sealed class ArtProfiles
                 LaunchBone = S("launchBone"),
                 FireFXBone = S("fireFXBone"),
                 MuzzleFlash = S("muzzleFlash"),
+                DeathFX = S("deathFX"),
+                DeathOCL = S("deathOCL"),
+                DeathFXFinal = S("deathFXFinal"),
+                DeathOCLFinal = S("deathOCLFinal"),
                 UnitCreatePoint = S("unitCreatePoint"),
                 NaturalRallyPoint = S("naturalRallyPoint"),
                 Kind = S("kind"),

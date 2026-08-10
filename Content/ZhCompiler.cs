@@ -528,7 +528,19 @@ public static class ZhCompiler
             {
                 sb.AppendLine("  Behavior = SlowDeathBehavior ModuleTag_SlowDeath");
                 sb.AppendLine("    DeathTypes = ALL -CRUSHED -SPLATTED");
+                sb.AppendLine("    ProbabilityModifier = 50");
                 sb.AppendLine("    DestructionDelay = 500");
+                sb.AppendLine("    DestructionDelayVariance = 100");
+                // Death presentation, adopted with the mesh rather than invented: the FINAL
+                // OCL is often mesh-specific (OCL_CrusaderTurret throws THAT tank's turret),
+                // so guessing one would attach the wrong debris to the wrong hull.
+                if (art.TryGet(model, out var dfx))
+                {
+                    if (dfx.DeathFX is string f0) sb.AppendLine($"    FX = INITIAL {f0}");
+                    if (dfx.DeathOCL is string o0) sb.AppendLine($"    OCL = MIDPOINT {o0}");
+                    if (dfx.DeathFXFinal is string f1) sb.AppendLine($"    FX = FINAL {f1}");
+                    if (dfx.DeathOCLFinal is string o1) sb.AppendLine($"    OCL = FINAL {o1}");
+                }
                 sb.AppendLine("  End");
             }
 
@@ -773,6 +785,25 @@ public static class ZhCompiler
                 cb.AppendLine("  ButtonBorderSystemColor R:207 G:195 B:2 A:255");
                 cb.AppendLine($"  GenBarButtonIn {ui.GenBarIn}");
                 cb.AppendLine($"  GenBarButtonOn {ui.GenBarOn}");
+                // The HUD readouts. These are POSITIONS, and without them the money and power
+                // displays have nowhere to draw — the faction plays with no visible cash at
+                // all, which is not cosmetic. Taken per base side because the borrowed bar art
+                // differs in height between the three, so a shared constant would misplace the
+                // text on two of them.
+                cb.AppendLine($"  MoneyUL X:{ui.MoneyUl}");
+                cb.AppendLine($"  MoneyLR X:{ui.MoneyLr}");
+                cb.AppendLine($"  PowerBarUL X:{ui.PowerUl}");
+                cb.AppendLine($"  PowerBarLR X:{ui.PowerLr}");
+                cb.AppendLine($"  ExpBarForegroundImage {ui.ExpBar}");
+                cb.AppendLine($"  GenArrow {ui.GenArrow}");
+                cb.AppendLine($"  CommandMarkerImage {ui.Marker}");
+                // The bar backdrop itself, or the buttons float over bare terrain.
+                cb.AppendLine("  ImagePart");
+                cb.AppendLine($"    Position X:0 Y:{ui.BarY}");
+                cb.AppendLine($"    Size X:800 Y:{ui.BarH}");
+                cb.AppendLine($"    ImageName {ui.BarImage}");
+                cb.AppendLine("    Layer 4");
+                cb.AppendLine("  End");
                 cb.AppendLine("End").AppendLine();
             }
             Write(r, Path.Combine(ini, "ControlBarScheme", pack + ".ini"), cb);
@@ -931,21 +962,30 @@ public static class ZhCompiler
     private static (string Science, string ScoreScreen, string LoadScreen, string LoadMusic,
                     string ScoreMusic, string Watermark, string Enabled, string SideIcon,
                     string General, string MedRegular, string MedHilite, string MedSelect,
-                    string HudLogo, string GenBarIn, string GenBarOn)
+                    string HudLogo, string GenBarIn, string GenBarOn,
+                    string MoneyUl, string MoneyLr, string PowerUl, string PowerLr,
+                    string ExpBar, string GenArrow, string Marker,
+                    string BarY, string BarH, string BarImage)
         UiChrome(string baseSide) => baseSide switch
     {
         "China" => ("SCIENCE_CHINA", "China_ScoreScreen", "SAFactionLogoPage_China", "Load_China",
                     "Score_China", "WatermarkChina", "SSObserverChina", "GameinfoChina",
                     "China_Logo", "ChinaGeneral_slvr", "ChinaGeneral_blue", "ChinaGeneral_orng",
-                    "SNLogo", "SNBarButtonGen2IN", "SNBarButtonGen2ON"),
+                    "SNLogo", "SNBarButtonGen2IN", "SNBarButtonGen2ON",
+                    "360 Y:437", "439 Y:456", "260 Y:469", "538 Y:475",
+                    "SNExpBar", "CHINALevelUP", "SNEmptyFrame", "414", "184", "InGameUIChinaBase"),
         "GLA" => ("SCIENCE_GLA", "GLA_ScoreScreen", "SAFactionLogoPage_GLA", "Load_GLA",
                   "Score_GLA", "WatermarkGLA", "SSObserverGLA", "GameinfoGLA",
                   "GLA_Logo", "GLAGeneral_slvr", "GLAGeneral_blue", "GLAGeneral_orng",
-                  "SULogo", "SUBarButtonGen2IN", "SUBarButtonGen2ON"),
+                  "SULogo", "SUBarButtonGen2IN", "SUBarButtonGen2ON",
+                  "360 Y:443", "439 Y:462", "259 Y:470", "537 Y:476",
+                  "SUExpBar", "GLALevelUP", "SUEmptyFrame", "399", "200", "InGameUIGLABase"),
         _ => ("SCIENCE_AMERICA", "America_ScoreScreen", "SAFactionLogoPage_US", "Load_USA",
               "Score_USA", "WatermarkUSA", "SSObserverUSA", "GameinfoAMRCA",
               "USA_Logo", "USAGeneral_slvr", "USAGeneral_blue", "USAGeneral_orng",
-              "SALogo", "SABarButtonGen2IN", "SABarButtonGen2ON"),
+              "SALogo", "SABarButtonGen2IN", "SABarButtonGen2ON",
+              "360 Y:438", "439 Y:457", "260 Y:470", "538 Y:476",
+              "SAExpBar", "USLevelUP", "SAEmptyFrame", "408", "191", "InGameUIAmericaBase"),
     };
 
     private static string Sanitize(string s)
