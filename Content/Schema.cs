@@ -520,6 +520,27 @@ public sealed class ZhTargetDto
     public Dictionary<string, string> DrawModules { get; set; } = new();
 
     /// <summary>
+    /// Our unit id -> the adopted model's RIG: "&lt;launchBone&gt;:&lt;muzzleFlashSubObject&gt;".
+    ///
+    /// A borrowed mesh brings bones and sub-objects that have to be DECLARED or the object
+    /// misbehaves in ways that look like content bugs. Adopting AVCrusader without naming its
+    /// muzzle flash sub-object left the flash mesh permanently visible — a tank with a static
+    /// flame welded to its gun — because nothing ever told the engine to hide it. Its firing
+    /// bone is TurretMS and its flash sub-object is TurretFX; other models differ.
+    ///
+    /// Same principle as <see cref="Sides"/> and geometry: adopted art is not free, it comes
+    /// with a contract. Empty means an unturreted, boneless model.
+    /// </summary>
+    public Dictionary<string, string> ArtRig { get; set; } = new();
+
+    /// <summary>
+    /// Unit ids whose adopted model has a TURRET. A turreted mesh needs a Turret block with
+    /// ControlledWeaponSlots or the weapon can never be brought to bear — the unit simply
+    /// never fires, with no error anywhere.
+    /// </summary>
+    public List<string> Turreted { get; set; } = new();
+
+    /// <summary>
     /// Our faction id -> the retail BASE side whose UI chrome it borrows ("USA", "China",
     /// "GLA"). Our faction keeps its OWN Side; only the presentation is inherited.
     ///

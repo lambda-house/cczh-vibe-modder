@@ -146,13 +146,26 @@ one there (rule 3), and touch weapons only alongside an object override (rule 4)
    | `SelectPortrait` / `ButtonImage` | blank tiles in the control bar |
    | `ControlBarScheme` for the Side | faction selectable but has no command bar |
 
-10. **Adopting art means adopting its DIMENSIONS.** "2,928 unreferenced models are free to
-   use" is true for rendering and false for geometry. A structure emitted with an invented
-   22-radius box while borrowing the 53x60 `ABWarFact` mesh created every unit INSIDE the
-   visible building: production completed, the object existed, nothing was on screen.
-   Collision box, `UnitCreatePoint` and `NaturalRallyPoint` must all agree with the model.
-   *Currently every structure gets AmericaWarFactory's dimensions hardcoded — correct for the
-   demo, wrong in general. Geometry belongs in content next to the model reference.*
+10. **ADOPTED ART HAS A SCHEMA.** "2,928 unreferenced models are free to adopt" is measured
+   and true, and it is about RENDERING only. A mesh comes with a contract, and every clause
+   of it fails SILENTLY — the pack lints, compiles, boots 42/42 and plays wrong:
+
+   | Clause | Get it wrong and… |
+   |---|---|
+   | dimensions | units are created INSIDE the building and never seen |
+   | bones (`WeaponLaunchBone`, `WeaponFireFXBone`) | shots come from the wrong place |
+   | sub-objects (`WeaponMuzzleFlash`) | the flash mesh is never hidden — a permanent flame |
+   | turret (`Turret` + `ControlledWeaponSlots`) | the unit never fires, with no error |
+   | `AutoAcquireEnemiesWhenIdle` | the unit watches enemies walk past it |
+
+   All four were hit adopting ONE model, `AVCrusader`. This belongs in "Divergence is the
+   standing risk", not under "art is deferred": art is deferred as *authoring*, but adopting
+   it is a live source of wrong behaviour today.
+
+   *An adopted model therefore needs an ART PROFILE — geometry, bones, sub-objects, turret —
+   and the profile is per-MESH, not per-unit. `zh.artRig` and `zh.turreted` are the stopgap;
+   structure geometry is still hardcoded to AmericaWarFactory's numbers. The real fix is a
+   catalogue of adoptable meshes with measured profiles, which `tools/zhasset` can generate.*
 
 **VALIDATED END TO END, IN A REAL MATCH.** A faction authored here is selectable in the
 skirmish dropdown, has a working command bar, builds a unit authored here, and that unit

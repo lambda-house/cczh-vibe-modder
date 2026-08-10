@@ -58,6 +58,15 @@
     // Adopted art: 2,928 shipped models are referenced by nothing at all and are free to
     // use, so new content is playable immediately with no asset pipeline of our own.
     "models": { "hellhound": "AVCrusader", "hellfire_works": "ABWarFact" },
+
+    // The adopted mesh's rig: "<launchBone>:<muzzleFlashSubObject>". AVCrusader fires from
+    // TurretMS and its flash sub-object is TurretFX. Leave the flash unnamed and it is never
+    // hidden — the tank renders a permanent flame welded to its gun.
+    "artRig":   { "hellhound": "TurretMS:TurretFX" },
+
+    // AVCrusader is a TURRETED mesh. Without a Turret block the weapon can never be brought
+    // to bear and the unit silently never fires.
+    "turreted": ["hellhound"],
     "sides":  { "hellfire": "USA" }
   },
 

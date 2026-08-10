@@ -339,6 +339,17 @@ public static class ZhCompiler
                 // A Locomotor line writes into the object's AIUpdate module data, so the
                 // module must exist or the loader throws.
                 sb.AppendLine("  Behavior = AIUpdateInterface ModuleTag_AI");
+                if (zh.Turreted.Contains(u.Id, StringComparer.Ordinal))
+                {
+                    // A turreted mesh cannot bring its weapon to bear without this, and the
+                    // failure is silent: the unit simply never fires.
+                    sb.AppendLine("    Turret");
+                    sb.AppendLine("      TurretTurnRate = 180");
+                    sb.AppendLine("      ControlledWeaponSlots = PRIMARY");
+                    sb.AppendLine("    End");
+                }
+                // Without this a unit stands and watches enemies walk past it.
+                sb.AppendLine("    AutoAcquireEnemiesWhenIdle = Yes");
                 sb.AppendLine("  End");
                 sb.AppendLine($"  Locomotor = SET_NORMAL {P(u.Id)}Loco");
             }
@@ -480,6 +491,19 @@ public static class ZhCompiler
             sb.AppendLine($"  Draw = {draw} ModuleTag_Draw");
             sb.AppendLine("    DefaultConditionState");
             sb.AppendLine($"      Model = {model}");
+            if (zh.ArtRig.TryGetValue(u.Id, out var rig))
+            {
+                // The adopted mesh's rig. Unnamed, its muzzle-flash sub-object is never
+                // hidden and the unit renders a permanent flame from the barrel.
+                var parts = rig.Split(':');
+                if (parts.Length == 2 && parts[0].Length > 0)
+                {
+                    sb.AppendLine($"      WeaponLaunchBone = PRIMARY {parts[0]}");
+                    sb.AppendLine($"      WeaponFireFXBone = PRIMARY {parts[0]}");
+                }
+                if (parts.Length == 2 && parts[1].Length > 0)
+                    sb.AppendLine($"      WeaponMuzzleFlash = PRIMARY {parts[1]}");
+            }
             sb.AppendLine("    End");
             sb.AppendLine("  End");
 

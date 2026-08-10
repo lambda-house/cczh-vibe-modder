@@ -332,6 +332,8 @@ public sealed class ContentDb
             foreach (var (k, v) in z.Models) acc.Models[k] = v;
             foreach (var (k, v) in z.DrawModules) acc.DrawModules[k] = v;
             foreach (var (k, v) in z.Sides) acc.Sides[k] = v;
+            foreach (var (k, v) in z.ArtRig) acc.ArtRig[k] = v;
+            foreach (var t in z.Turreted) if (!acc.Turreted.Contains(t)) acc.Turreted.Add(t);
             if (z.WorldScale != 16.0) acc.WorldScale = z.WorldScale;
         }
         return acc;
