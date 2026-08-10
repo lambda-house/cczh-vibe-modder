@@ -762,6 +762,48 @@ p=json.load(open('$WOUT/art-profiles.json'))['models']['E2EBOX']
 assert p['majorRadius']=='20.0' and p['height']=='60.0', p
 " || { echo "  authored mesh did not declare its own art profile"; exit 1; }
   echo "  authored geometry reads back correct and declares its own profile"
+
+  # A texture authored from nothing: 18-byte header then BGR triples. Verified by reading the
+  # header back, because a plausible-looking file that the engine rejects is the usual failure.
+  ./tools/zhasset tga --out "$WOUT/grid.tga" --size 64 --cells 4 >/dev/null
+  python3 -c "
+import struct, sys
+d = open('$WOUT/grid.tga','rb').read()
+_,_,dtc,_,_,_,_,_,w,h,bpp,_ = struct.unpack('<BBBHHBHHHHBB', d[:18])
+assert dtc == 2 and bpp == 24 and w == h == 64, (dtc, bpp, w, h)
+assert len(d) - 18 == w*h*3, (len(d)-18, w*h*3)
+" || { echo "  authored TGA header does not describe its own payload"; exit 1; }
+
+  # UV density must be UNIFORM across surfaces. Assigning 0..1 per surface gave a cylinder
+  # side cells 3.1x wider than its cap cells -- visible in game, invisible to every other test
+  # here. Assert the ratio directly from the emitted texcoords.
+  python3 - "$WOUT/cyl.w3d" <<'PY5'
+import struct, sys
+buf = open(sys.argv[1], "rb").read()
+def walk(off, end):
+    while off + 8 <= end:
+        t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF
+        body = off + 8
+        if raw & 0x80000000: yield from walk(body, body + sz)
+        else: yield t, buf[body:body+sz]
+        off = body + sz
+verts = uvs = None
+for t, p in walk(0, len(buf)):
+    if t == 0x0002: verts = [struct.unpack_from("<3f", p, i*12) for i in range(len(p)//12)]
+    if t == 0x004A: uvs = [struct.unpack_from("<2f", p, i*8) for i in range(len(p)//8)]
+# Compare texel density on a side quad against a cap triangle: UV span per world span.
+def density(i, j):
+    du = ((uvs[i][0]-uvs[j][0])**2 + (uvs[i][1]-uvs[j][1])**2) ** 0.5
+    dw = sum((verts[i][k]-verts[j][k])**2 for k in range(3)) ** 0.5
+    return du/dw if dw > 1e-6 else None
+side = density(0, 1)                       # first side quad, around the circumference
+cap = next(d for d in (density(len(verts)-1, len(verts)-2),) if d)
+ratio = max(side, cap) / min(side, cap)
+if ratio > 1.15:
+    print(f"  UV DENSITY UNEVEN: side {side:.4f} vs cap {cap:.4f} per world unit ({ratio:.2f}x)")
+    sys.exit(1)
+print(f"  texel density uniform across surfaces ({ratio:.2f}x side vs cap)")
+PY5
 else
   echo "  (skipped: no local retail install at $W3DBIG)"
 fi

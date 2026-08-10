@@ -201,9 +201,26 @@ are emitted by `rts compile`, not hand-written.
    which differs for anything that is not a box.
    *An authored mesh DECLARES its own art profile as it is written, so the catalogue is
    measured for adopted art and declared for authored art.*
-   *Still not done, and not claimed: skinning (`VERTEX_INFLUENCES` against a `HIERARCHY`) and
-   animation (`ANIMATION_CHANNEL`). So this authors static props and buildings, not characters.
-   Textures are still the template's — UV layout is authored, the surface is not.*
+   **Textures are authored too** (`zhasset tga`): uncompressed 24-bit TGA, an 18-byte header
+   then BGR triples, the one image format writable with no library. Retail is 3,496 `.dds` to
+   50 `.tga`, so DDS is the house format, but TGA ships and is supported and needs no DXT
+   compressor. `--texture` rewrites `TEXTURE_NAME`. A cylinder with authored geometry AND an
+   authored surface renders in-game: **nothing of EA's is left in that object but the material
+   flag words.**
+
+   **UV density must be uniform, and only the render shows it.** Assigning 0..1 per surface
+   gives every face the whole texture regardless of size — a cylinder's side cells came out
+   3.1x wider than its cap cells. Generators now emit UVs in WORLD UNITS (arc length, real
+   edge lengths) normalised by ONE global span, which also keeps every coordinate inside 0..1
+   so no texture wrapping is assumed. Caught by eye from a screenshot, not by any test here;
+   e2e now asserts the ratio from the emitted texcoords.
+   *A grid texture rather than a flat colour was the reason it was visible at all — a solid
+   colour proves the file loads and hides everything about the mapping.*
+
+   *Still not done, and not claimed: SMOOTH NORMALS (we emit per-face normals, correct for a
+   box and wrong for a cylinder — the render is visibly faceted), skinning
+   (`VERTEX_INFLUENCES` against a `HIERARCHY`) and animation (`ANIMATION_CHANNEL`). So this
+   authors static, flat-shaded props and buildings, not characters.*
 
 ## Build / verify
 

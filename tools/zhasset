@@ -742,7 +742,10 @@ def _shape_box(sx, sy, sz, segs):
     v, n, uv, t = [], [], [], []
     for fi, (quad, nm) in enumerate(faces):
         b = fi * 4
-        v += quad; n += [nm] * 4; uv += [(0,0),(1,0),(1,1),(0,1)]
+        v += quad; n += [nm] * 4
+        # Two in-plane axes of this face, in world units.
+        ax = [k for k in range(3) if abs(nm[k]) < 0.5]
+        uv += [(q[ax[0]], q[ax[1]]) for q in quad]
         t += [(b, b+1, b+2), (b, b+2, b+3)]
     return v, n, uv, t
 
@@ -764,18 +767,22 @@ def _shape_cylinder(sx, sy, sz, segs):
         mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
         ln = math.hypot(mx, my) or 1.0
         n += [(mx / ln, my / ln, 0.0)] * 4
-        u0, u1 = i / segs, (i + 1) / segs
-        uv += [(u0, 0), (u1, 0), (u1, 1), (u0, 1)]
+        # World-space arc length, not the parametric 0..1. Normalising per-surface gives
+        # every face the whole texture regardless of its size, which is why a 251-unit
+        # circumference and an 80-unit cap ended up with cells 3x different in world scale.
+        arc = 2 * math.pi * ((rx + ry) / 2.0)
+        u0, u1 = arc * i / segs, arc * (i + 1) / segs
+        uv += [(u0, 0.0), (u1, 0.0), (u1, h), (u0, h)]
         t += [(b, b+1, b+2), (b, b+2, b+3)]
     # Caps: one fan vertex per ring vertex, kept unshared so normals stay flat.
     for z, nz, wind in ((0.0, (0,0,-1), False), (h, (0,0,1), True)):
-        c = len(v); v.append((0.0, 0.0, z)); n.append(nz); uv.append((0.5, 0.5))
+        c = len(v); v.append((0.0, 0.0, z)); n.append(nz); uv.append((0.0, 0.0))
         ring = []
         for i in range(segs):
             a = 2 * math.pi * i / segs
             ring.append(len(v))
             v.append((rx * math.cos(a), ry * math.sin(a), z)); n.append(nz)
-            uv.append((0.5 + 0.5 * math.cos(a), 0.5 + 0.5 * math.sin(a)))
+            uv.append((rx * math.cos(a), ry * math.sin(a)))
         for i in range(segs):
             i0, i1 = ring[i], ring[(i + 1) % segs]
             t.append((c, i0, i1) if wind else (c, i1, i0))
@@ -798,20 +805,64 @@ def _shape_pyramid(sx, sy, sz, segs):
         cx, cy, cz = uy*wz - uz*wy, uz*wx - ux*wz, ux*wy - uy*wx
         ln = math.sqrt(cx*cx + cy*cy + cz*cz) or 1.0
         n += [(cx/ln, cy/ln, cz/ln)] * 3
-        uv += [(0,0),(1,0),(0.5,1)]
+        import math as _m
+        base_len = _m.dist(p0, p1)
+        slant = _m.dist(p0, ap)
+        uv += [(0.0, 0.0), (base_len, 0.0), (base_len / 2.0, slant)]
         t.append((b, b+1, b+2))
-    c = len(v); v.append((0.0,0.0,0.0)); n.append((0,0,-1)); uv.append((0.5,0.5))
+    c = len(v); v.append((0.0,0.0,0.0)); n.append((0,0,-1)); uv.append((0.0, 0.0))
     ring = []
     for i in range(segs):
         a = 2 * math.pi * i / segs
         ring.append(len(v)); v.append((rx*math.cos(a), ry*math.sin(a), 0.0))
-        n.append((0,0,-1)); uv.append((0.5+0.5*math.cos(a), 0.5+0.5*math.sin(a)))
+        n.append((0,0,-1)); uv.append((rx*math.cos(a), ry*math.sin(a)))
     for i in range(segs):
         t.append((c, ring[(i+1) % segs], ring[i]))
     return v, n, uv, t
 
 
 SHAPES = {"box": _shape_box, "cylinder": _shape_cylinder, "pyramid": _shape_pyramid}
+
+
+def cmd_tga(a):
+    """Author a texture. Uncompressed 24-bit TGA, which is the one image format here that can
+    be written with no library at all: an 18-byte header then BGR triples, bottom-up.
+
+    Retail is 3,496 .dds against 50 .tga, so .dds is the house format — but .tga is shipped and
+    supported, and it is the format a from-scratch pipeline can emit today without pulling in a
+    DXT compressor. The grid pattern is deliberate: a flat colour would prove the file loads,
+    while a grid also proves the UV layout the mesh writer generates is CORRECT, because wrong
+    UVs show up as smeared or repeated cells rather than squares.
+    """
+    w = h = a.size
+    cell = max(1, w // a.cells)
+    px = bytearray()
+    for y in range(h):                                  # bottom-up, per the TGA descriptor
+        for x in range(w):
+            edge = x < 2 or y < 2 or x >= w - 2 or y >= h - 2
+            checker = ((x // cell) + (y // cell)) % 2 == 0
+            if edge:
+                r, g, b = 255, 96, 0                    # orange border marks the UV extent
+            elif checker:
+                r, g, b = a.rgb
+            else:
+                r, g, b = (int(c * 0.45) for c in a.rgb)
+            px += bytes((b, g, r))                      # TGA is BGR
+
+    hdr = struct.pack("<BBBHHBHHHHBB",
+                      0,      # id length
+                      0,      # no colour map
+                      2,      # uncompressed true-colour
+                      0, 0, 0,
+                      0, 0,   # origin
+                      w, h,
+                      24,     # bits per pixel
+                      0)      # descriptor: origin bottom-left
+    open(a.out, "wb").write(hdr + bytes(px))
+    print(f"authored {a.out}  {18 + len(px):,} bytes")
+    print(f"  {w}x{h} 24-bit uncompressed, {a.cells}x{a.cells} grid, rgb{tuple(a.rgb)}, "
+          f"orange border marking the UV extent")
+    return 0
 
 
 def cmd_w3dbox(a):
@@ -832,6 +883,15 @@ def cmd_w3dbox(a):
 
     sx, sy, sz = a.size
     verts, norms, uvs, tris = SHAPES[a.shape](sx, sy, sz, a.segments)
+
+    # UVs come out of the generators in WORLD UNITS. Normalise by one global span so texel
+    # density is the same everywhere: dividing each surface by its own size is what made the
+    # cylinder's side cells 3.1x wider than its cap cells. One divisor keeps the ratio honest
+    # and keeps every coordinate inside 0..1, so no texture wrapping is required -- the
+    # template's sampler may well clamp, and relying on wrap would be an unverified assumption.
+    span = max(max(abs(u) for u, _ in uvs), max(abs(t) for _, t in uvs)) or 1.0
+    lo_u = min(u for u, _ in uvs); lo_v = min(t for _, t in uvs)
+    uvs = [((u - lo_u) / span, (t - lo_v) / span) for u, t in uvs]
 
     vbuf = b"".join(struct.pack("<3f", *v) for v in verts)
     nbuf = b"".join(struct.pack("<3f", *n) for n in norms)
@@ -867,6 +927,11 @@ def cmd_w3dbox(a):
                 struct.pack_into("<3f", h, 100, *ctr)             # SphCenter
                 struct.pack_into("<f",  h, 112, rad)              # SphRadius
                 payload = bytes(h)
+            elif ctype == 0x0032 and a.texture:                   # TEXTURE_NAME
+                # Null-terminated; the writer recomputes chunk sizes, so a different-length
+                # name is fine. The engine resolves the extension itself -- retail meshes name
+                # ".tga" for files that ship as ".dds".
+                payload = a.texture.encode("latin-1") + b"\0"
             elif ctype == 0x0002: payload = vbuf                  # VERTICES
             elif ctype == 0x0003: payload = nbuf                  # VERTEX_NORMALS
             elif ctype == 0x0020: payload = fbuf                  # TRIANGLES
@@ -1002,9 +1067,16 @@ def main():
     wb.add_argument("--template", required=True); wb.add_argument("--out", required=True)
     wb.add_argument("--name"); wb.add_argument("--size", type=float, nargs=3, default=[20, 20, 20])
     wb.add_argument("--out-dir", dest="out_dir", help="where to write art-profiles.json")
+    wb.add_argument("--texture", help="replace TEXTURE_NAME, e.g. RTSGRID.tga")
     wb.add_argument("--shape", choices=sorted(SHAPES), default="box")
     wb.add_argument("--segments", type=int, default=12, help="radial segments for cylinder/pyramid")
     wb.set_defaults(fn=cmd_w3dbox)
+
+    tg = sub.add_parser("tga", help="author an uncompressed TGA texture from scratch")
+    tg.add_argument("--out", required=True); tg.add_argument("--size", type=int, default=128)
+    tg.add_argument("--cells", type=int, default=8)
+    tg.add_argument("--rgb", type=int, nargs=3, default=[40, 170, 220])
+    tg.set_defaults(fn=cmd_tga)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")
