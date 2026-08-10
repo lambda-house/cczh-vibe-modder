@@ -403,7 +403,12 @@ public sealed class ContentDb
         // --- Weapons ------------------------------------------------------------
         var weaponIdx = new Dictionary<string, int>();
         var weapons = new List<WeaponDef>();
-        foreach (var (id, w) in dto.Weapons)
+        // ORDINAL, like everything else. Unsorted, the weapon table's order came from JSON
+        // DOCUMENT ORDER, so moving two weapons in a file renumbered every WeaponIdx after
+        // them — the same class of bug as the old ordinal prototype identity, and the reason
+        // units are sorted a few lines down. Sim state never folds a weapon index, so this
+        // moves no replay hash; it makes the table content-derived instead of file-derived.
+        foreach (var (id, w) in dto.Weapons.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             if (!dtIdx.TryGetValue(w.DamageType, out int d))
             {
@@ -459,7 +464,7 @@ public sealed class ContentDb
         // --- Veterancy tracks ---------------------------------------------------
         var trackIdx = new Dictionary<string, int>();
         var tracks = new List<VetTrackDef>();
-        foreach (var (id, t) in dto.VeterancyTracks)
+        foreach (var (id, t) in dto.VeterancyTracks.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             if (t.Thresholds.Count != t.Ranks.Count)
                 errors.Add($"veterancy '{id}': thresholds ({t.Thresholds.Count}) and ranks ({t.Ranks.Count}) length mismatch");
@@ -760,7 +765,9 @@ public sealed class ContentDb
 
         // Rules likewise: an effect may spawn a prototype declared later in the pack, and a
         // wreck spawning a wreck is a legitimate (bounded) cascade.
-        foreach (var (id, u) in dto.Units)
+        // Sorted so lint MESSAGES come out in a stable order too: a report whose lines shuffle
+        // between runs cannot be diffed, and diffing reports is how a pack gets reviewed.
+        foreach (var (id, u) in dto.Units.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             if (u.Rules is null || u.Rules.Count == 0) continue;
             if (!db.UnitIndexById.TryGetValue(id, out int owner)) continue;

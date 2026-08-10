@@ -642,6 +642,47 @@ else
 fi
 
 echo
+echo "== regression: FILE ORDER must not change resolved content =="
+# Companion to the prototype-renumbering guard, generative for the same reason. The weapon and
+# veterancy tables were built by iterating a JSON dictionary, so their order came from DOCUMENT
+# ORDER: moving two weapons in a file renumbered every index after them.
+#
+# The FIRST version of this check compared duel hashes and passed even with the bug present —
+# sim state never folds a weapon index, so duels cannot see it. That is the same blind spot
+# that let ordinal prototype identity survive. The observable that DOES see it is the compiled
+# output, so compare that instead.
+#
+# Note contentHash legitimately DIFFERS between the two: it folds the pack's bytes, and the
+# reversed file genuinely is different bytes. Provenance tracks the file; resolution must not.
+ROUT=$(mktemp -d); trap 'rm -rf "$ROUT"' EXIT
+python3 - "$ROUT" <<'PY2'
+import json, re, sys
+src = re.sub(r'^\s*//.*$', '', open('content/game.json').read(), flags=re.M)
+d = json.loads(src)
+# Reverse the insertion order of every keyed table: semantically identical, textually as
+# different as it can be.
+for key in ("weapons", "veterancyTracks", "units", "factions"):
+    if key in d and isinstance(d[key], dict):
+        d[key] = {k: d[key][k] for k in reversed(list(d[key]))}
+json.dump(d, open(f"{sys.argv[1]}/rev.json", "w"))
+PY2
+rts compile --target zh --out "$ROUT/a" >/dev/null
+rts compile --target zh --out "$ROUT/b" --content "$ROUT/rev.json" >/dev/null
+# Compare every emitted type, ignoring only the pack-name prefix the two runs share anyway.
+for f in Weapon Armor Locomotor Object CommandButton CommandSet PlayerTemplate; do
+  fa=$(ls "$ROUT/a/Data/INI/$f/"*.ini 2>/dev/null | head -1)
+  fb=$(ls "$ROUT/b/Data/INI/$f/"*.ini 2>/dev/null | head -1)
+  [ -n "$fa" ] && [ -n "$fb" ] || continue
+  # Strip comment lines: the banner carries contentHash, which SHOULD differ.
+  if ! diff -q <(tr -d '\r' < "$fa" | grep -v '^;') <(tr -d '\r' < "$fb" | grep -v '^;') >/dev/null; then
+    echo "  FILE ORDER LEAKED into $f: reordering the pack changed the emitted output"
+    diff <(tr -d '\r' < "$fa" | grep -v '^;') <(tr -d '\r' < "$fb" | grep -v '^;') | head -6
+    exit 1
+  fi
+done
+echo "  reversing every keyed table in the pack emits byte-identical output"
+
+echo
 echo "== gate 19/19: MCP server — the agent-facing seam =="
 # The whole project points at this: an agent authors a pack, is told exactly what is wrong,
 # measures it, and compiles it, with no human in the loop. JSON-RPC 2.0 over newline-delimited
