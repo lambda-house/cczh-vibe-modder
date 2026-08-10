@@ -474,6 +474,38 @@ public sealed class ZhTargetDto
 
     /// <summary>Draw module class per unit id; defaults to W3DModelDraw, which suits anything.</summary>
     public Dictionary<string, string> DrawModules { get; set; } = new();
+
+    /// <summary>
+    /// Our faction id -> the retail BASE side whose UI chrome it borrows ("USA", "China",
+    /// "GLA"). Our faction keeps its OWN Side; only the presentation is inherited.
+    ///
+    /// A playable PlayerTemplate is mostly UI: score screen, load screen, watermark, side
+    /// icon, medallions, tooltip. None of it is simulated and all of it is mandatory for the
+    /// faction to be selectable — the "emittable is not simulated" axis in its purest form.
+    /// We REFERENCE retail's asset names, which is what every mod does; we copy nothing.
+    /// </summary>
+    public Dictionary<string, string> Sides { get; set; } = new();
+
+    // There is deliberately NO "attach to an existing menu" field, and the reason is
+    // measured rather than assumed.
+    //
+    // EA's source reads as though it would work: with INI_LOAD_OVERWRITE, both
+    // ThingFactory::parseObjectDefinition and ControlBar::parseCommandSetDefinition find the
+    // existing block and call initFromINI, which writes only the fields present — a partial
+    // patch. Adding one free slot to AmericaWarFactoryCommandSet should have added one button
+    // and left retail's twelve alone.
+    //
+    // On the runtime we actually target it is a FATAL load error. Both functions guard the
+    // duplicate with DEBUG_CRASH, and this build has it compiled in: the load throws, the
+    // engine aborts at 29 of 42 subsystems, and the game never reaches its main loop. Proven
+    // with a minimal probe that redeclared the set using nothing but a RETAIL button, so no
+    // name of ours was involved.
+    //
+    // The consequence is architectural, not cosmetic: emission is strictly ADD-NEW-NAMES.
+    // A pack cannot extend a retail faction's menu, so a pack is a NEW FACTION rather than an
+    // addition to an existing one. The usual mod workaround — ship a merged CommandSet.ini
+    // that shadows retail's — is closed to us on legal grounds, since it means redistributing
+    // their content.
 }
 
 public sealed class LintConfigDto

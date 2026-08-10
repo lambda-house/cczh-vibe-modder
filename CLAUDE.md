@@ -76,6 +76,60 @@ the corpus repeatedly contradicts intuition (terrain is gameplay-dead; bonuses a
 additive-in-excess, not multiplicative; the generals are forks, not diffs; and art is
 110:1 of the bytes but 0% of the simulation).
 
+## Modding the retail game: rules measured against the RUNNING engine
+
+Emitting new content and MODIFYING retail content are different problems with different
+mechanics. Each rule below cost a crash, a hang or a silent misfire to establish, and several
+contradict what EA's source implies — the GPL tree is schema authority, the running GeneralsX
+build is loading authority, and **they diverge**.
+
+1. **`Data/INI/**` is ADD-NEW-NAMES ONLY.** Redeclaring an existing block there is a fatal
+   load error: the engine aborts at 29 of 42 subsystems and never reaches its main loop.
+   EA's source reads as though `INI_LOAD_OVERWRITE` would patch in place — both
+   `ThingFactory::parseObjectDefinition` and `ControlBar::parseCommandSetDefinition` find the
+   existing block and call `initFromINI` — but both guard the duplicate with `DEBUG_CRASH`,
+   which is compiled into this build. Proven with a probe that redeclared
+   `AmericaWarFactoryCommandSet` using nothing but a RETAIL button.
+   *Consequence: a pack cannot extend a retail faction's menu. A pack is a NEW FACTION.*
+2. **`<mapdir>/map.ini` is the ONLY override channel.** `GameLogic::loadMapINI` is the sole
+   caller using `INI_LOAD_CREATE_OVERRIDES`, and it runs from `startNewGame` — so overrides
+   reload on every match start, and iterating costs a match restart, not a game restart.
+3. **Never declare a NEW name in `map.ini`.** It gets marked as an override, and
+   `LocomotorStore::reset()` (Locomotor.cpp:573) then calls `m_locomotorTemplates.erase(it)`
+   WITHOUT reassigning the iterator — the loop never advances and the game hangs on match
+   teardown. `Science.cpp` writes the same loop correctly. Confirmed by sampling a beachballed
+   process: 448 of 813 samples in that function.
+4. **Never patch a shared leaf in place; it does not merely fail, it BREAKS the leaf.**
+   `WeaponStore::newOverride` copies the parent then chains new->old via
+   `friend_setNextTemplate`, while the store's lookup still returns the ORIGINAL — the override
+   is reachable by nothing and the weapon goes inert. Overriding a Ranger's rifle damage took
+   it from 5 to ZERO. `ThingFactory::newOverride` chains the other way
+   (`child->setNextOverride`), which is why OBJECT overrides work.
+   **The pattern that works: new leaf in `Data/INI`, then override the Object to point at it.**
+   Proven for both weapons and locomotors.
+5. **A `WeaponSet`/`ArmorSet` inside an override is TOTAL, not additive.**
+   `ThingFactory::newOverride` calls `setCopiedFromDefault()`, so the first set parsed clears
+   every inherited one. Restate all of them or none.
+6. **Modules: `AddModule` to add, `ReplaceModule` to replace** — same module type, and a NEW
+   UNIQUE tag. Syntax verbatim from their shipped `Maps/MD_USA01_CINE/map.ini`.
+7. **`GameData` is NOT reachable from `Data/INI` on this build.** A file under
+   `Data/INI/GameData/` parses cleanly and changes nothing — probed with
+   `DefaultStartingCash`, which stayed at retail 10000. That directory scan is a GeneralsX
+   addition; EA's `initSubsystem` passes only `Default/GameData.ini` and `GameData.ini` with
+   no dirpath. **Never conclude a load path works because the file parsed without error** —
+   carry a witness field whose effect is unmissable.
+
+Retail's own 41 `map.ini` files corroborate the shape: `Object` 272, `Buildable` 64,
+`CommandSet` 27, `Science` 26, `Locomotor` 18, `Upgrade` 14, `Weapon` 6, `SpecialPower` 4,
+`ParticleSystem` 4 — and **zero** `GameData`. They override locomotors but never declare a new
+one there (rule 3), and touch weapons only alongside an object override (rule 4).
+
+**Validated end to end, in a real match:** a new faction is selectable in the skirmish
+dropdown; a retail unit's damage, locomotion, scale and MODEL are all modifiable. Open:
+`ControlBarScheme` is keyed by Side and retail ships only `America8x6`/`China8x6`/`GLA8x6`/
+`Observer8x6`, so a new faction has no command bar; and camera zoom is unresolved pending
+rule 7's retest through `map.ini`.
+
 ## Build / verify
 
 - Build: `dotnet build -c Release` (needs .NET 8 SDK; zero NuGet deps by design)

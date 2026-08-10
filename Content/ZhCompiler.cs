@@ -511,10 +511,17 @@ public static class ZhCompiler
         {
             var f = db.Factions[fid];
             if (!f.IsStartable) { r.Warnings.Add($"faction '{fid}' has no startingBuilding; emitted as unplayable"); }
+            bool playable = f.IsStartable;
+
+            // Which retail side's chrome this faction borrows. UI only — none of it is
+            // simulated, and all of it is required for the faction to be SELECTABLE.
+            string baseSide = zh.Sides.TryGetValue(fid, out var bs) ? bs : "USA";
+            var ui = UiChrome(baseSide);
+
             sb.AppendLine($"PlayerTemplate Faction{Sanitize(fid)}");
             sb.AppendLine($"  Side = {Sanitize(fid)}");
-            sb.AppendLine("  BaseSide = America");
-            sb.AppendLine($"  PlayableSide = {(f.IsStartable ? "Yes" : "No")}");
+            sb.AppendLine($"  BaseSide = {baseSide}");
+            sb.AppendLine($"  PlayableSide = {(playable ? "Yes" : "No")}");
             sb.AppendLine($"  DisplayName = INI:Faction{Sanitize(fid)}");
             sb.AppendLine($"  StartMoney = {(f.StartMoney >= 0 ? f.StartMoney : 0)}");
             sb.AppendLine("  PreferredColor = R:0 G:0 B:255");
@@ -524,7 +531,22 @@ public static class ZhCompiler
                 sb.AppendLine($"  StartingUnit{i} = {P(db.Units[f.StartingUnitIdx[i]].Id)}");
             if (f.StartingUnitIdx.Length > MaxStartingUnits)
                 r.Warnings.Add($"faction '{fid}' has {f.StartingUnitIdx.Length} starting units; their cap is {MaxStartingUnits}");
-            sb.AppendLine("  IntrinsicSciences = SCIENCE_AMERICA");
+            sb.AppendLine($"  IntrinsicSciences = {ui.Science}");
+            // Presentation, borrowed by NAME from assets the player already has installed.
+            // A playable faction without these is not merely ugly — several are read
+            // unconditionally by the skirmish setup screen.
+            sb.AppendLine($"  ScoreScreenImage = {ui.ScoreScreen}");
+            sb.AppendLine($"  LoadScreenImage = {ui.LoadScreen}");
+            sb.AppendLine($"  LoadScreenMusic = {ui.LoadMusic}");
+            sb.AppendLine($"  ScoreScreenMusic = {ui.ScoreMusic}");
+            sb.AppendLine($"  FlagWaterMark = {ui.Watermark}");
+            sb.AppendLine($"  EnabledImage = {ui.Enabled}");
+            sb.AppendLine("  BeaconName = MultiplayerBeacon");
+            sb.AppendLine($"  SideIconImage = {ui.SideIcon}");
+            sb.AppendLine($"  GeneralImage = {ui.General}");
+            sb.AppendLine($"  MedallionRegular = {ui.MedRegular}");
+            sb.AppendLine($"  MedallionHilite = {ui.MedHilite}");
+            sb.AppendLine($"  MedallionSelect = {ui.MedSelect}");
             sb.AppendLine("End").AppendLine();
             r.Templates++;
         }
@@ -571,6 +593,27 @@ public static class ZhCompiler
         File.WriteAllText(path, sb.ToString().ReplaceLineEndings("\r\n"));
         r.Files.Add(path);
     }
+
+    /// <summary>
+    /// Presentation asset names for a retail base side. Every value is an identifier that
+    /// already exists in the installed game — we point at their art, we do not ship it.
+    /// Copied from the shipping PlayerTemplate blocks, so each one is known to resolve.
+    /// </summary>
+    private static (string Science, string ScoreScreen, string LoadScreen, string LoadMusic,
+                    string ScoreMusic, string Watermark, string Enabled, string SideIcon,
+                    string General, string MedRegular, string MedHilite, string MedSelect)
+        UiChrome(string baseSide) => baseSide switch
+    {
+        "China" => ("SCIENCE_CHINA", "China_ScoreScreen", "SAFactionLogoPage_China", "Load_China",
+                    "Score_China", "WatermarkChina", "SSObserverChina", "GameinfoChina",
+                    "China_Logo", "ChinaGeneral_slvr", "ChinaGeneral_blue", "ChinaGeneral_orng"),
+        "GLA" => ("SCIENCE_GLA", "GLA_ScoreScreen", "SAFactionLogoPage_GLA", "Load_GLA",
+                  "Score_GLA", "WatermarkGLA", "SSObserverGLA", "GameinfoGLA",
+                  "GLA_Logo", "GLAGeneral_slvr", "GLAGeneral_blue", "GLAGeneral_orng"),
+        _ => ("SCIENCE_AMERICA", "America_ScoreScreen", "SAFactionLogoPage_US", "Load_USA",
+              "Score_USA", "WatermarkUSA", "SSObserverUSA", "GameinfoAMRCA",
+              "USA_Logo", "USAGeneral_slvr", "USAGeneral_blue", "USAGeneral_orng"),
+    };
 
     private static string Sanitize(string s)
     {

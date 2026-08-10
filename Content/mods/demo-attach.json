@@ -1,0 +1,74 @@
+{
+  // VERTICAL SLICE: author a unit here, measure it here, then BUILD IT IN A REAL SKIRMISH.
+  //
+  //   rts duel --a hellhound --b crusader --n 40 --seed 42 --mod content/mods/demo-attach.json
+  //   rts compile --target zh --out /tmp/demo --mod content/mods/demo-attach.json
+  //   rsync -a /tmp/demo/ ~/GeneralsX/GeneralsZH/ && cd ~/GeneralsX/GeneralsZH && ./run.sh -win
+  //
+  // Everything before this proved the engine PARSED our files. Parsing is not playing.
+  //
+  // The pack is a NEW FACTION rather than an addition to America, and that is forced, not
+  // chosen: on this runtime, redeclaring any existing INI block is a FATAL load error. Both
+  // ThingFactory::parseObjectDefinition and ControlBar::parseCommandSetDefinition guard the
+  // duplicate with DEBUG_CRASH, which is compiled in here — the engine aborts at 29 of 42
+  // subsystems. Proven with a probe that redeclared AmericaWarFactoryCommandSet using only a
+  // RETAIL button, so nothing of ours was involved. Emission is strictly add-new-names.
+  //
+  // `zh.sides` therefore means "whose UI chrome do we borrow", not "whose faction do we join":
+  // the faction keeps its own Side and inherits USA's score screen, watermark and medallions
+  // by NAME from assets already installed. We reference their art; we ship none of it.
+  "meta": { "name": "demo", "version": 1 },
+
+  "weapons": {
+    // Deliberately distinctive so the unit is recognisable in play rather than merely
+    // present: short reach, very fast, and it burns infantry out of buildings.
+    "hellhound_flamer": {
+      "damageType": "hmg", "damage": 25, "range": 5.0, "cooldownTicks": 6,
+      "spread": 0.05, "clearsGarrison": true
+    }
+  },
+
+  "units": {
+    "hellhound": {
+      "faction": "hellfire", "cost": 800, "buildSeconds": 10,
+      "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],
+      "prerequisites": ["hellfire_works"],
+      "components": {
+        "Health": { "max": 420, "armorClass": "light_vehicle" },
+        "Mobile": { "speed": 6.5 },
+        "WeaponBearer": { "weapon": "hellhound_flamer" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    },
+
+    // The factory. A structure is a unit with speed 0 and role flags — their model exactly.
+    // FS_FACTORY is what gives it a build menu, and the menu is what makes the unit reachable.
+    "hellfire_works": {
+      "faction": "hellfire", "cost": 2000, "buildSeconds": 20,
+      "kindOf": ["STRUCTURE", "FS_FACTORY", "SELECTABLE", "IMMOBILE", "MP_COUNT_FOR_VICTORY"],
+      "buildCompletion": "PLACED_BY_PLAYER",
+      "components": {
+        "Health": { "max": 4000, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 0 },
+        "WeaponBearer": { "weapon": "hellhound_flamer" }
+      }
+    }
+  },
+
+  "zh": {
+    // Adopted art: 2,928 shipped models are referenced by nothing at all and are free to
+    // use, so new content is playable immediately with no asset pipeline of our own.
+    "models": { "hellhound": "NVDragon", "hellfire_works": "ABWarFact" },
+    "sides":  { "hellfire": "USA" }
+  },
+
+  "factions": {
+    // Startable: it owns a producer at t=0, so the player has something to build FROM.
+    "hellfire": {
+      "units": ["hellhound", "hellfire_works"],
+      "startingBuilding": "hellfire_works",
+      "startingUnits": ["hellhound"],
+      "startMoney": 10000
+    }
+  }
+}

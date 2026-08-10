@@ -313,6 +313,7 @@ public sealed class ContentDb
             foreach (var (k, v) in z.DamageTypes) acc.DamageTypes[k] = v;
             foreach (var (k, v) in z.Models) acc.Models[k] = v;
             foreach (var (k, v) in z.DrawModules) acc.DrawModules[k] = v;
+            foreach (var (k, v) in z.Sides) acc.Sides[k] = v;
             if (z.WorldScale != 16.0) acc.WorldScale = z.WorldScale;
         }
         return acc;
