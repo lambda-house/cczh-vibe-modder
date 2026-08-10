@@ -634,6 +634,98 @@ def cmd_artprofile(a):
     return 0
 
 
+# ---------------------------------------------------------------- W3D (mesh/skeleton/anim)
+# Format is IFF-style chunks: uint32 type, uint32 size whose HIGH BIT means "contains
+# subchunks". The authoritative taxonomy is EA's own GPL header,
+# Generals/Code/Tools/WW3D/pluglib/w3d_file.h -- 69 chunk ids with their structs. That header
+# is engine SOURCE, so it is readable, re-implementable, and the reason a from-scratch art
+# pipeline is a real option rather than reverse engineering.
+W3D_CHUNKS = {
+    0x0000: "MESH", 0x0001: "MESH_HEADER", 0x0002: "VERTICES", 0x0003: "VERTEX_NORMALS",
+    0x000C: "MESH_USER_TEXT", 0x000E: "VERTEX_INFLUENCES", 0x001F: "MESH_HEADER3",
+    0x0020: "TRIANGLES",
+    0x0022: "VERTEX_SHADE_INDICES", 0x0023: "PRELIT_UNLIT", 0x0024: "PRELIT_VERTEX",
+    0x0028: "MATERIAL_INFO", 0x0029: "SHADERS", 0x002A: "VERTEX_MATERIALS",
+    0x002B: "VERTEX_MATERIAL", 0x002C: "VERTEX_MATERIAL_NAME", 0x002D: "VERTEX_MATERIAL_INFO",
+    0x0030: "TEXTURES", 0x0031: "TEXTURE", 0x0032: "TEXTURE_NAME", 0x0033: "TEXTURE_INFO",
+    0x0038: "MATERIAL_PASS", 0x0039: "VERTEX_MATERIAL_IDS", 0x003A: "SHADER_IDS",
+    0x003B: "DCG", 0x003C: "DIG", 0x003E: "SCG", 0x0048: "TEXTURE_STAGE",
+    0x0049: "TEXTURE_IDS", 0x004A: "STAGE_TEXCOORDS", 0x004B: "PER_FACE_TEXCOORD_IDS",
+    0x0100: "HIERARCHY", 0x0101: "HIERARCHY_HEADER", 0x0102: "PIVOTS", 0x0103: "PIVOT_FIXUPS",
+    0x0200: "ANIMATION", 0x0201: "ANIMATION_HEADER", 0x0202: "ANIMATION_CHANNEL",
+    0x0203: "BIT_CHANNEL", 0x0280: "COMPRESSED_ANIMATION",
+    0x0281: "COMPRESSED_ANIMATION_HEADER", 0x0282: "COMPRESSED_ANIMATION_CHANNEL",
+    0x0300: "HMODEL", 0x0301: "HMODEL_HEADER", 0x0700: "HLOD", 0x0701: "HLOD_HEADER",
+    0x0702: "HLOD_LOD_ARRAY", 0x0703: "HLOD_SUB_OBJECT_ARRAY_HEADER",
+    0x0704: "HLOD_SUB_OBJECT", 0x0740: "BOX", 0x0750: "AGGREGATE",
+}
+
+
+def w3d_walk(buf, off=0, end=None, depth=0, acc=None):
+    """Yield (depth, name, type, size, payload) for every chunk, recursing into containers."""
+    end = len(buf) if end is None else end
+    while off + 8 <= end:
+        ctype, raw = struct.unpack_from("<II", buf, off)
+        size = raw & 0x7FFFFFFF
+        has_sub = bool(raw & 0x80000000)
+        body = off + 8
+        name = W3D_CHUNKS.get(ctype, f"0x{ctype:04X}")
+        yield depth, name, ctype, size, buf[body:body + size]
+        if has_sub:
+            yield from w3d_walk(buf, body, body + size, depth + 1, acc)
+        off = body + size
+
+
+def cmd_w3d(a):
+    """Explain one .w3d: what a model IS, in chunks, so it can be re-authored not just adopted.
+
+    Answers the practical question directly — mesh, motion and textures are three SEPARATE
+    concerns in three chunk families, and a re-model has to satisfy all three:
+      geometry   VERTICES / VERTEX_NORMALS / TRIANGLES / TEXCOORDS
+      skinning   VERTEX_INFLUENCES (vertex -> bone), against a HIERARCHY in a _SKL file
+      motion     ANIMATION / COMPRESSED_ANIMATION channels keyed per pivot
+      surface    TEXTURES -> TEXTURE_NAME, a plain .dds/.tga filename resolved at load
+      assembly   HLOD ties a mesh to its skeleton and names its SUB_OBJECTs
+    """
+    buf = open(a.file, "rb").read()
+    counts, textures, subobjs, bones, verts, tris, anim = Counter(), [], [], 0, 0, 0, {}
+    for depth, name, ctype, size, payload in w3d_walk(buf):
+        counts[name] += 1
+        if a.verbose:
+            print(f"{'  ' * depth}{name:34} {size:>8,} bytes")
+        if name == "TEXTURE_NAME":
+            textures.append(payload.split(b"\0")[0].decode("latin-1"))
+        elif name == "VERTICES":
+            verts += size // 12                                    # 3 floats
+        elif name == "TRIANGLES":
+            tris += size // 32                                     # W3dTriStruct
+        elif name == "HIERARCHY_HEADER":
+            # name[16], numPivots, center -- pivots are the BONES a skin binds to.
+            bones = struct.unpack_from("<I", payload, 4 + 16)[0]
+        elif name == "HLOD_SUB_OBJECT":
+            subobjs.append(payload[4:].split(b"\0")[0].decode("latin-1"))
+        elif name == "ANIMATION_HEADER":
+            anim = {"name": payload[4:20].split(b"\0")[0].decode("latin-1"),
+                    "frames": struct.unpack_from("<I", payload, 4 + 16 + 16)[0]}
+
+    print(f"{os.path.basename(a.file)}  {len(buf):,} bytes")
+    print(f"  chunk kinds : {len(counts)}   total chunks: {sum(counts.values())}")
+    if verts or tris:
+        print(f"  geometry    : {verts:,} vertices, {tris:,} triangles")
+    if bones:
+        print(f"  skeleton    : {bones} pivots (bones a skin binds to)")
+    if anim:
+        print(f"  motion      : '{anim['name']}' {anim['frames']} frames")
+    if textures:
+        print(f"  textures    : {len(textures)} -> {', '.join(sorted(set(textures))[:6])}")
+    if subobjs:
+        print(f"  sub-objects : {len(subobjs)} -> {', '.join(subobjs[:8])}")
+    unknown = [k for k in counts if k.startswith("0x")]
+    if unknown:
+        print(f"  unmapped    : {', '.join(sorted(unknown))}")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="zhasset", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -664,6 +756,10 @@ def main():
 
     ap = sub.add_parser("artprofile", help="measure the contract each adoptable mesh carries")
     ap.set_defaults(fn=cmd_artprofile)
+
+    w3 = sub.add_parser("w3d", help="explain one .w3d model: mesh, motion, textures")
+    w3.add_argument("file"); w3.add_argument("-v", "--verbose", action="store_true")
+    w3.set_defaults(fn=cmd_w3d)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")
