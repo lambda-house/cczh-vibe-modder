@@ -432,11 +432,20 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    at three scales plus a splash case. Note `--brute` is an equivalence ORACLE, not a fair
    performance baseline: it materialises the candidate list, so it is slower than the
    pre-slice nested scan was.
-11. **MCP server** wrapping the harness verbs (`validate_mod`, `run_matchup`,
-   `query_counter_matrix`, `put_pack`, `compare_packs`) keyed by contentHash. (M)
-   *Lands here, not earlier: it is the agent-facing seam and should have a real design
-   space behind it — but it needs slice 1's pack substrate, which is why that moved to
-   the front.*
+11. ~~**MCP server**~~ — done. `rts mcp` speaks JSON-RPC 2.0 over newline-delimited stdio
+   with ZERO dependencies (System.Text.Json is BCL), so the root `NuGet.config`'s `<clear/>`
+   stays untouched. Seven tools: `put_pack`, `validate_mod`, `run_matchup`,
+   `query_counter_matrix`, `compare_packs`, `list_units`, `compile_pack`.
+   **`put_pack` stores by `contentHash` and returns it**, so the loop is stateless for the
+   agent — upload once, then reference by hash. Two agents authoring byte-identical content
+   collide on the same entry, which is correct.
+   **Every result carries `contentHash`.** A balance number without it is not reproducible,
+   and reproducibility is the entire reason the core is deterministic.
+   **Errors are repair instructions.** A bad prototype id returns "no prototype 'x'.
+   Available: ..." rather than a `KeyNotFoundException` — the same principle as the harness
+   reporting WHY a build queue stalled instead of showing a flat draw.
+   *stdout is the protocol channel: diagnostics go to stderr, and one stray `Console.WriteLine`
+   desyncs the transport.*
 12. **Passability grid** — one byte/cell + 3-bit surface mask, then pathing. (XL)
    *Must deliberately re-baseline the pinned hashes. Chokepoints/flanking/water are
    emergent from passability, not authored.*

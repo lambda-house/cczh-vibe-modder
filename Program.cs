@@ -34,6 +34,9 @@ public static class Program
                 "skirmish" => Skirmish(args, Stack(args, content)),
                 "compile" => Compile(args, Stack(args, content)),
                 "diff" => Diff(args),
+                // The agent-facing seam. Speaks JSON-RPC on stdout, so nothing else may print
+                // there — diagnostics go to stderr inside Mcp.Serve.
+                "mcp" => Harness.Mcp.Serve(content, Opt(args, "--store", ".rts-packs")),
                 _ => Usage(),
             };
         }
@@ -53,6 +56,7 @@ public static class Program
               rts lint   [--content content/game.json] [--target zh]
               rts hold   --host <structure> --holder <infantry> --attacker <unit> [--no-garrison]
               rts science-matrix [--order <build>] [--points N]   (needs a pack with sciences)
+              rts mcp    [--store .rts-packs]      MCP server on stdio for an agent
                          --target zh also checks their caps, round-trip fidelity,
                          and what silently diverges once compiled
               rts duel   --a <unit> --b <unit> [--budget 3600] [--n 200] [--seed 42] [--json]
