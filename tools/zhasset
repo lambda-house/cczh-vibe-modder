@@ -588,7 +588,14 @@ def cmd_artprofile(a):
                 "isSmall": field(lines, "GeometryIsSmall"),
                 # A turret is declared INSIDE AIUpdateInterface, so a plain field lookup
                 # misses it; the weapon simply never bears without one.
+                # TWO different Turret concepts, and they live in different modules:
+                #   AIUpdateInterface { Turret { ... } }  -- the LOGIC turret: turn rate, slots
+                #   Draw { DefaultConditionState { Turret = <bone> } } -- the ART bone to spin
+                # Declaring only the first gives a unit that aims and fires with a welded
+                # turret. Retail carries 516 of the second.
                 "turret": bool(re.search(r"^\s*Turret\s*$", body, re.M)),
+                "turretBone": (lambda m: m.group(1) if m else None)(
+                    re.search(r"^\s*Turret\s*=\s*(\S+)", body, re.M)),
                 "launchBone": None, "fireFXBone": None, "muzzleFlash": None,
                 "unitCreatePoint": None, "naturalRallyPoint": None,
                 "kind": "structure" if "STRUCTURE" in (field(lines, "KindOf") or "") else "mobile",
@@ -618,10 +625,28 @@ def cmd_artprofile(a):
 
     os.makedirs(a.out, exist_ok=True)
     dest = os.path.join(a.out, "art-profiles.json")
+
+    # PRESERVE AUTHORED ENTRIES. The catalogue is measured for adopted art and DECLARED for
+    # art we wrote ourselves (zhasset w3dbox writes its own profile). Regenerating from retail
+    # would silently delete every authored mesh's contract, and the compiler would fall back to
+    # guessed geometry — which is how a building swallows the units it builds. Found by the
+    # objectdiff gate the moment a rebuild clobbered RTSBOX.
+    if os.path.exists(dest):
+        try:
+            old = json.load(open(dest)).get("models", {})
+        except (ValueError, OSError):
+            old = {}
+        kept = {k: v for k, v in old.items() if v.get("kind") == "authored"}
+        for k, v in kept.items():
+            prof.setdefault(k, v)
+        if kept:
+            print(f"  preserved {len(kept)} authored profile(s): {', '.join(sorted(kept))}")
+
     with open(dest, "w") as f:
         json.dump({"models": prof}, f, indent=1, sort_keys=True)
 
     turreted = sum(1 for v in prof.values() if v["turret"])
+    withbone_t = sum(1 for v in prof.values() if v.get("turretBone"))
     withbone = sum(1 for v in prof.values() if v["launchBone"])
     withflash = sum(1 for v in prof.values() if v["muzzleFlash"])
     structures = sum(1 for v in prof.values() if v["kind"] == "structure")
@@ -629,7 +654,8 @@ def cmd_artprofile(a):
     print(f"art profiles -> {dest}")
     print(f"  {len(prof)} adoptable meshes measured from {len(files)} Object files")
     print(f"  {structures} structures, {len(prof) - structures} mobile")
-    print(f"  {turreted} turreted, {withbone} with a launch bone, {withflash} with a muzzle flash")
+    print(f"  {turreted} turreted ({withbone_t} naming an art turret bone), "
+          f"{withbone} with a launch bone, {withflash} with a muzzle flash")
     print(f"  {shared} meshes are used by more than one object (profile taken from the first)")
     return 0
 
@@ -843,6 +869,128 @@ def _shape_pyramid(sx, sy, sz, segs, smooth=True):
 
 
 SHAPES = {"box": _shape_box, "cylinder": _shape_cylinder, "pyramid": _shape_pyramid}
+
+
+def _obj_keys(body):
+    """Every INI key an Object block sets, at any depth, plus the module CLASSES it declares.
+
+    Depth is deliberately flattened. Retail's indentation is inconsistent enough that tracking
+    nesting is fragile, and the bugs that actually bit us — InitialHealth inside Body, Turret
+    inside DefaultConditionState — are all "is this key present anywhere", which a flat set
+    answers reliably.
+    """
+    keys, mods = set(), set()
+    for line in body.split("\n"):
+        line = line.split(";")[0].strip()
+        if not line or line.lower() == "end":
+            continue
+        m = re.match(r"(\w+)\s*=\s*(.*)$", line)
+        if m:
+            key, val = m.group(1), m.group(2).strip()
+            keys.add(key)
+            if key in ("Behavior", "Draw", "Body", "ClientUpdate"):
+                cls = val.split()[0] if val else ""
+                if cls:
+                    mods.add(f"{key}:{cls}")
+        else:
+            # A bare block header, e.g. `Turret` or `DefaultConditionState`.
+            if re.match(r"^\w+$", line):
+                keys.add(line)
+    return keys, mods
+
+
+def cmd_objectdiff(a):
+    """Compare our EMITTED objects against the retail objects that use the same mesh.
+
+    Four bugs in a row were the same shape: a field whose absence is SILENT and whose default
+    is wrong for our case. InitialHealth defaults to 0, not MaxHealth. The art-side
+    `Turret = <bone>` defaults to no bone, not "find one named TURRET". ProductionUpdate and
+    PhysicsBehavior are simply absent. None error, none warn, and each was found only by
+    someone playing the game and noticing.
+
+    So stop finding them one bug report at a time: for every object we emit, look up the retail
+    objects that share its mesh and report what they set that we do not. Frequency across those
+    objects is the priority signal — a key every one of them sets is far more likely to matter
+    than one that a single unit uses.
+    """
+    ours = {}
+    for fn in sorted(os.listdir(a.emitted)):
+        if not fn.lower().endswith(".ini"):
+            continue
+        t = open(os.path.join(a.emitted, fn), encoding="latin-1").read().replace("\r", "")
+        for m in re.finditer(r"^Object (\S+)$(.*?)^End$", t, re.S | re.M):
+            name, body = m.group(1), m.group(2)
+            mm = re.search(r"^\s*Model\s*=\s*(\S+)", body, re.M)
+            ours[name] = (mm.group(1) if mm else None, *_obj_keys(body))
+
+    # Retail, indexed by the mesh each object presents.
+    by_model = defaultdict(list)
+    objdir = os.path.join(a.ini, "Object")
+    for fn in sorted(os.listdir(objdir)):
+        t = open(os.path.join(objdir, fn), encoding="latin-1").read().replace("\r", "")
+        for m in re.finditer(r"^Object (\S+)$(.*?)^End$", t, re.S | re.M):
+            name, body = m.group(1), m.group(2)
+            mm = re.search(r"^\s*Model\s*=\s*(\S+)", body, re.M)
+            if not mm:
+                continue
+            by_model[mm.group(1).upper()].append((name, *_obj_keys(body)))
+
+    # Triage, because the raw diff is noise: peers are variants of the SAME unit, so every
+    # quirk of that unit (a medic's healing, a drone's slaving, a truck's tyre bones) shows up
+    # as "all peers set it". What matters is which absences change BEHAVIOUR.
+    BEHAVIOUR = {
+        "ExperienceValue", "ExperienceRequired", "IsTrainable",      # veterancy cannot progress
+        "CrusherLevel", "CrushableLevel",                            # who can drive over whom
+        "TransportSlotCount",                                        # can it be carried
+        "GeometryIsSmall",                                           # selection and collision
+        "RadarPriority",                                             # appears on radar at all
+        "BuildVariations",
+    }
+    # Known false positives, excluded deliberately rather than left to be re-triaged:
+    #   Prerequisites   a unit with none legitimately omits the block
+    #   MaxQueueEntries lives on ProductionUpdate and defaults to 9, which is fine
+    COSMETIC = {"Shadow", "ShadowSizeX", "ShadowSizeY", "ShadowTexture", "DisplayName",
+                "ConditionState", "OkToChangeModelColor", "DamageFX", "DeathFX", "FX", "OCL",
+                "TrackMarks", "Dust", "DirtSpray", "ReallyDamagedFXList1",
+                "ReallyDamagedParticleSystem1", "AflameDuration", "AflameDamageAmount",
+                "AflameDamageDelay", "UpgradeCameo1", "UpgradeCameo2", "UpgradeCameo3",
+                "UpgradeCameo4", "UpgradeCameo5"}
+
+    total_missing = Counter()
+    for name in sorted(ours):
+        model, okeys, omods = ours[name]
+        peers = by_model.get((model or "").upper(), [])
+        if not peers:
+            print(f"\n{name}  (mesh {model}: no retail object uses it — nothing to compare)")
+            continue
+        # A key counts as missing only if EVERY peer sets it; one unit's quirk is not a gap.
+        common_keys = set.intersection(*[p[1] for p in peers])
+        common_mods = set.intersection(*[p[2] for p in peers])
+        miss_k = sorted(common_keys - okeys)
+        miss_m = sorted(common_mods - omods)
+        print(f"\n{name}  (mesh {model}, {len(peers)} retail peer(s): {', '.join(p[0] for p in peers[:3])})")
+        if miss_m:
+            print(f"  modules ALL peers have and we do not: {', '.join(miss_m)}")
+        beh = [k for k in miss_k if k in BEHAVIOUR]
+        cos = [k for k in miss_k if k in COSMETIC]
+        other = [k for k in miss_k if k not in BEHAVIOUR and k not in COSMETIC]
+        if beh:
+            print(f"  BEHAVIOUR gaps: {', '.join(beh)}")
+        if cos and a.verbose:
+            print(f"  cosmetic:       {', '.join(cos)}")
+        if other and a.verbose:
+            print(f"  peer-specific:  {', '.join(other[:12])}{' …' if len(other) > 12 else ''}")
+        if not beh and not miss_m:
+            print("  no behaviour gaps")
+        for k in beh: total_missing[k] += 1
+
+    if total_missing:
+        print("\nBEHAVIOUR gaps across our objects, most common first:")
+        for k, n in total_missing.most_common(15):
+            print(f"  {n:2}x  {k}")
+    else:
+        print("\nno behaviour gaps in any emitted object")
+    return 0
 
 
 def cmd_tga(a):
@@ -1107,6 +1255,11 @@ def main():
                     help="per-vertex normals on curved surfaces (default: on unless --shape box)")
     wb.add_argument("--flat", dest="smooth", action="store_false", help="force per-face normals")
     wb.set_defaults(fn=cmd_w3dbox)
+
+    od = sub.add_parser("objectdiff", help="diff our emitted objects against retail peers sharing a mesh")
+    od.add_argument("--emitted", required=True, help="a compiled Data/INI/Object directory")
+    od.add_argument("-v", "--verbose", action="store_true", help="also list cosmetic/peer-specific gaps")
+    od.set_defaults(fn=cmd_objectdiff)
 
     tg = sub.add_parser("tga", help="author an uncompressed TGA texture from scratch")
     tg.add_argument("--out", required=True); tg.add_argument("--size", type=int, default=128)

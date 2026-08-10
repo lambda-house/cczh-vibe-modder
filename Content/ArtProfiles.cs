@@ -31,6 +31,10 @@ public sealed class ArtProfiles
         public string? MinorRadius { get; set; }
         public string? Height { get; set; }
         public bool Turret { get; set; }
+        /// <summary>Art-side bone to rotate. Distinct from <see cref="Turret"/>, which is the
+        /// LOGIC turret: declaring only that gives a unit which aims and fires with a welded
+        /// turret, because nothing tells the renderer which bone to spin.</summary>
+        public string? TurretBone { get; set; }
         public string? LaunchBone { get; set; }
         public string? FireFXBone { get; set; }
         public string? MuzzleFlash { get; set; }
@@ -71,6 +75,7 @@ public sealed class ArtProfiles
                 MinorRadius = S("minorRadius"),
                 Height = S("height"),
                 Turret = m.Value.TryGetProperty("turret", out var t) && t.ValueKind == JsonValueKind.True,
+                TurretBone = S("turretBone"),
                 LaunchBone = S("launchBone"),
                 FireFXBone = S("fireFXBone"),
                 MuzzleFlash = S("muzzleFlash"),

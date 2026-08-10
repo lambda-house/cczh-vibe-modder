@@ -843,6 +843,21 @@ if not any(abs(fn[k] - N[i0][k]) > 1e-3 for k in range(3)):
     print("  face normal equals a vertex normal — smooth shading cannot be in effect"); sys.exit(1)
 print("  smooth: per-vertex radial normals, and TRIANGLES keeps the geometric face normal")
 PY6
+
+  # SYSTEMATIC SWEEP. Four bugs running were the same shape: a field whose absence is SILENT
+  # and whose default is wrong for our case — InitialHealth defaults to 0 rather than
+  # MaxHealth, the art-side Turret defaults to no bone, ProductionUpdate and PhysicsBehavior
+  # were simply absent. Every one was found by a human playing the game. This finds them by
+  # diffing each emitted object against the retail objects sharing its mesh, at build time.
+  rts compile --target zh --out "$WOUT/objs" --mod content/mods/demo-attach.json >/dev/null
+  if ! ./tools/zhasset objectdiff --emitted "$WOUT/objs/Data/INI/Object" \
+       | grep -q "no behaviour gaps in any emitted object"; then
+    echo "  EMITTED OBJECTS HAVE BEHAVIOUR GAPS versus their retail peers:"
+    ./tools/zhasset objectdiff --emitted "$WOUT/objs/Data/INI/Object" \
+      | grep -E "^demo|BEHAVIOUR gaps" | head -8
+    exit 1
+  fi
+  echo "  no behaviour gaps against retail peers sharing the same mesh"
 else
   echo "  (skipped: no local retail install at $W3DBIG)"
 fi

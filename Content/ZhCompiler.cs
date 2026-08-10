@@ -293,6 +293,43 @@ public static class ZhCompiler
             if (u.IsStructure) { kinds.Add("IMMOBILE"); kinds.Add("MP_COUNT_FOR_VICTORY"); }
             sb.AppendLine($"  KindOf = {string.Join(' ', kinds.Distinct(StringComparer.Ordinal))}");
 
+            // Behaviour fields found by `zhasset objectdiff` — each absent from our output and
+            // present on EVERY retail object sharing the mesh. None error, none warn; they just
+            // make the unit behave unlike its peers.
+            bool inf = u.Is("INFANTRY");
+            sb.AppendLine($"  RadarPriority = {(u.IsStructure ? "STRUCTURE" : "UNIT")}");
+            sb.AppendLine($"  GeometryIsSmall = {(u.IsStructure ? "No" : "Yes")}");
+            if (!u.IsStructure)
+            {
+                // "What am I to a crusher" / "what can I crush": 0 infantry, 1 trees,
+                // 2 vehicles. Absent, a tank can neither crush nor be crushed — an entire
+                // interaction silently missing.
+                sb.AppendLine($"  CrushableLevel = {(inf ? 0 : 2)}");
+                sb.AppendLine($"  CrusherLevel = {(inf ? 0 : 2)}");
+                sb.AppendLine($"  TransportSlotCount = {(inf ? 1 : 3)}");
+            }
+
+            // Veterancy must be declared to the target game or our ranks never happen there.
+            // ExperienceValue is what killing this unit AWARDS (four values for their four
+            // levels); ExperienceRequired is what each level COSTS, which our veterancy track
+            // already states. Both derived from content, neither invented.
+            int award = Math.Max(1, u.Cost / 10);
+            if (u.VetTrackIdx >= 0)
+            {
+                var track = db.VetTracks[u.VetTrackIdx];
+                sb.AppendLine("  IsTrainable = Yes");
+                sb.AppendLine($"  ExperienceValue = {award} {award} {award * 2} {award * 4}");
+                var th = new List<int> { 0 };
+                for (int i = 0; i < 3; i++)
+                    th.Add(i < track.Thresholds.Length ? track.Thresholds[i] : th[th.Count - 1]);
+                sb.AppendLine($"  ExperienceRequired = {string.Join(" ", th)}");
+            }
+            else
+            {
+                sb.AppendLine("  IsTrainable = No");
+                sb.AppendLine($"  ExperienceValue = {award} {award} {award} {award}");
+            }
+
             if (u.PrereqObjectIdx.Length > 0)
             {
                 sb.AppendLine("  Prerequisites");
@@ -303,6 +340,14 @@ public static class ZhCompiler
 
             sb.AppendLine($"  Body = {(u.IsStructure ? "StructureBody" : "ActiveBody")} ModuleTag_Body");
             sb.AppendLine($"    MaxHealth = {F(u.BaseStats[(int)Stat.MaxHp])}");
+            // InitialHealth is NOT optional and does NOT default to MaxHealth: ActiveBody
+            // defaults it to ZERO and assigns m_currentHealth from it, so omitting it spawns
+            // every unit on 0 hitpoints. The unit still walks and fights, which is why this
+            // hid for so long — but drawHealthBar bails on `health == 0`, so no health bar
+            // ever appeared, and a body that starts at zero never makes the >0 -> <=0
+            // transition that fires the die modules. The result is a corpse that is
+            // unselectable, never destroyed, and still clearing fog of war.
+            sb.AppendLine($"    InitialHealth = {F(u.BaseStats[(int)Stat.MaxHp])}");
             sb.AppendLine("  End");
 
             // Base loadout, then the upgraded one. Their selector picks the best-matching
@@ -472,6 +517,21 @@ public static class ZhCompiler
                 sb.AppendLine("  End");
             }
 
+            // Death. Ours emitted DestroyDie alone, which 68 of retail's 550 mobile objects do
+            // use — but 482 of them carry SlowDeathBehavior, and a unit that vanishes the
+            // instant it dies reads as a bug even when it is technically correct.
+            //
+            // Retail's split, copied: SlowDeathBehavior takes ALL deaths except crushing and
+            // gives a short destruction delay; DestroyDie is narrowed to the crush cases,
+            // which must be immediate because the crusher is standing on the wreck.
+            if (!u.IsStructure)
+            {
+                sb.AppendLine("  Behavior = SlowDeathBehavior ModuleTag_SlowDeath");
+                sb.AppendLine("    DeathTypes = ALL -CRUSHED -SPLATTED");
+                sb.AppendLine("    DestructionDelay = 500");
+                sb.AppendLine("  End");
+            }
+
             int dieTag = 0;
             foreach (var rule in u.Rules)
             {
@@ -496,11 +556,20 @@ public static class ZhCompiler
             // Something must actually remove the corpse; without a Die module the object
             // lingers. DestroyDie is retail's default (754 uses).
             sb.AppendLine($"  Behavior = DestroyDie ModuleTag_Die{dieTag}");
+            // Narrowed for mobile units so it does not race SlowDeathBehavior: crushing must
+            // be immediate because the crusher is standing on the wreck.
+            if (!u.IsStructure)
+                sb.AppendLine("    DeathTypes = NONE +CRUSHED +SPLATTED");
             sb.AppendLine("  End");
 
             sb.AppendLine($"  Draw = {draw} ModuleTag_Draw");
             sb.AppendLine("    DefaultConditionState");
             sb.AppendLine($"      Model = {model}");
+            // The ART turret: the bone the renderer spins. The AIUpdateInterface Turret block
+            // is the LOGIC turret and does not imply this one — a unit with only the logic
+            // half aims and fires perfectly while its gun stays welded to the hull.
+            if (art.TryGet(model, out var tb) && tb.TurretBone is string tbone)
+                sb.AppendLine($"      Turret = {tbone}");
             // Bones and the flash sub-object: measured profile first, content override wins.
             if (!zh.ArtRig.TryGetValue(u.Id, out var rig) && art.TryGet(model, out var bp))
                 rig = $"{bp.LaunchBone ?? bp.FireFXBone ?? ""}:{bp.MuzzleFlash ?? ""}";

@@ -131,7 +131,30 @@ one there (rule 3), and touch weapons only alongside an object override (rule 4)
    restating them would copy EA's content for no simulation benefit. Note the syntax: these
    fields take NO `=` sign (`Side hellfire`, not `Side = hellfire`).
 
-9. **A parsing object is not a WORKING object.** Every gap below was silent — the file
+9. **A parsing object is not a WORKING object, and the gaps are found by SWEEP not by play.**
+   `zhasset objectdiff` diffs every object we emit against the retail objects that share its
+   mesh, and triages what only they set into behaviour / cosmetic / peer-specific. Four bugs
+   running had the same shape — a field whose absence is SILENT and whose default is wrong for
+   our case — and every one was found by a human noticing something in a match:
+
+   | Field | Default | What it cost |
+   |---|---|---|
+   | `InitialHealth` | **0**, not MaxHealth | every unit spawned on 0 HP: no health bar, and a body that never crosses >0 -> <=0 never fires its die modules, so corpses persisted and kept clearing fog |
+   | `Turret` (in Draw) | no bone | the LOGIC turret in `AIUpdateInterface` aims and fires perfectly while the gun stays welded to the hull. **Two different `Turret` concepts in different modules**; retail has 516 of the art-side one |
+   | `ProductionUpdate` | absent | build buttons render and clicking does nothing |
+   | `PhysicsBehavior` | absent | unit exists, cannot move or be selected |
+
+   The sweep then found ten more in one pass — `ExperienceValue`, `ExperienceRequired`,
+   `IsTrainable`, `CrusherLevel`, `CrushableLevel`, `TransportSlotCount`, `GeometryIsSmall`,
+   `RadarPriority` — all now emitted and derived from content where content has the answer
+   (veterancy thresholds become `ExperienceRequired`). e2e asserts zero behaviour gaps, so the
+   next one is caught at build time rather than in someone's match.
+
+   *The catalogue is measured for adopted art and DECLARED for authored art, and `artprofile`
+   preserves the authored entries when it regenerates — a rebuild once wiped RTSBOX's declared
+   profile and the compiler silently fell back to guessed geometry. Caught by this same gate.*
+
+9b. **A parsing object is not a WORKING object.** Every gap below was silent — the file
    parses, the engine boots 42/42, and something simply never happens. Found by field-diffing
    our emitted objects against `AmericaWarFactory` and `AmericaTankCrusader`:
 

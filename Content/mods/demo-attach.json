@@ -30,7 +30,7 @@
 
   "units": {
     "hellhound": {
-      "faction": "hellfire", "cost": 1, "buildSeconds": 1,
+      "faction": "hellfire", "cost": 800, "buildSeconds": 10,
       "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],
       "components": {
         "Health": { "max": 420, "armorClass": "light_vehicle" },
