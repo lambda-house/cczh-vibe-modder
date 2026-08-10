@@ -729,6 +729,91 @@ def cmd_w3dround(a):
     return 0
 
 
+def _shape_box(sx, sy, sz, segs):
+    hx, hy, hz = sx / 2.0, sy / 2.0, sz / 2.0
+    faces = [
+        ([(-hx,-hy, hz), ( hx,-hy, hz), ( hx, hy, hz), (-hx, hy, hz)], ( 0, 0, 1)),
+        ([( hx,-hy,-hz), (-hx,-hy,-hz), (-hx, hy,-hz), ( hx, hy,-hz)], ( 0, 0,-1)),
+        ([(-hx,-hy,-hz), ( hx,-hy,-hz), ( hx,-hy, hz), (-hx,-hy, hz)], ( 0,-1, 0)),
+        ([( hx, hy,-hz), (-hx, hy,-hz), (-hx, hy, hz), ( hx, hy, hz)], ( 0, 1, 0)),
+        ([( hx,-hy,-hz), ( hx, hy,-hz), ( hx, hy, hz), ( hx,-hy, hz)], ( 1, 0, 0)),
+        ([(-hx, hy,-hz), (-hx,-hy,-hz), (-hx,-hy, hz), (-hx, hy, hz)], (-1, 0, 0)),
+    ]
+    v, n, uv, t = [], [], [], []
+    for fi, (quad, nm) in enumerate(faces):
+        b = fi * 4
+        v += quad; n += [nm] * 4; uv += [(0,0),(1,0),(1,1),(0,1)]
+        t += [(b, b+1, b+2), (b, b+2, b+3)]
+    return v, n, uv, t
+
+
+def _shape_cylinder(sx, sy, sz, segs):
+    """An n-gon prism. Vertex and triangle counts BOTH scale with segs, which is the point:
+    it is only expressible once MESH_HEADER3's counts are rewritten."""
+    import math
+    rx, ry, h = sx / 2.0, sy / 2.0, sz
+    v, n, uv, t = [], [], [], []
+    for i in range(segs):
+        a0 = 2 * math.pi * i / segs
+        a1 = 2 * math.pi * (i + 1) / segs
+        x0, y0 = rx * math.cos(a0), ry * math.sin(a0)
+        x1, y1 = rx * math.cos(a1), ry * math.sin(a1)
+        b = len(v)
+        v += [(x0, y0, 0), (x1, y1, 0), (x1, y1, h), (x0, y0, h)]
+        # Face normal of the quad, outward from the axis.
+        mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        ln = math.hypot(mx, my) or 1.0
+        n += [(mx / ln, my / ln, 0.0)] * 4
+        u0, u1 = i / segs, (i + 1) / segs
+        uv += [(u0, 0), (u1, 0), (u1, 1), (u0, 1)]
+        t += [(b, b+1, b+2), (b, b+2, b+3)]
+    # Caps: one fan vertex per ring vertex, kept unshared so normals stay flat.
+    for z, nz, wind in ((0.0, (0,0,-1), False), (h, (0,0,1), True)):
+        c = len(v); v.append((0.0, 0.0, z)); n.append(nz); uv.append((0.5, 0.5))
+        ring = []
+        for i in range(segs):
+            a = 2 * math.pi * i / segs
+            ring.append(len(v))
+            v.append((rx * math.cos(a), ry * math.sin(a), z)); n.append(nz)
+            uv.append((0.5 + 0.5 * math.cos(a), 0.5 + 0.5 * math.sin(a)))
+        for i in range(segs):
+            i0, i1 = ring[i], ring[(i + 1) % segs]
+            t.append((c, i0, i1) if wind else (c, i1, i0))
+    return v, n, uv, t
+
+
+def _shape_pyramid(sx, sy, sz, segs):
+    import math
+    rx, ry, h = sx / 2.0, sy / 2.0, sz
+    v, n, uv, t = [], [], [], []
+    for i in range(segs):
+        a0 = 2 * math.pi * i / segs
+        a1 = 2 * math.pi * (i + 1) / segs
+        p0 = (rx * math.cos(a0), ry * math.sin(a0), 0.0)
+        p1 = (rx * math.cos(a1), ry * math.sin(a1), 0.0)
+        ap = (0.0, 0.0, h)
+        b = len(v); v += [p0, p1, ap]
+        ux, uy, uz = p1[0]-p0[0], p1[1]-p0[1], 0.0
+        wx, wy, wz = ap[0]-p0[0], ap[1]-p0[1], h
+        cx, cy, cz = uy*wz - uz*wy, uz*wx - ux*wz, ux*wy - uy*wx
+        ln = math.sqrt(cx*cx + cy*cy + cz*cz) or 1.0
+        n += [(cx/ln, cy/ln, cz/ln)] * 3
+        uv += [(0,0),(1,0),(0.5,1)]
+        t.append((b, b+1, b+2))
+    c = len(v); v.append((0.0,0.0,0.0)); n.append((0,0,-1)); uv.append((0.5,0.5))
+    ring = []
+    for i in range(segs):
+        a = 2 * math.pi * i / segs
+        ring.append(len(v)); v.append((rx*math.cos(a), ry*math.sin(a), 0.0))
+        n.append((0,0,-1)); uv.append((0.5+0.5*math.cos(a), 0.5+0.5*math.sin(a)))
+    for i in range(segs):
+        t.append((c, ring[(i+1) % segs], ring[i]))
+    return v, n, uv, t
+
+
+SHAPES = {"box": _shape_box, "cylinder": _shape_cylinder, "pyramid": _shape_pyramid}
+
+
 def cmd_w3dbox(a):
     """Author NEW GEOMETRY into a real mesh: the first step of re-modelling.
 
@@ -746,35 +831,24 @@ def cmd_w3dbox(a):
     tree = w3d_tree(src)
 
     sx, sy, sz = a.size
-    hx, hy, hz = sx / 2.0, sy / 2.0, sz / 2.0
-    # Six faces, four unshared vertices each: a shared-vertex cube cannot carry per-face
-    # normals or a sane UV layout, and the template's 24/12 budget assumes this.
-    faces = [
-        ([(-hx,-hy, hz), ( hx,-hy, hz), ( hx, hy, hz), (-hx, hy, hz)], ( 0, 0, 1)),
-        ([( hx,-hy,-hz), (-hx,-hy,-hz), (-hx, hy,-hz), ( hx, hy,-hz)], ( 0, 0,-1)),
-        ([(-hx,-hy,-hz), ( hx,-hy,-hz), ( hx,-hy, hz), (-hx,-hy, hz)], ( 0,-1, 0)),
-        ([( hx, hy,-hz), (-hx, hy,-hz), (-hx, hy, hz), ( hx, hy, hz)], ( 0, 1, 0)),
-        ([( hx,-hy,-hz), ( hx, hy,-hz), ( hx, hy, hz), ( hx,-hy, hz)], ( 1, 0, 0)),
-        ([(-hx, hy,-hz), (-hx,-hy,-hz), (-hx,-hy, hz), (-hx, hy, hz)], (-1, 0, 0)),
-    ]
-    verts, norms, uvs, tris = [], [], [], []
-    for fi, (quad, n) in enumerate(faces):
-        base = fi * 4
-        verts += quad
-        norms += [n] * 4
-        uvs += [(0, 0), (1, 0), (1, 1), (0, 1)]
-        tris += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
+    verts, norms, uvs, tris = SHAPES[a.shape](sx, sy, sz, a.segments)
 
     vbuf = b"".join(struct.pack("<3f", *v) for v in verts)
     nbuf = b"".join(struct.pack("<3f", *n) for n in norms)
     tbuf = b"".join(struct.pack("<2f", *t) for t in uvs)
+    # One shade index per vertex; the template carries a uint32 array of them.
+    sbuf = b"".join(struct.pack("<I", 0) for _ in verts)
     # W3dTriStruct: uint32 Vindex[3], uint32 Attributes, W3dVectorStruct Normal, float32 Dist.
     fbuf = b""
     for (i0, i1, i2) in tris:
         fn = norms[i0]
-        # Plane distance from the origin: dot(normal, any vertex on the face).
         dist = sum(fn[k] * verts[i0][k] for k in range(3))
         fbuf += struct.pack("<3II3ff", i0, i1, i2, 0, *fn, dist)
+
+    xs = [v[0] for v in verts]; ys = [v[1] for v in verts]; zs = [v[2] for v in verts]
+    mn = (min(xs), min(ys), min(zs)); mx = (max(xs), max(ys), max(zs))
+    ctr = tuple((mn[i] + mx[i]) / 2.0 for i in range(3))
+    rad = max(sum((v[i] - ctr[i]) ** 2 for i in range(3)) for v in verts) ** 0.5
 
     def patch(nodes):
         out = []
@@ -783,14 +857,20 @@ def cmd_w3dbox(a):
                 h = bytearray(payload)
                 if a.name:
                     h[8:24] = a.name.encode("latin-1")[:15].ljust(16, b"\0")
-                struct.pack_into("<3f", h, 76, -hx, -hy, -hz)     # Min
-                struct.pack_into("<3f", h, 88,  hx,  hy,  hz)     # Max
-                struct.pack_into("<3f", h, 100, 0.0, 0.0, 0.0)    # SphCenter
-                struct.pack_into("<f",  h, 112, (hx * hx + hy * hy + hz * hz) ** 0.5)
+                # ARBITRARY TOPOLOGY lives here: the counts are what stop a template being
+                # anything but the shape it already was. Offsets from W3dMeshHeader3Struct,
+                # with W3D_NAME_LEN 16 -- Version, Attributes, MeshName[16], Hierarchy[16].
+                struct.pack_into("<I", h, 40, len(tris))          # NumTris
+                struct.pack_into("<I", h, 44, len(verts))         # NumVertices
+                struct.pack_into("<3f", h, 76, *mn)               # Min
+                struct.pack_into("<3f", h, 88, *mx)               # Max
+                struct.pack_into("<3f", h, 100, *ctr)             # SphCenter
+                struct.pack_into("<f",  h, 112, rad)              # SphRadius
                 payload = bytes(h)
             elif ctype == 0x0002: payload = vbuf                  # VERTICES
             elif ctype == 0x0003: payload = nbuf                  # VERTEX_NORMALS
             elif ctype == 0x0020: payload = fbuf                  # TRIANGLES
+            elif ctype == 0x0022: payload = sbuf                  # VERTEX_SHADE_INDICES
             elif ctype == 0x004A: payload = tbuf                  # STAGE_TEXCOORDS
             out.append((ctype, payload, patch(kids) if kids else []))
         return out
@@ -799,8 +879,8 @@ def cmd_w3dbox(a):
     data = w3d_emit(tree)
     open(a.out, "wb").write(data)
     print(f"authored {a.out}  {len(data):,} bytes")
-    print(f"  box {sx} x {sy} x {sz}: {len(verts)} vertices, {len(tris)} triangles, "
-          f"{len(uvs)} texcoords — all computed, not copied")
+    print(f"  {a.shape} {sx} x {sy} x {sz} (segs {a.segments}): {len(verts)} vertices, "
+          f"{len(tris)} triangles, {len(uvs)} texcoords — all computed, not copied")
     print(f"  template {os.path.basename(a.template)} supplied MATERIAL_INFO / SHADERS / "
           f"TEXTURES / MATERIAL_PASS unchanged")
 
@@ -816,15 +896,16 @@ def cmd_w3dbox(a):
             data = json.load(open(cat))
         data.setdefault("models", {})[a.name] = {
             "model": a.name, "geometry": "BOX",
-            "majorRadius": f"{sx / 2.0:.1f}", "minorRadius": f"{sy / 2.0:.1f}",
-            "height": f"{sz:.1f}", "isSmall": None, "turret": False,
+            "majorRadius": f"{max(mx[0], -mn[0]):.1f}", "minorRadius": f"{max(mx[1], -mn[1]):.1f}",
+            "height": f"{mx[2] - mn[2]:.1f}", "isSmall": None, "turret": False,
             "launchBone": None, "fireFXBone": None, "muzzleFlash": None,
             "unitCreatePoint": None, "naturalRallyPoint": None,
             "kind": "authored", "usedBy": ["(authored by zhasset w3dbox)"],
         }
         os.makedirs(os.path.dirname(cat), exist_ok=True)
         json.dump(data, open(cat, "w"), indent=1, sort_keys=True)
-        print(f"  profile declared in {cat}: BOX {sx/2:.1f} x {sy/2:.1f} x {sz:.1f}")
+        print(f"  profile declared in {cat}: BOX "
+              f"{max(mx[0], -mn[0]):.1f} x {max(mx[1], -mn[1]):.1f} x {mx[2]-mn[2]:.1f}")
     return 0
 
 
@@ -917,10 +998,12 @@ def main():
     wr.add_argument("file"); wr.add_argument("--write")
     wr.set_defaults(fn=cmd_w3dround)
 
-    wb = sub.add_parser("w3dbox", help="author new geometry into a mesh template")
+    wb = sub.add_parser("w3dbox", help="author new geometry (any topology) into a mesh template")
     wb.add_argument("--template", required=True); wb.add_argument("--out", required=True)
     wb.add_argument("--name"); wb.add_argument("--size", type=float, nargs=3, default=[20, 20, 20])
     wb.add_argument("--out-dir", dest="out_dir", help="where to write art-profiles.json")
+    wb.add_argument("--shape", choices=sorted(SHAPES), default="box")
+    wb.add_argument("--segments", type=int, default=12, help="radial segments for cylinder/pyramid")
     wb.set_defaults(fn=cmd_w3dbox)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")

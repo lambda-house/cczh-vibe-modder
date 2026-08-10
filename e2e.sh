@@ -743,6 +743,17 @@ PY2
       --name E2EBOX --size 40 40 60 --out-dir "$WOUT" >/dev/null
   ./tools/zhasset w3d "$WOUT/box.w3d" | grep -q "24 vertices, 12 triangles" \
     || { echo "  authored mesh does not read back as 24 verts / 12 tris"; exit 1; }
+
+  # ARBITRARY TOPOLOGY: counts that differ from the template's are what separate "a box" from
+  # "any shape". MESH_HEADER3's NumVertices/NumTris and every per-vertex array have to be
+  # rewritten together, and a mismatch between them renders as nothing at all.
+  ./tools/zhasset w3dbox --template "$WOUT/ABPWRPLANT_D01.W3D" --out "$WOUT/cyl.w3d" \
+      --name E2ECYL --shape cylinder --segments 16 --size 60 60 90 --out-dir "$WOUT" >/dev/null
+  ./tools/zhasset w3d "$WOUT/cyl.w3d" | grep -q "98 vertices, 64 triangles" \
+    || { echo "  cylinder did not read back at its authored counts"; exit 1; }
+  ./tools/zhasset w3dround "$WOUT/cyl.w3d" | grep -q "BYTE-IDENTICAL" \
+    || { echo "  an AUTHORED mesh does not round-trip — the writer emits something unreadable"; exit 1; }
+  echo "  authored topology (98 verts / 64 tris from a 24/12 template) reads back and round-trips"
   # An authored mesh must DECLARE its contract, or the compiler falls back to guesses and a
   # building swallows what it builds.
   python3 -c "

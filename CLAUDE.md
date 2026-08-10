@@ -192,9 +192,18 @@ are emitted by `rts compile`, not hand-written.
    distances, and UVs, all computed — into a template that supplies only material state.
    **Confirmed rendering in-game.** Units are 220-245 triangles, so re-modelling is a modest
    art task; the standalone zero-EA-art route is engineering, not aspiration.
+   **Topology is arbitrary**, verified in-game: a 20-sided cylinder of 122 vertices / 80
+   triangles written into a 24-vertex template renders as a cylinder. That needs
+   `MESH_HEADER3`'s `NumTris` (offset 40) and `NumVertices` (offset 44) rewritten AND every
+   per-vertex array resized in step — `VERTICES`, `VERTEX_NORMALS`, `VERTEX_SHADE_INDICES`,
+   `STAGE_TEXCOORDS` — with `TRIANGLES` indexing into them. A mismatch between any of them
+   renders as nothing at all. Bounds come from the actual vertices, not the requested size,
+   which differs for anything that is not a box.
    *An authored mesh DECLARES its own art profile as it is written, so the catalogue is
-   measured for adopted art and declared for authored art. Not yet done: new TOPOLOGY (needs
-   `MESH_HEADER3` counts rewritten), skinning, and animation synthesis.*
+   measured for adopted art and declared for authored art.*
+   *Still not done, and not claimed: skinning (`VERTEX_INFLUENCES` against a `HIERARCHY`) and
+   animation (`ANIMATION_CHANNEL`). So this authors static props and buildings, not characters.
+   Textures are still the template's — UV layout is authored, the surface is not.*
 
 ## Build / verify
 
