@@ -611,6 +611,36 @@ tr -d '\r' < "$OBJ" | awk '/^Object demo_hellhound$/,/^End$/' | grep -q "SelectP
   || { echo "  no SelectPortrait — the control bar shows an empty tile"; exit 1; }
 echo "  a new Side gets a command bar, and objects get portraits"
 
+# An adopted mesh carries a CONTRACT — dimensions, weapon bones, muzzle-flash sub-object,
+# turret — and every clause of it fails silently. The profile belongs to the MESH, so it is
+# measured once from the objects that already use it rather than hand-copied per unit.
+# reference/ is generated locally and gitignored, so skip when it is absent.
+if [ -f reference/art-profiles.json ]; then
+  # Nothing we ship may adopt an UNPROFILED mesh. Retail's 2,928 unreferenced models are
+  # adoptable precisely because no object uses them, which is the same reason there is
+  # nothing to measure: free of conflicts and free of guidance are the same fact.
+  for m in "" content/mods/demo-attach.json content/mods/garrison.json; do
+    arg=""; [ -n "$m" ] && arg="--mod $m"
+    u=$(rts compile --target zh --out "$POUT/prof" $arg 2>&1 | grep -c "has no measured profile" || true)
+    [ "$u" = "0" ] || { echo "  '${m:-base}' adopts $u mesh(es) with no measured profile"; exit 1; }
+  done
+  echo "  every adopted mesh is one retail uses, so its contract is measured not guessed"
+
+  # And the contract must actually reach the output: the Crusader mesh is turreted, fires
+  # from TurretMS and flashes TurretFX. None of that is authored in the pack any more.
+  rts compile --target zh --out "$POUT/derived" --mod content/mods/demo-attach.json >/dev/null
+  D="$POUT/derived/Data/INI/Object/demo.ini"
+  tr -d '\r' < "$D" | awk '/^Object demo_hellhound$/,/^End$/' | grep -q "WeaponMuzzleFlash = PRIMARY TurretFX" \
+    || { echo "  muzzle flash not derived from the mesh profile — expect a permanent flame"; exit 1; }
+  tr -d '\r' < "$D" | awk '/^Object demo_hellhound$/,/^End$/' | grep -q "ControlledWeaponSlots = PRIMARY" \
+    || { echo "  turret not derived from the mesh profile — the unit would never fire"; exit 1; }
+  tr -d '\r' < "$D" | awk '/^Object demo_hellfire_works$/,/^End$/' | grep -q "GeometryMajorRadius = 53.0" \
+    || { echo "  structure geometry not derived from the mesh — units spawn inside it"; exit 1; }
+  echo "  turret, bones, flash and geometry all derived from the mesh, none hand-authored"
+else
+  echo "  (skipped: reference/art-profiles.json absent — run tools/zhasset artprofile)"
+fi
+
 echo
 echo "== regression: pinned replay hashes =="
 # Re-pinned twice, both deliberate, both recorded:

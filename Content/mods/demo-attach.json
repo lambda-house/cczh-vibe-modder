@@ -57,16 +57,14 @@
   "zh": {
     // Adopted art: 2,928 shipped models are referenced by nothing at all and are free to
     // use, so new content is playable immediately with no asset pipeline of our own.
-    "models": { "hellhound": "AVCrusader", "hellfire_works": "ABWarFact" },
-
-    // The adopted mesh's rig: "<launchBone>:<muzzleFlashSubObject>". AVCrusader fires from
-    // TurretMS and its flash sub-object is TurretFX. Leave the flash unnamed and it is never
-    // hidden — the tank renders a permanent flame welded to its gun.
-    "artRig":   { "hellhound": "TurretMS:TurretFX" },
-
-    // AVCrusader is a TURRETED mesh. Without a Turret block the weapon can never be brought
-    // to bear and the unit silently never fires.
-    "turreted": ["hellhound"],
+    // AVLeopard is the mesh the retail Crusader actually uses. "AVCrusader" exists as a file
+    // but NO object references it — one of the 2,928 "free" models — so there is nothing to
+    // measure and geometry, bones, turret and muzzle flash would all be guesses. That is the
+    // catch in "free art": free of conflicts and free of guidance are the same fact.
+    //
+    // With a mesh retail uses, `zhasset artprofile` supplies the whole contract and no
+    // artRig or turreted entry is needed here at all.
+    "models": { "hellhound": "AVLeopard", "hellfire_works": "ABWarFact" },
     "sides":  { "hellfire": "USA" }
   },
 

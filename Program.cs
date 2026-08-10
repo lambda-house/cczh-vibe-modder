@@ -182,7 +182,14 @@ public static class Program
         var zh = ContentDb.LoadZhTarget(contentPath);
         string outRoot = Opt(args, "--out", "build/zh-mod");
 
-        var r = ZhCompiler.Compile(db, zh, outRoot, Flag(args, "--with-strings"));
+        // Measured contracts for adopted meshes. Generated locally by `zhasset artprofile`
+        // and gitignored, so absence is normal — the compiler falls back to defaults and
+        // reports which meshes it had to guess for.
+        var art = ArtProfiles.Load(Opt(args, "--art-profiles", "reference/art-profiles.json"));
+        if (art.Count > 0) Console.WriteLine($"art profiles: {art.Count} adoptable meshes measured");
+        else Console.WriteLine("art profiles: none loaded — run `tools/zhasset artprofile` " +
+                               "or geometry, bones and turrets fall back to guesses");
+        var r = ZhCompiler.Compile(db, zh, outRoot, Flag(args, "--with-strings"), art);
 
         foreach (var w in r.Warnings) Console.WriteLine($"warn:  {w}");
         foreach (var e in r.Errors) Console.WriteLine($"ERROR: {e}");

@@ -51,9 +51,11 @@ public static class ZhCompiler
     private static string F(Fix64 v) => v.ToDoubleForDisplay().ToString("0.###", CultureInfo.InvariantCulture);
     private static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 
-    public static Result Compile(ContentDb db, ZhTargetDto zh, string outRoot, bool withStrings)
+    public static Result Compile(ContentDb db, ZhTargetDto zh, string outRoot, bool withStrings,
+                                 ArtProfiles? art = null)
     {
         var r = new Result();
+        art ??= new ArtProfiles();
         string ini = Path.Combine(outRoot, "Data", "INI");
         string pack = Sanitize(db.PackName);
 
@@ -339,7 +341,8 @@ public static class ZhCompiler
                 // A Locomotor line writes into the object's AIUpdate module data, so the
                 // module must exist or the loader throws.
                 sb.AppendLine("  Behavior = AIUpdateInterface ModuleTag_AI");
-                if (zh.Turreted.Contains(u.Id, StringComparer.Ordinal))
+                art.TryGet(zh.Models.TryGetValue(u.Id, out var tm) ? tm : "", out var turretP);
+                if (zh.Turreted.Contains(u.Id, StringComparer.Ordinal) || (turretP?.Turret ?? false))
                 {
                     // A turreted mesh cannot bring its weapon to bear without this, and the
                     // failure is silent: the unit simply never fires.
@@ -455,10 +458,11 @@ public static class ZhCompiler
                 sb.AppendLine("  Behavior = DefaultProductionExitUpdate ModuleTag_ProductionExit");
                 // Offset, not dead centre: retail's war factory uses X:-10 Y:-30 against a
                 // 53 radius, i.e. inside the footprint but away from the origin.
-                sb.AppendLine("    UnitCreatePoint = X:-10.0 Y:-30.0 Z:0.0");
+                art.TryGet(model, out var ep);
+                sb.AppendLine($"    UnitCreatePoint = {(ep?.UnitCreatePoint is string ucp ? ArtProfiles.NormalisePoint(ucp) : "X:-10.0 Y:-30.0 Z:0.0")}");
                 // Y matches the create point so the unit drives straight out of the same
                 // side it was made on, exactly as AmericaWarFactory does.
-                sb.AppendLine($"    NaturalRallyPoint = X:{StructureRadius} Y:-30.0 Z:0.0");
+                sb.AppendLine($"    NaturalRallyPoint = {(ep?.NaturalRallyPoint is string nrp ? ArtProfiles.NormalisePoint(nrp) : $"X:{StructureRadius} Y:-30.0 Z:0.0")}");
                 sb.AppendLine("  End");
             }
 
@@ -491,7 +495,10 @@ public static class ZhCompiler
             sb.AppendLine($"  Draw = {draw} ModuleTag_Draw");
             sb.AppendLine("    DefaultConditionState");
             sb.AppendLine($"      Model = {model}");
-            if (zh.ArtRig.TryGetValue(u.Id, out var rig))
+            // Bones and the flash sub-object: measured profile first, content override wins.
+            if (!zh.ArtRig.TryGetValue(u.Id, out var rig) && art.TryGet(model, out var bp))
+                rig = $"{bp.LaunchBone ?? bp.FireFXBone ?? ""}:{bp.MuzzleFlash ?? ""}";
+            if (!string.IsNullOrEmpty(rig) && rig != ":")
             {
                 // The adopted mesh's rig. Unnamed, its muzzle-flash sub-object is never
                 // hidden and the unit renders a permanent flame from the barrel.
@@ -507,8 +514,12 @@ public static class ZhCompiler
             sb.AppendLine("    End");
             sb.AppendLine("  End");
 
-            sb.AppendLine($"  Geometry = {(u.IsStructure ? "BOX" : "BOX")}");
-            sb.AppendLine($"  GeometryMajorRadius = {(u.IsStructure ? StructureRadius : "13.0")}");
+            // Geometry comes from the ADOPTED MESH where we have measured it. An invented
+            // radius is how every produced unit ended up inside its own factory: the box was
+            // 22 while the borrowed ABWarFact mesh is built for 53x60.
+            art.TryGet(model, out var mp);
+            sb.AppendLine($"  Geometry = {mp?.Geometry ?? "BOX"}");
+            sb.AppendLine($"  GeometryMajorRadius = {mp?.MajorRadius ?? (u.IsStructure ? StructureRadius : "13.0")}");
             if (u.IsStructure)
             {
                 // Both were missing against retail's war factory. BuildCompletion is authored
@@ -517,8 +528,8 @@ public static class ZhCompiler
                 sb.AppendLine($"  BuildCompletion = {(u.BuildCompletion == BuildCompletion.PlacedByPlayer ? "PLACED_BY_PLAYER" : "APPEARS_AT_RALLY_POINT")}");
                 if (u.Is(Runtime.KindOf.Factory)) sb.AppendLine("  FactoryExitWidth = 25");
             }
-            sb.AppendLine($"  GeometryMinorRadius = {(u.IsStructure ? StructureMinorRadius : "10.0")}");
-            sb.AppendLine($"  GeometryHeight = {(u.IsStructure ? "40.0" : "10.0")}");
+            sb.AppendLine($"  GeometryMinorRadius = {mp?.MinorRadius ?? (u.IsStructure ? StructureMinorRadius : "10.0")}");
+            sb.AppendLine($"  GeometryHeight = {mp?.Height ?? (u.IsStructure ? "40.0" : "10.0")}");
             sb.AppendLine($"  CommandSet = {P(u.Id)}CommandSet");
             sb.AppendLine("End").AppendLine();
             r.Objects++;
@@ -777,6 +788,22 @@ public static class ZhCompiler
             if (anyLoco) Write(r, Path.Combine(ini, "Locomotor", pack + "_overrides.ini"), loco);
             r.Warnings.Add($"{db.Overrides.Length} override(s) emitted to map.ini — copy it beside a .map " +
                            $"(e.g. Maps/<name>/map.ini). Data/INI files install as usual.");
+        }
+
+        // A mesh with no measured profile is the interesting case, and it is the COMMON one
+        // for "free" art: retail's 2,928 unreferenced models are adoptable precisely because
+        // no object uses them — which is the same reason there is nothing to measure. Free of
+        // conflicts and free of guidance are the same fact, so say so per model.
+        if (art.Count > 0)
+        {
+            var unprofiled = db.Units
+                .Select(u => zh.Models.TryGetValue(u.Id, out var m) ? m : null)
+                .Where(m => m is not null && !art.TryGet(m!, out _))
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(m => m, StringComparer.Ordinal).ToList();
+            foreach (var m in unprofiled)
+                r.Warnings.Add($"mesh '{m}' has no measured profile: no retail object uses it, so " +
+                               $"geometry, bones, turret and muzzle flash are GUESSED. Declare them with " +
+                               $"zh.artRig / zh.turreted, or adopt a mesh that retail uses.");
         }
 
         if (withStrings)

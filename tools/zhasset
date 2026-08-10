@@ -548,6 +548,92 @@ def cmd_show(a):
 
 
 # ---------------------------------------------------------------- main
+def cmd_artprofile(a):
+    """Measure the CONTRACT that comes with each adoptable mesh.
+
+    A model renders for free. It does not BEHAVE for free: dimensions, weapon bones, the
+    muzzle-flash sub-object and whether it has a turret all have to be declared, and every
+    one of them fails silently — the pack lints, compiles, boots 42/42 and plays wrong.
+    Adopting one model (AVCrusader) hit all four.
+
+    So rather than hand-copy numbers per unit, measure them from the objects that already
+    use each mesh. The profile is keyed by MODEL, because the contract belongs to the mesh.
+
+    Output goes to reference/ and is gitignored: this extractor may ship, its extract may not.
+    """
+    prof = {}
+    objdir = os.path.join(a.ini, "Object")
+    files = sorted(f for f in os.listdir(objdir) if f.lower().endswith(".ini"))
+    for fn in files:
+        for kind, name, lines in ini_blocks(os.path.join(objdir, fn)):
+            if kind != "Object":
+                continue
+            body = "\n".join(lines)
+
+            # First model of the first Draw block: the mesh this object presents.
+            m = re.search(r"^\s*Model\s*=\s*(\S+)", body, re.M)
+            if not m:
+                continue
+            model = m.group(1)
+            if model.lower() in ("none", "nomodel"):
+                continue
+
+            geom = field(lines, "Geometry")
+            entry = {
+                "model": model,
+                "geometry": geom,
+                "majorRadius": field(lines, "GeometryMajorRadius"),
+                "minorRadius": field(lines, "GeometryMinorRadius"),
+                "height": field(lines, "GeometryHeight"),
+                "isSmall": field(lines, "GeometryIsSmall"),
+                # A turret is declared INSIDE AIUpdateInterface, so a plain field lookup
+                # misses it; the weapon simply never bears without one.
+                "turret": bool(re.search(r"^\s*Turret\s*$", body, re.M)),
+                "launchBone": None, "fireFXBone": None, "muzzleFlash": None,
+                "unitCreatePoint": None, "naturalRallyPoint": None,
+                "kind": "structure" if "STRUCTURE" in (field(lines, "KindOf") or "") else "mobile",
+                "usedBy": [name],
+            }
+            for key, dest in (("WeaponLaunchBone", "launchBone"),
+                              ("WeaponFireFXBone", "fireFXBone"),
+                              ("WeaponMuzzleFlash", "muzzleFlash"),
+                              ("UnitCreatePoint", "unitCreatePoint"),
+                              ("NaturalRallyPoint", "naturalRallyPoint")):
+                mm = re.search(rf"^\s*{key}\s*=\s*(.+)$", body, re.M)
+                if mm:
+                    v = mm.group(1).strip()
+                    # Bone fields are "PRIMARY <bone>"; keep only the bone.
+                    if dest.endswith("Bone") or dest == "muzzleFlash":
+                        parts = v.split()
+                        v = parts[-1] if parts else v
+                    entry[dest] = v
+
+            if model in prof:
+                # Several objects share a mesh. Keep the FIRST (files and blocks are walked
+                # in sorted order, so this is deterministic) and record the rest, because a
+                # disagreement between them is exactly the ambiguity an author needs to see.
+                prof[model]["usedBy"].append(name)
+            else:
+                prof[model] = entry
+
+    os.makedirs(a.out, exist_ok=True)
+    dest = os.path.join(a.out, "art-profiles.json")
+    with open(dest, "w") as f:
+        json.dump({"models": prof}, f, indent=1, sort_keys=True)
+
+    turreted = sum(1 for v in prof.values() if v["turret"])
+    withbone = sum(1 for v in prof.values() if v["launchBone"])
+    withflash = sum(1 for v in prof.values() if v["muzzleFlash"])
+    structures = sum(1 for v in prof.values() if v["kind"] == "structure")
+    shared = sum(1 for v in prof.values() if len(v["usedBy"]) > 1)
+    print(f"art profiles -> {dest}")
+    print(f"  {len(prof)} adoptable meshes measured from {len(files)} Object files")
+    print(f"  {structures} structures, {len(prof) - structures} mobile")
+    print(f"  {turreted} turreted, {withbone} with a launch bone, {withflash} with a muzzle flash")
+    print(f"  {shared} meshes are used by more than one object (profile taken from the first)")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="zhasset", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -575,6 +661,9 @@ def main():
     cv = sub.add_parser("coverage", help="how much of THEIR model do we implement")
     cv.add_argument("--gaps", action="store_true", help="list the unimplemented sim fields")
     cv.set_defaults(fn=cmd_coverage)
+
+    ap = sub.add_parser("artprofile", help="measure the contract each adoptable mesh carries")
+    ap.set_defaults(fn=cmd_artprofile)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")
