@@ -130,6 +130,60 @@ public sealed class PassabilityGrid
         => (Required(SurfaceAt(cx, cy)) & mask) != 0;
 
     /// <summary>
+    /// Does a cell stand high enough to break a sight line?
+    ///
+    /// <para><b>Derived from the surface, never authored separately.</b> Cliff and Impassable
+    /// are the two surfaces the map writer emits as a PLATEAU — a 32-byte step, twice ZH's
+    /// 9.8-unit cliff threshold — so the thing that blocks movement in both engines is
+    /// literally the thing that stands up out of the ground. Water and rubble are at or below
+    /// grade and block nothing. Giving LOS its own authored layer would let a map say
+    /// "solid but transparent", which is a wall nobody can see and nothing can explain.</para>
+    /// </summary>
+    public static bool BlocksSight(Surface s) => s is Surface.Cliff or Surface.Impassable;
+
+    public bool SightBlocked(int cx, int cy) => BlocksSight(SurfaceAt(cx, cy));
+
+    /// <summary>
+    /// Can a unit at a see a unit at b?
+    ///
+    /// <para>The same supercover walk as <see cref="LineWalkable"/>, with the DIAGONAL RULE
+    /// INVERTED, and the inversion is the whole design. Movement needs BOTH orthogonal cells
+    /// clear to cut a corner, because a body has width. Sight needs only ONE of them clear,
+    /// because a line has none — light slips through the gap where two blocking cells touch
+    /// at a point. Using the movement rule here would make every diagonal corner opaque and
+    /// quietly hand cover to positions that do not deserve it.</para>
+    ///
+    /// <para>Endpoints are exempt. A unit standing ON blocking terrain — spawned there, or a
+    /// structure whose own footprint is a plateau — must still be able to see and be seen, or
+    /// it becomes invulnerable and blind at once.</para>
+    /// </summary>
+    public bool HasLineOfSight(Fix64 ax, Fix64 ay, Fix64 bx, Fix64 by)
+    {
+        int x0 = CellX(ax), y0 = CellY(ay);
+        int x1 = CellX(bx), y1 = CellY(by);
+
+        int dx = Math.Abs(x1 - x0), dy = Math.Abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+        int x = x0, y = y0, n = dx + dy;
+        int err = dx - dy;
+
+        for (; n > 0; n--)
+        {
+            if (err > 0) { x += sx; err -= 2 * dy; }
+            else if (err < 0) { y += sy; err += 2 * dx; }
+            else
+            {
+                if (SightBlocked(x + sx, y) && SightBlocked(x, y + sy)) return false;
+                x += sx; y += sy; err += 2 * dx - 2 * dy; n--;
+            }
+            // The destination cell never blocks: that is the target's own cell, and a unit
+            // standing against a wall is visible from in front of it.
+            if (n > 0 && SightBlocked(x, y)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Can a unit walk the straight segment from a to b without leaving its surfaces?
     ///
     /// <para>This is not an optimisation bolted on afterwards — it is what makes the whole

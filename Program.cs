@@ -282,7 +282,7 @@ public static class Program
             Console.WriteLine($"map: {m.Width}x{m.Height} cells of {m.CellSize.ToDoubleForDisplay():0.###} " +
                               $"({m.Width * m.CellSize.ToDoubleForDisplay():0.#} world units square), " +
                               $"{blocked} non-clear ({100.0 * blocked / m.CellCount:0.#}%), " +
-                              $"pathing={db.HasPassability}");
+                              $"pathing={db.HasPassability} sight={db.HasLineOfSight}");
         }
         foreach (var w in warnings) Console.WriteLine($"warn:  {w}");
         foreach (var e in errors) Console.WriteLine($"ERROR: {e}");

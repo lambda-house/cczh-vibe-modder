@@ -565,6 +565,18 @@ public sealed class Sim
     /// nearest live enemy by (squared distance, unit index) — the index tie-break is
     /// what keeps target choice deterministic when distances are equal.
     /// </summary>
+    /// <summary>
+    /// Can a see b? True whenever the pack has no sight-blocking terrain, which is what keeps
+    /// this feature free for every pack that does not use it — and keeps every pinned replay
+    /// bit-identical.
+    /// </summary>
+    private bool CanSee(in UnitState a, in UnitState b)
+    {
+        if (!World.Content.HasLineOfSight) return true;
+        var grid = World.Content.Map;
+        return grid is null || grid.HasLineOfSight(a.X, a.Y, b.X, b.Y);
+    }
+
     private void TargetingSystem()
     {
         for (int i = 0; i < World.UnitCount; i++)
@@ -584,7 +596,8 @@ public sealed class Sim
             if (u.TargetIdx >= 0)
             {
                 ref readonly var t = ref World.Units[u.TargetIdx];
-                if (t.Alive && t.GarrisonHost < 0 && DistSq(in u, in t) <= weapon.AcquireRangeSq) continue;
+                if (t.Alive && t.GarrisonHost < 0 && DistSq(in u, in t) <= weapon.AcquireRangeSq
+                    && CanSee(in u, in t)) continue;
                 u.TargetIdx = -1;
             }
 
@@ -604,6 +617,10 @@ public sealed class Sim
                 // is what lets a broad phase visit candidates in any order it likes without
                 // changing which target is chosen.
                 if (d > weapon.AcquireRangeSq) continue;
+                // LOS is tested LAST, after range and team: it is the only test here that
+                // walks the grid, so every candidate a cheap test can reject should already
+                // be gone.
+                if (!CanSee(in u, in e)) continue;
                 if (d < bestDist || (d == bestDist && j < best) || best < 0)
                 {
                     bestDist = d;
@@ -823,6 +840,11 @@ public sealed class Sim
             Fix64 range = World.Resolved(i, Stat.Range);
             Fix64 dsq = DistSq(in u, in t);
             if (dsq > range * range) continue;
+            // Re-tested at fire time, not merely at acquisition. Targeting runs before
+            // movement, so by the time the shot goes off either party may have stepped behind
+            // the wall — and a unit that keeps firing through cover it has already lost is
+            // precisely the bug this slice exists to prevent.
+            if (!CanSee(in u, in t)) continue;
 
             var proto = content.Units[u.ProtoIdx];
             // Effective, not prototype: a conditional variant may have swapped the weapon.

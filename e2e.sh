@@ -1629,6 +1629,75 @@ else
   echo "  faction selectable, map loads, icons resolve, build button charges the player"
 fi
 
+gate "line of sight — cover, and it is NOT passability"
+# Slice 12 left a restriction rather than a model: terrain blocked movement and nothing else,
+# so a wall thinner than the longest gun measured as EXACTLY ZERO — both armies walked up to
+# it and shot over it. Two demo maps and one version of gate 18 were written before that was
+# noticed, and the workaround was "author every wall wider than a gun".
+#
+# The control here is WATER, and it is what makes this a test of sight rather than of terrain:
+# water stops ground movement and hides nothing. So two maps of IDENTICAL shape, one water and
+# one cliff, differ in exactly one property.
+LOS=$(mktemp -d); trap 'rm -rf "$LOS"' EXIT
+python3 - "$LOS" <<'PYLOS'
+import json, sys
+N = 48
+def pack(name, ch, surface):
+    rows = []
+    for r in range(N):
+        row = ["."] * N
+        if not (5 <= r <= 8):          # a gate, off the spawn axis, so pathing has a way round
+            row[23] = row[24] = ch     # TWO cells thick — thinner than every gun in the pack
+        rows.append("".join(row))
+    return {"meta": {"name": name, "version": 1},
+            "map": {"cellSize": 2.0, "outside": "clear",
+                    "legend": {".": "clear", ch: surface}, "rows": rows}}
+open(f"{sys.argv[1]}/water.json", "w").write(json.dumps(pack("thinwater", "~", "water")))
+open(f"{sys.argv[1]}/cliff.json", "w").write(json.dumps(pack("thincliff", "#", "cliff")))
+PYLOS
+
+# --- 1. Sight and passability are INDEPENDENT flags. ---------------------------------
+w_line=$(rts lint --mod "$LOS/water.json" | grep '^map:')
+c_line=$(rts lint --mod "$LOS/cliff.json" | grep '^map:')
+case "$w_line" in
+  *"pathing=True sight=False"*) : ;;
+  *) echo "  WATER SHOULD BLOCK MOVEMENT AND NOTHING ELSE: $w_line"; exit 1 ;;
+esac
+case "$c_line" in
+  *"pathing=True sight=True"*) : ;;
+  *) echo "  A CLIFF SHOULD BLOCK BOTH: $c_line"; exit 1 ;;
+esac
+echo "  water blocks movement and hides nothing; a cliff does both"
+
+# --- 2. Sight has a CONSEQUENCE, and it is the whole point of the slice. --------------
+# Before this, these two maps measured identically: the wall was two cells thick, every gun
+# outranged it, and both armies simply shot across. If they still measure the same, the
+# feature is inert.
+duel_secs() { rts duel --a crusader --b battlemaster --n 20 --seed 42 "$@" \
+                | sed -n 's/.*avg battle length: \([0-9.]*\)s.*/\1/p'; }
+duel_hash() { rts duel --a crusader --b battlemaster --n 20 --seed 42 "$@" \
+                | sed -n 's/.*last final hash: \([0-9a-f]*\).*/\1/p'; }
+ws=$(duel_secs --mod "$LOS/water.json"); cs=$(duel_secs --mod "$LOS/cliff.json")
+wh=$(duel_hash --mod "$LOS/water.json"); ch=$(duel_hash --mod "$LOS/cliff.json")
+[ "$wh" != "$ch" ] || { echo "  SIGHT CHANGED NOTHING: both maps hash $wh"; exit 1; }
+python3 -c "
+import sys
+w, c = float('$ws'), float('$cs')
+if abs(w - c) < 2.0:
+    print(f'  A THIN WALL STILL COSTS NOTHING: {w}s transparent vs {c}s opaque'); sys.exit(1)
+print(f'  the SAME two-cell wall: {w}s when it only blocks movement, {c}s when it also '
+      f'blocks sight')
+"
+
+# --- 3. A map that blocks no sight must be bit-identical to no LOS model at all. ------
+# Opt-in by consequence, the house rule since slice 5. The water map exercises pathing hard
+# and must not perturb a single shot, which is why CanSee short-circuits on the flag rather
+# than on the grid.
+rts replay --a crusader --b battlemaster --seed 7 --mod "$LOS/water.json" | grep -q "DETERMINISM OK" \
+  || { echo "  LOS BROKE DETERMINISM ON A SIGHTLESS MAP"; exit 1; }
+echo "  a sightless map stays deterministic and opt-in by consequence"
+rm -rf "$LOS"; trap - EXIT
+
 echo
 echo "== regression: pinned replay hashes =="
 # Re-pinned twice, both deliberate, both recorded:

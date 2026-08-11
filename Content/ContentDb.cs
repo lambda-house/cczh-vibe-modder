@@ -293,6 +293,10 @@ public sealed class ContentDb
     /// </summary>
     public bool HasPassability;
 
+    /// <summary>Some cell stands high enough to break a sight line. Distinct from
+    /// <see cref="HasPassability"/>: water blocks movement and hides nothing.</summary>
+    public bool HasLineOfSight;
+
     public RankDef[] Ranks = Array.Empty<RankDef>();
     public ScienceDef[] Sciences = Array.Empty<ScienceDef>();
     public Dictionary<string, int> ScienceIndexById = new(StringComparer.Ordinal);
@@ -900,6 +904,14 @@ public sealed class ContentDb
                 if ((Runtime.PassabilityGrid.Required(db.Map.At(c)) & u.Surfaces) == 0) return true;
             return (Runtime.PassabilityGrid.Required(db.Map.Outside) & u.Surfaces) == 0;
         });
+
+        // Line of sight is gated SEPARATELY from passability, on the same opt-in-by-
+        // consequence rule. The two are not the same question: a river is impassable to
+        // infantry and perfectly transparent, while a cliff stops both. A map of nothing but
+        // water therefore changes movement and must not change a single shot.
+        db.HasLineOfSight = db.Map is not null
+            && Enumerable.Range(0, db.Map.CellCount)
+                         .Any(c => Runtime.PassabilityGrid.BlocksSight(db.Map.At(c)));
 
         // --- Second currency: ranks, sciences, powers ---------------------------------
         // Skill points are earned by KILLING, never by economy — that is the whole point of

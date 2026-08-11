@@ -380,7 +380,21 @@ def focus_game(timeout=30):
         except subprocess.TimeoutExpired:
             pass
         time.sleep(1.5)
-    sys.exit("  could not bring the game to the front")
+
+    # DEGRADE, do not die. Another app can hold the frontmost flag and refuse to yield it —
+    # observed with Telegram and with IntelliJ, both on a second display, while the game
+    # stayed fully visible and readable. Frontmost-ness was never what mattered: what matters
+    # is that macOS eats the FIRST click on an unfocused window. So spend a throwaway click on
+    # the title bar, which raises the window and cannot press anything, and let the caller's
+    # retry cover the rest. Exiting here failed a green run for a reason that had nothing to do
+    # with the pack under test.
+    wx, wy, ww, _ = window(refresh=True)
+    tx, ty = wx + ww // 2, wy - TITLEBAR // 2
+    subprocess.run([CLICLICK, f"m:{tx},{ty}"], check=True)
+    time.sleep(0.2)
+    subprocess.run([CLICLICK, f"c:{tx},{ty}"], check=True)
+    time.sleep(0.8)
+    return False
 
 
 def log_size():

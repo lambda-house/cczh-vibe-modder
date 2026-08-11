@@ -544,9 +544,16 @@ cliclick; on this Retina panel they differ by 2x.*
   because the shell draws +y downward, as every 2D canvas does. The alternative reads as
   north-up in the JSON and appears vertically mirrored in play — a bug invisible from either
   the file or the screen alone.
-- **Terrain blocks movement and NOTHING else.** There is no line of sight, so a wall thinner
-  than weapon range measures as exactly zero: both sides walk up to it and shoot over it. Any
-  map authored as a balance test needs walls wider than the longest gun until slice 13 lands.
+- **Sight and passability are INDEPENDENT, and the pair is the model.** Water stops ground
+  movement and hides nothing; a cliff does both. `HasPassability` and `HasLineOfSight` are
+  therefore separate opt-in flags — a map of nothing but river changes movement and must not
+  perturb a single shot. **The diagonal rule INVERTS between them:** movement needs BOTH
+  orthogonal cells clear to cut a corner because a body has width, while sight needs only ONE
+  because a line has none. Using the movement rule for sight makes every diagonal corner
+  opaque and hands cover to positions that have not earned it.
+  *Endpoints are exempt from the sight walk: a unit standing on blocking terrain — spawned
+  there, or a structure whose own footprint is a plateau — must still see and be seen, or it
+  is blind and invulnerable at once.*
 - **An authored map is CHECKED BY A SECOND IMPLEMENTATION.** `Content/ZhMapWriter.cs` writes
   and `tools/zhasset map` reads, and the reader earns that job by decoding all 150 shipped
   maps before it grades ours. A writer checked by its own reader proves only that the two
@@ -769,13 +776,22 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    bit-identical to no map, which is both true and much more useful than a re-baseline: every
    pinned replay and both generative guards survive. Prefer this over re-baselining whenever
    the feature can be made a genuine no-op.
-13. **Elevation as a boolean LOS gate only**. (M) *No longer conditional — slice 12 supplied
-    the evidence. Terrain blocks MOVEMENT and nothing else, so a wall thinner than weapon
-    range measures as exactly nothing: both sides walk up to it and shoot over it. Two
-    versions of the demo map and one version of its e2e gate were written before that was
-    noticed, and the workaround — make every wall wider than the longest gun — is a
-    restriction on map authoring, not a model. LOS is what makes cover, and cover is what
-    makes a chokepoint worth holding rather than merely worth walking through.*
+13. ~~**Elevation as a boolean LOS gate only**~~ — done. Cliff and Impassable break a sight
+    line; water and rubble do not. Derived from the surface, never authored separately — the
+    two blocking surfaces are exactly the ones the map writer emits as a PLATEAU, so what
+    stands up out of the ground is what stops a shot, in both engines.
+    *Measured with WATER as the control, which is what makes it a test of sight rather than of
+    terrain: two maps of identical shape, a two-cell wall thinner than every gun in the pack,
+    decide in **28.4s when the wall only blocks movement and 22.2s when it also blocks
+    sight**. Before this slice both measured the same, because both armies simply shot across.*
+    **The opaque wall is FASTER, which was not the expected direction.** A transparent wall
+    halts both armies at it in a long attritional exchange; an opaque one denies acquisition,
+    so they keep moving to the gate and settle it in one concentrated fight. Cover changes
+    what a chokepoint MEANS, not merely how long it takes to walk around.
+    *Not yet verified in the retail engine. Their LOS is height-derived and our blocking cells
+    are already emitted as a plateau clearing their cliff threshold, so the intent should
+    transfer — but `TerrainLogic::isClearLineOfSight` lives behind the renderer and which
+    weapons honour it is unchecked. Gate 25 is the place to settle it.*
 
 Both design decisions this roadmap owed an answer to are now ANSWERED:
 **(a)** ~~flag changes re-select loadouts~~ — `LoadoutSystem` runs between
