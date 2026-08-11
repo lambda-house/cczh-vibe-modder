@@ -1107,8 +1107,23 @@ def cmd_dossier(a):
         "death": sorted({m.group(2) for l in block
                          if (m := re.match(r"\s*(FX|OCL|FXList|DeathFX)\s*=\s*(?:\S+\s+)?(\S+)", l))}),
         "buildableBy": [side for side, roster in cat["rosterBySide"].items() if hit in roster],
+        # The death effects EXPANDED, not merely named. This is where the closure used to stop:
+        # a name like FX_StructureMediumDeath told an author nothing about what to author.
+        "deathClosure": None,
         "verbatim": block if a.verbatim else f"{len(block)} lines (pass --verbatim)",
     }
+
+    fx, ps, ocl = fx_index(a.ini)
+    dc = {"textures": set(), "models": set(), "sounds": set(), "particles": set(),
+          "missing": set()}
+    for nm in dossier["death"]:
+        fx_flatten(fx_expand(nm, fx, ps, ocl), dc)
+    dossier["deathClosure"] = {k: sorted(v) for k, v in dc.items()}
+    # Debris models carry their OWN textures, so the closure is not complete until they are
+    # walked too — a thrown turret is a mesh like any other.
+    for m in dc["models"]:
+        if m not in assets:
+            assets[m] = model_textures(idx, m) or {"MISSING": "no .w3d ships with this name"}
 
     if a.json:
         print(json.dumps(dossier, indent=2))
@@ -1145,7 +1160,18 @@ def cmd_dossier(a):
     if dossier["sounds"]:
         print(f"  sounds: {dossier['sounds']}")
     if dossier["death"]:
-        print(f"  death FX/OCL: {' '.join(dossier['death'][:8])}")
+        d = dossier["deathClosure"]
+        print(f"  death: {len(dossier['death'])} FX/OCL -> {len(d['particles'])} particle "
+              f"systems, {len(d['textures'])} textures, {len(d['sounds'])} sounds, "
+              f"{len(d['models'])} debris models")
+        print(f"    {' '.join(dossier['death'][:6])}")
+        if d["textures"]:
+            print(f"    fx textures: {', '.join(d['textures'][:8])}"
+                  + (f", +{len(d['textures'])-8} more" if len(d["textures"]) > 8 else ""))
+        if d["models"]:
+            print(f"    debris:      {', '.join(d['models'])}")
+        if d["missing"]:
+            print(f"    MISSING:     {', '.join(d['missing'])}")
     return 0
 
 
@@ -1535,6 +1561,182 @@ def cmd_nearest(a):
         sc, n, f, ax = scored[0]
         print(f"  why {n}: " + "  ".join(f"{k}={v}" for k, v in sorted(ax.items())))
         print(f"  next: zhasset dossier {n}   # everything it is made of")
+    return 0
+
+
+# ============================================================================================
+# FX GRAPH — what an explosion is actually made of.
+#
+# `dossier` reports a death effect as a NAME: FX_StructureMediumDeath. That is where the asset
+# closure stopped, and it is the last category where adopted art is still structurally required
+# — an authored mesh dies silently and invisibly because nothing here knows what to author.
+#
+# The graph is RECURSIVE in three places, and missing any of them truncates the closure:
+#     FXList          -> ParticleSystem | Sound | ViewShake | LightPulse | TerrainScorch |
+#                        Tracer | FXListAtBonePos  (-> another FXList)
+#     ParticleSystem  -> ParticleName (a texture), SlaveSystem, PerParticleAttachedSystem
+#                        (-> more ParticleSystems)
+#     OCL             -> CreateDebris ModelNames, CreateObject ObjectNames (-> models, objects)
+#
+# Measured in retail: 863 ParticleSystem entries across the FXLists, 1,087 ParticleName
+# textures, 60 SlaveSystem and 119 PerParticleAttachedSystem links. Cycles are possible, so
+# every walk carries a seen-set; without one a slave pair recurses forever.
+# ============================================================================================
+
+def fx_index(ini):
+    """FXLists, ParticleSystems and OCLs, parsed once. Directory scans included, because both
+    FXList and ParticleSystem are additive dirs on this build."""
+    fx, ps, ocl = {}, {}, {}
+
+    def files(stem):
+        out = []
+        f = os.path.join(ini, stem + ".ini")
+        if os.path.exists(f):
+            out.append(f)
+        d = os.path.join(ini, stem)
+        if os.path.isdir(d):
+            for dp, _, fns in os.walk(d):
+                out += [os.path.join(dp, x) for x in sorted(fns) if x.lower().endswith(".ini")]
+        return out
+
+    for f in files("FXList"):
+        for kind, name, lines in ini_blocks(f):
+            if kind != "FXList":
+                continue
+            entries, cur = [], None
+            for ln in lines:
+                st = ln.strip()
+                m = re.match(r"([A-Za-z]+)\s*$", st)
+                if m and not re.match(r"(?i)end$", st):
+                    cur = {"kind": m.group(1)}
+                    entries.append(cur)
+                    continue
+                if re.match(r"(?i)end$", st):
+                    cur = None
+                    continue
+                if cur is not None:
+                    kv = re.match(r"(\w+)\s*=\s*(.+)$", st)
+                    if kv:
+                        cur[kv.group(1)] = kv.group(2).strip()
+            fx[name] = entries
+
+    for f in files("ParticleSystem"):
+        for kind, name, lines in ini_blocks(f):
+            if kind != "ParticleSystem":
+                continue
+            ps[name] = {
+                "texture": field(lines, "ParticleName"),
+                "type": field(lines, "Type"),
+                "shader": field(lines, "Shader"),
+                "slaves": [v for v in (field(lines, "SlaveSystem"),
+                                       field(lines, "PerParticleAttachedSystem")) if v],
+            }
+
+    for f in files("ObjectCreationList"):
+        for kind, name, lines in ini_blocks(f):
+            if kind != "ObjectCreationList":
+                continue
+            body = "\n".join(lines)
+            ocl[name] = {
+                "models": sorted({m for ln in re.findall(r"ModelNames\s*=\s*(.+)", body)
+                                  for m in ln.split()}),
+                "objects": sorted({m for ln in re.findall(r"ObjectNames\s*=\s*(.+)", body)
+                                   for m in ln.split()}),
+            }
+    return fx, ps, ocl
+
+
+def fx_expand(name, fx, ps, ocl, seen=None):
+    """The transitive closure of one FX/OCL name."""
+    seen = seen if seen is not None else set()
+    if name in seen:
+        return {"name": name, "cycle": True}
+    seen.add(name)
+
+    if name in ocl:
+        o = ocl[name]
+        return {"name": name, "kind": "ObjectCreationList",
+                "debrisModels": o["models"], "spawnObjects": o["objects"]}
+    if name in ps:
+        p = ps[name]
+        return {"name": name, "kind": "ParticleSystem", "texture": p["texture"],
+                "type": p["type"],
+                "slaves": [fx_expand(sl, fx, ps, ocl, seen) for sl in p["slaves"]]}
+    if name in fx:
+        out = {"name": name, "kind": "FXList", "particles": [], "sounds": [],
+               "other": [], "nested": []}
+        for e in fx[name]:
+            k, n = e.get("kind"), e.get("Name")
+            if k == "ParticleSystem" and n:
+                out["particles"].append(fx_expand(n, fx, ps, ocl, seen))
+            elif k == "Sound" and n:
+                out["sounds"].append(n)
+            elif k == "FXListAtBonePos" and e.get("FX"):
+                out["nested"].append(fx_expand(e["FX"], fx, ps, ocl, seen))
+            else:
+                out["other"].append(k)
+        return out
+    return {"name": name, "MISSING": "no FXList, ParticleSystem or OCL declares this name"}
+
+
+def fx_flatten(node, acc=None):
+    """Everything the closure actually needs on disk: textures, models, sounds."""
+    acc = acc if acc is not None else {"textures": set(), "models": set(), "sounds": set(),
+                                       "particles": set(), "missing": set()}
+    if "MISSING" in node:
+        acc["missing"].add(node["name"])
+        return acc
+    k = node.get("kind")
+    if k == "ParticleSystem":
+        acc["particles"].add(node["name"])
+        if node.get("texture"):
+            acc["textures"].add(node["texture"])
+        for sl in node.get("slaves", []):
+            fx_flatten(sl, acc)
+    elif k == "ObjectCreationList":
+        acc["models"].update(node.get("debrisModels", []))
+    elif k == "FXList":
+        acc["sounds"].update(node.get("sounds", []))
+        for child in node.get("particles", []) + node.get("nested", []):
+            fx_flatten(child, acc)
+    return acc
+
+
+def cmd_fx(a):
+    fx, ps, ocl = fx_index(a.ini)
+    if a.stats:
+        print(f"  {len(fx)} FXLists, {len(ps)} ParticleSystems, {len(ocl)} OCLs")
+        print(f"  {sum(1 for v in ps.values() if v['texture'])} particle systems name a texture; "
+              f"{len({v['texture'] for v in ps.values() if v['texture']})} distinct textures")
+        print(f"  {sum(len(v['slaves']) for v in ps.values())} slave/attached links")
+        return 0
+    if not a.name:
+        return print("  give an FXList / ParticleSystem / OCL name, or --stats")
+    tree = fx_expand(a.name, fx, ps, ocl)
+    flat = fx_flatten(tree)
+    if a.json:
+        print(json.dumps({"tree": tree, "closure": {k: sorted(v) for k, v in flat.items()}},
+                         indent=2))
+        return 0
+    if "MISSING" in tree:
+        return print(f"  {a.name}: {tree['MISSING']}")
+    print(f"  {a.name}  ({tree['kind']})")
+    for pnode in tree.get("particles", []):
+        tex = pnode.get("texture") or pnode.get("MISSING", "?")
+        sl = f"  slaves={[s['name'] for s in pnode.get('slaves', [])]}" if pnode.get("slaves") else ""
+        print(f"    particle {pnode['name']:38s} texture={tex}{sl}")
+    for snd in tree.get("sounds", []):
+        print(f"    sound    {snd}")
+    for other in dict.fromkeys(tree.get("other", [])):
+        print(f"    {other.lower()} (no asset)")
+    print(f"  closure: {len(flat['particles'])} particle systems, {len(flat['textures'])} "
+          f"textures, {len(flat['sounds'])} sounds, {len(flat['models'])} debris models")
+    if flat["textures"]:
+        print(f"    textures: {', '.join(sorted(flat['textures']))}")
+    if flat["models"]:
+        print(f"    models:   {', '.join(sorted(flat['models']))}")
+    if flat["missing"]:
+        print(f"    MISSING:  {', '.join(sorted(flat['missing']))}")
     return 0
 
 
@@ -2563,6 +2765,12 @@ def main():
                     help="include CINE_ cutscene clones (excluded by default)")
     ne.add_argument("--json", action="store_true")
     ne.set_defaults(fn=cmd_nearest)
+
+    fxp = sub.add_parser("fx", help="expand an FXList / ParticleSystem / OCL into its closure")
+    fxp.add_argument("name", nargs="?")
+    fxp.add_argument("--stats", action="store_true")
+    fxp.add_argument("--json", action="store_true")
+    fxp.set_defaults(fn=cmd_fx)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")

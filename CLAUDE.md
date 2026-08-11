@@ -837,6 +837,21 @@ their output and is gitignored — ship the extractor, never the extract.
   from different roots of the same structure. Measured: 5 ranks at 0/800/1500/2500/5000 grant
   7 purchase points a game against 14-24 reachable sciences per faction.*
 
+- **`fx <name>`** — expands an `FXList` / `ParticleSystem` / `OCL` into its transitive closure,
+  which is where `dossier` used to stop. A name like `FX_StructureMediumDeath` told an author
+  nothing about what to author, and FX is the last category where adopted art is still
+  structurally required: an authored mesh dies silently and invisibly today.
+  **The graph recurses in three places** and missing any one truncates the closure —
+  `FXListAtBonePos` nests another FXList, and a ParticleSystem's `SlaveSystem` /
+  `PerParticleAttachedSystem` name further systems. Cycles exist, so every walk carries a
+  seen-set. Measured: **429 FXLists, 1,087 ParticleSystems, 294 OCLs, 179 slave links**.
+  ***1,087 particle systems draw on only 81 distinct textures.*** That ratio is the case for
+  authoring FX being cheap: 81 images cover every explosion in the game, and a from-scratch set
+  is a modest art task rather than a pipeline.
+  *`dossier` now expands death effects rather than naming them, and walks the debris models'
+  own textures — a thrown turret is a mesh like any other. `AmericaTankCrusader`'s 6 FX/OCL
+  names resolve to 12 particle systems, 6 textures, 4 sounds and 14 debris models.*
+
 - **`nearest --like <object>`** / `nearest --role … --cost …` — the clone entry point, and the
   first step of the authoring loop: pick the nearest existing thing, take everything it is made
   of, change some, emit it.
@@ -917,6 +932,11 @@ furniture is borrowed on purpose.
     from the boot log, after this file asserted the opposite from source and was wrong. Today
     an adopted mesh inherits a peer's death FX and a fully AUTHORED one dies silently and
     invisibly, which is the last place adopted art is structurally required.*
+    **The extraction half is done** (`zhasset fx`), and it sized the authoring half: 1,087
+    particle systems share 81 textures, all of them small additive sprites, and `zhasset tga`
+    already writes the format. What remains is the emitter plus the closed enum check —
+    `Priority`, `Shader` and `Type` are C++ name tables, so this is the fifth place an invented
+    literal would be a hard load error.
 18. **Audio.** (L) *The largest untouched category: not one line is emitted and every unit is
     silent. `SoundEffects`, `Speech`, `Voice` and `MiscAudio` are all in the 42 scanned dirs.
     It is also 0% of the simulation, so it changes no measurement — which is why it is here
