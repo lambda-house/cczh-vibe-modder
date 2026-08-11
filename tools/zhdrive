@@ -79,6 +79,35 @@ def logical_scale():
     return _SCALE
 
 
+_LEFT_CURSOR = [None]
+
+
+def cursor():
+    out = subprocess.run([CLICLICK, "p"], capture_output=True, text=True, timeout=10)
+    m = re.search(r"(-?\d+),(-?\d+)", out.stdout)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def interference():
+    """Has a HUMAN moved the mouse since we last put it somewhere?
+
+    Worth distinguishing, because the two failure modes look IDENTICAL from a screenshot and
+    have opposite fixes: a wedged shell is the engine's and wants a relaunch, a stray physical
+    click is the operator's and wants nothing but a retry with hands off. This driver blamed
+    the engine twice without being able to rule the other out, which is not a diagnosis.
+
+    A few pixels of tolerance: the cursor can settle a point or two after an injected move.
+    """
+    if _LEFT_CURSOR[0] is None:
+        return None
+    now = cursor()
+    if now is None:
+        return None
+    dx, dy = abs(now[0] - _LEFT_CURSOR[0][0]), abs(now[1] - _LEFT_CURSOR[0][1])
+    return (f"cursor moved {_LEFT_CURSOR[0]} -> {now} with no command from us"
+            if dx + dy > 4 else None)
+
+
 def require_cliclick():
     if not CLICLICK:
         sys.exit("cliclick not installed:  brew install cliclick")
@@ -238,6 +267,9 @@ def ui_click(gx, gy, settle=1.2, park=True):
     if park:
         px, py = to_screen(*PARK)
         subprocess.run([CLICLICK, f"m:{px},{py}"], check=True)
+        _LEFT_CURSOR[0] = (px, py)
+    else:
+        _LEFT_CURSOR[0] = (x, y)
     time.sleep(settle)
     return x, y
 
@@ -620,8 +652,15 @@ def cmd_skirmish(a):
         deadline = time.time() + 60
         while not at_main_menu():
             if time.time() > deadline:
+                # Name WHO wedged it. The fixes are opposite, so guessing costs a run.
+                if (who := interference()):
+                    sys.exit(f"  EXTERNAL INPUT: {who}.\n"
+                             f"  The drive needs the mouse to itself — hands off and re-run. "
+                             f"Not diagnosing the shell while something else is clicking.")
+                capture("/tmp/zhdrive_stuck.png")
                 sys.exit(f"  stuck: {menu_buttons()} buttons on screen, expected "
-                         f"{MAIN_MENU_BUTTONS}")
+                         f"{MAIN_MENU_BUTTONS} — see /tmp/zhdrive_stuck_s.png. "
+                         f"Cursor undisturbed, so this is the shell and not interference.")
             back_out()
             time.sleep(1.0)
         ui_click(*UI["solo_play"], settle=2.0)

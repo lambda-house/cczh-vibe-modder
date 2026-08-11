@@ -392,6 +392,12 @@ all three fail, and the portrait reads pure black.
 *The structure is found by COLOUR, never by coordinate: the start position is randomised, so
 the same map put the factory at game (512,139) one run and (297,165) the next.*
 
+**A failed drive must name WHO failed it.** `zhdrive` records where it parked the cursor and
+checks it before diagnosing anything, because a wedged shell and a stray human click look
+identical in a screenshot and have opposite fixes — one wants a relaunch, the other wants
+hands off and a retry. This driver blamed the engine twice without being able to rule the
+other out, which is not a diagnosis.
+
 **Observe needs no permission and answers every LOAD-TIME question**, which is where every
 bug so far has actually lived. Act buys "click build and see" and nothing before it.
 *Do not use `osascript -e 'tell application "Finder" to get bounds of window of desktop'` to
