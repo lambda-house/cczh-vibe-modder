@@ -82,15 +82,16 @@ public static class ZhIcons
     private static byte[] Render(Sheet s)
     {
         int w = s.Pixels, h = s.Pixels;
-        var px = new byte[w * h * 3];
+        var px = new byte[w * h * 4];
 
         void Put(int x, int y, int r, int g, int b)
         {
             // TGA's origin is bottom-left, so row 0 of the file is the BOTTOM of the image.
             // Writing top-down here and forgetting that is how a sheet comes out vertically
-            // mirrored, which looks like a Coords bug and is not.
-            int o = ((h - 1 - y) * w + x) * 3;
-            px[o] = (byte)b; px[o + 1] = (byte)g; px[o + 2] = (byte)r;
+            // mirrored, which looks like a Coords bug and is not. Measured against a retail
+            // UI page (SAUserInterface512_005.tga): descriptor 0x08, bottom-up, same as ours.
+            int o = ((h - 1 - y) * w + x) * 4;
+            px[o] = (byte)b; px[o + 1] = (byte)g; px[o + 2] = (byte)r; px[o + 3] = 255;
         }
 
         for (int y = 0; y < h; y++)
@@ -112,11 +113,15 @@ public static class ZhIcons
                 }
         }
 
+        // 32-bit BGRA with 8 alpha bits, because that is what EVERY retail UI page is
+        // (measured: SAUserInterface512_005.tga is type 2, 32bpp, descriptor 0x08). A control
+        // bar image is composited with alpha; a 24-bit one has no alpha channel to composite.
         var tga = new byte[18 + px.Length];
         tga[2] = 2;                                   // uncompressed true-colour
         BitConverter.GetBytes((ushort)w).CopyTo(tga, 12);
         BitConverter.GetBytes((ushort)h).CopyTo(tga, 14);
-        tga[16] = 24;                                 // bits per pixel
+        tga[16] = 32;                                 // bits per pixel
+        tga[17] = 0x08;                               // 8 alpha bits, origin bottom-left
         px.CopyTo(tga, 18);
         return tga;
     }

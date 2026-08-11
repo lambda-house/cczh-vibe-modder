@@ -69,11 +69,12 @@
     // is real and the standalone zero-EA-art route is open.
     // RTSMAST is a fully AUTHORED animated object: skeleton, skinned mesh and motion all
     // written by zhasset, with nothing of EA's in it but the material flag words.
-    "models": { "hellhound": "AVLeopard", "hellfire_works": "RTSMAST" },
-
-    // <Skeleton>.<Animation> exactly as the .w3d headers declare it — HRawAnimClass registers
-    // every animation under HierarchyName + "." + Name, and filenames play no part.
-    "animations": { "hellfire_works": "RTSMAST_SKL.RTSSPIN:LOOP" },
+    // RTSBOX is authored STATIC geometry — vertices, normals and UVs all computed by
+    // zhasset w3dbox. A building wants that. RTSMAST, which this used to name, is the
+    // skinned-and-animated mast: it is SUPPOSED to bend, which is the whole point of it and
+    // exactly wrong for a factory. Proving the animation path and dressing a building are
+    // two different jobs and one model cannot do both.
+    "models": { "hellhound": "AVLeopard", "hellfire_works": "RTSBOX" },
     "sides":  { "hellfire": "USA" }
   },
 

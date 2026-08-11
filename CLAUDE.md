@@ -336,6 +336,26 @@ are emitted by `rts compile`, not hand-written.
      has a stale copy that stops at chunk `0x600` and has no HLOD at all — following it would
      make a skin that silently never binds.*
 
+## Driving the running game
+
+`tools/run-logged.sh` (installed to the game dir) and `tools/zhdrive` close the loop that
+every silent bug in the catalogue above escaped through — each was found by a human noticing
+something in a match.
+
+- `zhdrive log --dirs` — the additive directory list THIS build scans, from the boot log.
+- `zhdrive log --errors` — distinct error shapes, deduped by digit-normalising.
+- `zhdrive shot` / `zhdrive wait <regex>` — screenshot, or block until the engine logs a line.
+  Waiting on the log beats sleeping a guess: boot time varies threefold with disk cache.
+- `zhdrive click x y` — needs macOS Accessibility granted to the process that RUNS it, which
+  for an agent session is the `claude` binary itself and is version-pinned in its path.
+
+**Observe needs no permission and answers every LOAD-TIME question**, which is where every
+bug so far has actually lived. Act buys "click build and see" and nothing before it.
+*Do not use `osascript -e 'tell application "Finder" to get bounds of window of desktop'` to
+find the screen size — the usual recipe, and it HUNG this tool with no timeout. `zhdrive`
+uses `system_profiler`. Coordinates are physical pixels in a screenshot and LOGICAL points to
+cliclick; on this Retina panel they differ by 2x.*
+
 ## Build / verify
 
 - Build: `dotnet build -c Release` (needs .NET 8 SDK; zero NuGet deps by design)

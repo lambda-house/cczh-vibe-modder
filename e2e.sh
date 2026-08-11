@@ -222,10 +222,10 @@ esac
 # implementations of one contract, which is how they drift.
 # The witness is per-KEY union across layers, not last-layer-wins: the emitted objects must
 # name a model the BASE pack maps (AVAmbulance for ranger) and one only the MOD maps
-# (RTSMAST for its factory). Losing either half would still compile cleanly.
+# (RTSBOX for its factory). Losing either half would still compile cleanly.
 rts compile --target zh --out "$ORD/zh" --mod content/mods/demo-attach.json >/dev/null
 zh_obj="$ORD/zh/Data/INI/Object/demo.ini"
-for m in AVAmbulance RTSMAST; do
+for m in AVAmbulance RTSBOX; do
   grep -q "$m" "$zh_obj" \
     || { echo "  ZH BLOCK LOST IN THE MERGE: no '$m' in the emitted objects"; rm -rf "$ORD"; exit 1; }
 done
@@ -1410,6 +1410,30 @@ if [ -f "$TERRAIN_INI" ]; then
   hit=$(tr -d '\r' < "$TERRAIN_INI" | grep -ci "^Terrain $tt\$" || true)
   [ "$hit" -ge 1 ] \
     || { echo "  INVENTED TERRAIN TYPE '$tt': retail declares no such block"; exit 1; }
+
+  # NAMING A REAL BLOCK IS NOT ENOUGH, and this one reached a real match before it was
+  # caught. readTexClass resolves the block to a TGA under Art/Terrain and, when the file is
+  # not there, simply fails to open it and returns — the map renders BLACK with no error.
+  # 12 of retail's own 291 Terrain blocks dangle exactly like this, "desertA" among them,
+  # which is the one the first version of this compiler chose precisely BECAUSE it was real.
+  tex=$(tr -d '\r' < "$TERRAIN_INI" | awk -v t="$tt" '
+          $1=="Terrain" && tolower($2)==tolower(t) {f=1; next}
+          f && $1=="Texture" {print $3; exit}
+          f && $1=="End" {exit}')
+  [ -n "$tex" ] || { echo "  TerrainType '$tt' declares no Texture"; exit 1; }
+  if [ -d "$MAPD/corpus" ] || [ -d "$CORPUS" ]; then
+    found=0
+    for arc in "$CORPUS"/*.big "$CORPUS"/ZH_Generals/*.big; do
+      [ -f "$arc" ] || continue
+      n=$(./tools/zhasset archives names --archive "$arc" 2>/dev/null |
+          grep -ci "Art/Terrain/$tex\$" || true)
+      [ "$n" -ge 1 ] && { found=1; break; }
+    done
+    [ "$found" = 1 ] \
+      || { echo "  DANGLING TERRAIN TEXTURE: '$tt' names $tex, which ships in no archive."
+           echo "  The map will render black with no error anywhere."; exit 1; }
+    echo "  terrain '$tt' -> $tex, and that texture really ships"
+  fi
   echo "  terrain type '$tt' is one retail declares, not one that sounded plausible"
 fi
 
@@ -1476,7 +1500,10 @@ if not os.path.exists(tga):
     print(f"  ICON SHEET NOT EMITTED: {texture} referenced by {len(declared)} images"); sys.exit(1)
 d = open(tga, "rb").read()
 w, h = struct.unpack_from("<HH", d, 12)
-if d[2] != 2 or d[16] != 24 or len(d) != 18 + w * h * 3:
+# 32-bit BGRA, matching every retail UI page: a control bar image composites with alpha and
+# a 24-bit one has no alpha channel to composite with.
+bpp = d[16] // 8
+if d[2] != 2 or d[16] != 32 or len(d) != 18 + w * h * bpp:
     print(f"  MALFORMED TGA: type={d[2]} bpp={d[16]} {w}x{h} but {len(d)} bytes"); sys.exit(1)
 
 # --- every icon a unit or button names must be declared ------------------------------------
@@ -1503,7 +1530,7 @@ for name, (l, t, r, b) in coords.items():
 # Distinct fill colours are the diagnostic, not decoration: two buttons rendering the same
 # colour is how a duplicated Coords rectangle looks in game.
 def px(x, y):
-    o = 18 + ((h - 1 - y) * w + x) * 3
+    o = 18 + ((h - 1 - y) * w + x) * bpp
     return d[o:o+3]
 fills = {px((l + r) // 2, (t + b) // 2) for (l, t, r, b) in coords.values()}
 if len(fills) != len(coords):

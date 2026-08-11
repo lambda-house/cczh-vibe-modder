@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""zhdrive — observe and drive the running Zero Hour client.
+
+WHY THIS EXISTS
+    Every bug this project has shipped to a human tester was a SILENT one: the file parses,
+    the engine boots 42/42, and something simply never happens. The catalogue in CLAUDE.md is
+    long — InitialHealth 0, a welded turret, a missing ProductionUpdate, a black map from a
+    TerrainType whose texture does not ship — and each was found by somebody noticing
+    something in a match, which is the slowest and least reliable detector we have.
+
+    Two of the three failures in the last round were findable without a human: the map was
+    black because a texture is absent from every archive, and "did our MappedImages load" is
+    a line in a log nobody was capturing. This closes that loop.
+
+WHAT IT CAN AND CANNOT DO
+    observe   screenshots and the engine's own log. Needs no permissions beyond Screen
+              Recording, and answers every LOAD-TIME question.
+    act       clicks and keys, via cliclick. Needs macOS Accessibility for the process that
+              runs it, which is a human decision and cannot be scripted around.
+
+    The split matters: load-time correctness is where every bug so far has actually lived, so
+    `observe` alone is most of the value. `act` buys the rest — "click build and see".
+
+COORDINATES
+    screencapture reports PHYSICAL pixels; cliclick takes LOGICAL points. On a Retina display
+    those differ by 2x, so a coordinate read off a screenshot and fed straight to a click
+    lands at twice the intended offset — off-screen, or on the wrong control. Everything here
+    goes through `logical()`, and `shot` prints the scale so a hand-read coordinate can be
+    converted the same way.
+"""
+import json, os, re, shutil, struct, subprocess, sys, time
+
+GAME_DIR = os.path.expanduser("~/GeneralsX/GeneralsZH")
+LOG = os.path.join(GAME_DIR, "logs", "latest.log")
+CLICLICK = shutil.which("cliclick")
+
+
+def png_size(path):
+    with open(path, "rb") as f:
+        return struct.unpack(">II", f.read(24)[16:24])
+
+
+def capture(out, width=900):
+    """Full-screen grab, downscaled for reading. Returns (physical, scaled, scale)."""
+    subprocess.run(["screencapture", "-x", "-D", "1", "-t", "png", out], check=True)
+    phys = png_size(out)
+    small = out.replace(".png", "_s.png")
+    subprocess.run(["sips", "-Z", str(width), out, "--out", small],
+                   check=True, capture_output=True)
+    return phys, png_size(small), small
+
+
+_SCALE = None
+
+
+def logical_scale():
+    """Physical pixels per logical point on the MAIN display.
+
+    Measured, not assumed — this machine has a 2x Retina panel and two 1x externals, so a
+    hardcoded 2 is right on one display and wrong on the others.
+
+    It deliberately does NOT ask Finder. `osascript -e 'tell application "Finder" to get
+    bounds of window of desktop'` is the usual recipe and it HUNG this tool: AppleScript
+    blocks on an app that is busy or not scriptable at that moment, with no timeout, and an
+    agent waiting on it just stops. system_profiler is slower and answers unconditionally.
+    """
+    global _SCALE
+    if _SCALE is not None:
+        return _SCALE
+    out = subprocess.run(["system_profiler", "SPDisplaysDataType", "-json"],
+                         capture_output=True, text=True, timeout=30).stdout
+    for gpu in json.loads(out).get("SPDisplaysDataType", []):
+        for m in gpu.get("spdisplays_ndrvs", []):
+            lw = int(re.match(r"\s*(\d+)", m.get("_spdisplays_resolution", "")).group(1))
+            phys = re.search(r"(\d+)x\d+", m.get("spdisplays_pixelresolution", "") or "")
+            _SCALE = (int(phys.group(1)) / lw) if phys else 1.0
+            return _SCALE
+    _SCALE = 1.0
+    return _SCALE
+
+
+def require_cliclick():
+    if not CLICLICK:
+        sys.exit("cliclick not installed:  brew install cliclick")
+    probe = subprocess.run([CLICLICK, "p"], capture_output=True, text=True)
+    if "Accessibility" in probe.stderr:
+        sys.exit(
+            "cliclick lacks Accessibility. Grant it to the process that RUNS it — for an\n"
+            "agent session that is the claude binary itself, not Terminal:\n"
+            f"  {os.path.realpath('/proc/self/exe') if os.path.exists('/proc/self/exe') else 'see: ps -o args= -p <ppid>'}\n"
+            "System Settings > Privacy & Security > Accessibility > + > Cmd+Shift+G > path")
+
+
+def wait_for_log(pattern, timeout=90, since=0):
+    """Block until a regex appears in the engine log. This is the honest alternative to
+    sleeping a guessed number of seconds: boot time varies with disk cache by a factor of
+    three, and a fixed sleep is either slow or flaky, usually both."""
+    rx = re.compile(pattern)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.exists(LOG):
+            with open(LOG, "rb") as f:
+                f.seek(since)
+                for line in f.read().decode("latin-1", "replace").splitlines():
+                    if rx.search(line):
+                        return line
+        time.sleep(0.5)
+    return None
+
+
+def cmd_shot(a):
+    phys, small, path = capture(a.out, a.width)
+    scale = phys[0] / small[0]
+    print(f"  {path}  physical {phys[0]}x{phys[1]}  scaled {small[0]}x{small[1]}")
+    print(f"  multiply a coordinate read off the scaled image by {scale:.3f} for physical,")
+    print(f"  by {scale / logical_scale():.3f} for the LOGICAL points cliclick wants")
+
+
+def cmd_click(a):
+    require_cliclick()
+    # Input is in SCALED-IMAGE coordinates, because that is what a coordinate read off a
+    # screenshot actually is. Converting here means no call site ever has to remember.
+    s = logical_scale()
+    phys, small, _ = capture("/tmp/_zhdrive_click.png", a.width)
+    f = (phys[0] / small[0]) / s
+    x, y = round(a.x * f), round(a.y * f)
+    print(f"  click ({a.x},{a.y}) in a {small[0]}px image -> logical ({x},{y})")
+    subprocess.run([CLICLICK, f"m:{x},{y}"], check=True)
+    time.sleep(0.15)
+    subprocess.run([CLICLICK, f"c:{x},{y}"], check=True)
+
+
+def cmd_key(a):
+    require_cliclick()
+    subprocess.run([CLICLICK, f"kp:{a.name}"], check=True)
+
+
+def cmd_wait(a):
+    line = wait_for_log(a.pattern, a.timeout)
+    if line is None:
+        print(f"  TIMEOUT after {a.timeout}s waiting for /{a.pattern}/")
+        return 1
+    print(f"  {line.strip()[:160]}")
+    return 0
+
+
+def cmd_log(a):
+    if not os.path.exists(LOG):
+        sys.exit(f"no log at {LOG} — launch with ./run-logged.sh")
+    text = open(LOG, "rb").read().decode("latin-1", "replace")
+    if a.errors:
+        rx = r"ERROR|exception|FAIL|Missing|not found|Unknown"
+        hits = [l for l in text.splitlines() if re.search(rx, l, re.I)]
+        seen, out = set(), []
+        for h in hits:
+            k = re.sub(r"[0-9]+", "N", h)
+            if k not in seen:
+                seen.add(k)
+                out.append(h)
+        print(f"  {len(hits)} error-ish lines, {len(out)} distinct shapes")
+        for h in out[:a.limit]:
+            print("   ", h.strip()[:170])
+        return 0
+    if a.dirs:
+        d = sorted(set(re.findall(r"load(?:File)?Directory\('Data.INI.([A-Za-z]+)'\)", text)))
+        print(f"  {len(d)} additive directories scanned by THIS build:")
+        print("   ", " ".join(d))
+        return 0
+    for line in text.splitlines():
+        if re.search(a.pattern, line):
+            print("  " + line.strip()[:170])
+    return 0
+
+
+if __name__ == "__main__":
+    import argparse
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(required=True)
+
+    s = sub.add_parser("shot", help="screenshot and report the coordinate scales")
+    s.add_argument("--out", default="/tmp/zh.png"); s.add_argument("--width", type=int, default=900)
+    s.set_defaults(fn=cmd_shot)
+
+    c = sub.add_parser("click", help="click, in SCALED-SCREENSHOT coordinates")
+    c.add_argument("x", type=int); c.add_argument("y", type=int)
+    c.add_argument("--width", type=int, default=900)
+    c.set_defaults(fn=cmd_click)
+
+    k = sub.add_parser("key", help="press a key (cliclick key name, e.g. esc, return)")
+    k.add_argument("name"); k.set_defaults(fn=cmd_key)
+
+    w = sub.add_parser("wait", help="block until a regex appears in the engine log")
+    w.add_argument("pattern"); w.add_argument("--timeout", type=int, default=90)
+    w.set_defaults(fn=cmd_wait)
+
+    g = sub.add_parser("log", help="query the captured engine log")
+    g.add_argument("pattern", nargs="?", default=".")
+    g.add_argument("--errors", action="store_true", help="distinct error-shaped lines only")
+    g.add_argument("--dirs", action="store_true", help="the additive directory list")
+    g.add_argument("--limit", type=int, default=25)
+    g.set_defaults(fn=cmd_log)
+
+    a = p.parse_args()
+    sys.exit(a.fn(a) or 0)

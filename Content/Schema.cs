@@ -605,12 +605,18 @@ public sealed class ZhTargetDto
     public string? TerrainType { get; set; }
 
     /// <summary>
-    /// Resolved terrain type. <c>desertA</c> is a name COPIED from a retail Terrain.ini block,
-    /// not one that sounded right — the first draft of this said "DesertSand01", which is
-    /// plausible, absent, and would have drawn an untextured map with no error. Sixth time
-    /// that shape has bitten; the rule is the same as for their closed enums.
+    /// Resolved terrain type. Getting this right took THREE goes and the last two both looked
+    /// right:
+    ///   "DesertSand01" — invented, plausible, absent. The usual trap.
+    ///   "desertA"      — a REAL retail block, copied from Terrain.ini... whose texture
+    ///                    T_desert_A_01.tga does not ship. The map rendered black.
+    ///   "SandMediumType2" — a real block whose texture TMSand02a.tga is really in the
+    ///                    archives, which is the only check that means anything.
+    /// <b>12 of retail's own 291 Terrain blocks are dangling this way</b>, the same defect
+    /// class as the 88 dangling object references in ZERO-HOUR-ANATOMY. Naming a real block is
+    /// NOT sufficient; the texture behind it has to exist, and readTexClass fails silently.
     /// </summary>
-    public string Terrain => TerrainType ?? "desertA";
+    public string Terrain => TerrainType ?? "SandMediumType2";
 
     /// <summary>
     /// Our faction id -> the retail BASE side whose UI chrome it borrows ("USA", "China",
