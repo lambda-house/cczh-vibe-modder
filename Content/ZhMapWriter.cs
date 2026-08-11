@@ -65,7 +65,7 @@ public static class ZhMapWriter
     {
         public byte[] Bytes = Array.Empty<byte>();
         public int Width, Height, PlayableWidth, PlayableHeight;
-        public int BlockedCells;
+        public int BlockedCells, Objects;
         public List<string> Notes = new();
         public List<(string Name, double X, double Y)> Waypoints = new();
     }
@@ -77,7 +77,8 @@ public static class ZhMapWriter
     /// must be contiguous and there must be at least two for a skirmish map.
     /// </summary>
     public static Result Write(PassabilityGrid grid, double worldScale, string terrainType,
-                               string mapNameTag, IReadOnlyList<(Fix64 X, Fix64 Y)> starts)
+                               string mapNameTag, IReadOnlyList<(Fix64 X, Fix64 Y)> starts,
+                               IReadOnlyList<MapObjectDto>? objects = null)
     {
         var res = new Result();
 
@@ -178,6 +179,16 @@ public static class ZhMapWriter
         }
         WriteWaypoint(w, "InitialCameraPosition", waypointId, zhSpanX / 2.0, zhSpanY / 2.0);
         res.Waypoints.Add(("InitialCameraPosition", zhSpanX / 2.0, zhSpanY / 2.0));
+
+        // Placed objects. Same chunk as the waypoints and the same world frame: ours is
+        // centred on the origin, theirs starts at the playable corner.
+        foreach (var o in objects ?? Array.Empty<MapObjectDto>())
+        {
+            double zx = Math.Clamp(o.X * worldScale + zhSpanX / 2.0, 0, zhSpanX);
+            double zy = Math.Clamp(o.Y * worldScale + zhSpanY / 2.0, 0, zhSpanY);
+            WriteObject(w, o, zx, zy);
+            res.Objects++;
+        }
         w.Close();
 
         w.Open("PolygonTriggers", 4);
@@ -268,6 +279,29 @@ public static class ZhMapWriter
 
         w.Open("PlayerScriptsList", 1);
         w.Close();
+        w.Close();
+    }
+
+    /// <summary>
+    /// A placed object. Unlike a waypoint this becomes a REAL object at load, which is why the
+    /// owner matters: <c>GameLogic</c> looks it up with <c>PlayerList::validateTeam</c>, whose
+    /// miss path is a <c>DEBUG_CRASH</c> before it falls back — and DEBUG_CRASH is compiled
+    /// into this build.
+    /// </summary>
+    private static void WriteObject(ChunkWriter w, MapObjectDto o, double x, double y)
+    {
+        w.Open("Object", 3);
+        w.F32(x); w.F32(y); w.F32(0);
+        w.F32(o.Angle * Math.PI / 180.0);      // their field is radians
+        w.I32(0);
+        w.Str(o.Template);
+        w.Dict(d =>
+        {
+            d.Str("originalOwner", string.IsNullOrWhiteSpace(o.Owner) ? "team" : o.Owner);
+            d.Str("uniqueID", $"{o.Template}_{(int)x}_{(int)y}");
+            d.Int("objectInitialHealth", 100);
+            d.Bool("objectEnabled", true);
+        });
         w.Close();
     }
 

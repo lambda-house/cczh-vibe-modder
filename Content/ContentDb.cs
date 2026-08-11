@@ -297,6 +297,10 @@ public sealed class ContentDb
     /// <see cref="HasPassability"/>: water blocks movement and hides nothing.</summary>
     public bool HasLineOfSight;
 
+    /// <summary>Objects to place on the EMITTED ZH map. Compile-only: they are a scenario
+    /// instruction for the other engine, exist in no simulation here, and touch no hash.</summary>
+    public List<MapObjectDto> MapObjects = new();
+
     public RankDef[] Ranks = Array.Empty<RankDef>();
     public ScienceDef[] Sciences = Array.Empty<ScienceDef>();
     public Dictionary<string, int> ScienceIndexById = new(StringComparer.Ordinal);
@@ -894,6 +898,7 @@ public sealed class ContentDb
         db.HasGarrison = db.Units.Any(u => u.GarrisonCapacity > 0);
         db.HasCapture = db.Units.Any(u => u.CaptureTicks > 0 || u.DepositAmount > 0);
         db.Map = CompileMap(dto.Map, errors, warnings);
+        db.MapObjects = dto.Map?.Objects ?? new List<MapObjectDto>();
         // Opt-in by CONSEQUENCE, not by presence. A map every unit can cross everywhere
         // changes no movement, so it must change no hash — otherwise "I added terrain and
         // all my replays broke" would be true even when the terrain does nothing.

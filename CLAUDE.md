@@ -798,12 +798,15 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
     GeneralsX's own tree — the source of the running build. So a wall that gives COVER here
     gives only a DETOUR there, `ZhLint` reports it per map, and a balance measurement that
     leans on cover does not transfer.
-    *Source-derived, NOT yet confirmed in a match — and the attempt failed for a mechanical
-    reason worth recording: a decisive test needs two hostile units within weapon range across
-    a thin wall, and nothing here can arrange that. Spawns are fixed at ±40 world units, which
-    is eight times any gun's range, so the pair has to WALK into contact and be micro'd there.
-    The real fix is placing objects in the emitted `.map` — `ObjectsList` already supports it
-    and `ZhMapWriter` writes only waypoints into it today.*
+    **CONFIRMED IN A REAL MATCH**, once slice 16 made the test constructible. A map with a
+    two-cell cliff wall beside the player start and a neutral Crusader placed 72 world units
+    beyond it — inside the hellhound's 80 — with the plateau squarely between. Force-fire
+    across the wall: the target's health bar went 96px pure green -> 62px yellow -> gone, and
+    the tank was left as a scorch mark. **Our unit never moved.** It shot through a cliff that
+    its own pathfinder will not cross, from a standstill, and killed what was behind it.
+    *The order matters: an ordinary right-click on a NEUTRAL object is a move order, not an
+    attack, and the first attempt looked like LOS blocking when it was simply no order at all.
+    Ctrl+click force-fire is the one that tests anything.*
 
 ## Roadmap: the ASSET MODEL
 
@@ -853,10 +856,16 @@ furniture is borrowed on purpose.
     retail USES, which has a measured profile, or AUTHOR one, which declares its profile as it
     is written. "2,928 models are free to adopt" remains true about rendering and stays false
     about behaviour.
-16. **Place objects in the emitted `.map`.** (S-M) *`ObjectsList` already carries arbitrary
-    objects with a position and an owner dict; we write only waypoints into it. Unlocks
-    scenario maps, tech buildings and supply docks — and it is what would settle the open LOS
-    question, which needs two hostiles within weapon range across a thin wall.*
+16. ~~**Place objects in the emitted `.map`.**~~ — done. `map.objects` places a template at a
+    position in OUR world units; the writer converts and emits it into `ObjectsList` beside
+    the waypoints. Confirmed in a real match: a placed retail Crusader appeared exactly where
+    the map put it.
+    **The owner is the trap.** `GameLogic` resolves it with `PlayerList::validateTeam`, whose
+    miss path is a `DEBUG_CRASH` *before* it falls back to neutral — and DEBUG_CRASH is
+    compiled into this build, same as rule 1. Only `"team"`, the neutral side's default, is
+    safe from a compiled map: a skirmish opponent's name exists in the LOBBY, not in the map's
+    `SidesList`, so naming one is the crash rather than the fallback.
+    *This is what finally settled the LOS question below.*
 17. **Author an `FXList` and a `ParticleSystem`.** (M) *Both directories are scanned — measured
     from the boot log, after this file asserted the opposite from source and was wrong. Today
     an adopted mesh inherits a peer's death FX and a fully AUTHORED one dies silently and

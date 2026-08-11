@@ -1751,6 +1751,39 @@ PYART
       || { echo "  the carried mesh differs from its source"; exit 1; }
     echo "  a pack ships its own mesh, and the compiled output carries it byte-identically"
   fi
+
+  # --- 4. Objects placed on the map survive into the emitted .map. ---------------------
+  # Checked by the independent reader, and the OWNER is checked by name: GameLogic resolves
+  # it with PlayerList::validateTeam, whose miss path is a DEBUG_CRASH before it falls back,
+  # and DEBUG_CRASH is compiled into this build. "team" — the neutral side's default — is the
+  # only owner a compiled map can safely name; a skirmish opponent exists in the LOBBY, not
+  # in the map's SidesList.
+  python3 - "$AS" <<'PYOBJ'
+import json, re, sys
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/chokepoint.json').read(), flags=re.M))
+d['meta']['name'] = 'e2eplaced'
+d['map']['objects'] = [{"template": "AmericaTankCrusader", "x": 6.0, "y": -4.0, "owner": "team"}]
+open(f'{sys.argv[1]}/placed.json', 'w').write(json.dumps(d))
+PYOBJ
+  rts compile --target zh --out "$AS/pl" --mod "$AS/placed.json" >/dev/null
+  python3 - "$AS/pl/Maps/e2eplaced_map/e2eplaced_map.map" <<'PYRD'
+import sys
+ns = {"__name__": "x", "__file__": "tools/zhasset"}
+exec(compile(open("tools/zhasset").read().split("def main(")[0], "zhasset", "exec"), ns)
+b, _ = ns["map_load"](sys.argv[1])
+m = ns["map_parse"](b)
+placed = [o for o in m["objects"] if o["template"]]
+if len(placed) != 1:
+    print(f"  EXPECTED 1 PLACED OBJECT, got {len(placed)}"); sys.exit(1)
+o = placed[0]
+if o["dict"].get("originalOwner") != "team":
+    print(f"  UNSAFE OWNER {o['dict'].get('originalOwner')!r}: an unknown team is a "
+          f"DEBUG_CRASH at load, not a fallback to neutral"); sys.exit(1)
+# our (6,-4) at worldScale 16 -> +96,-64 from the playable centre
+if not (860 < o["x"] < 960 and 660 < o["y"] < 760):
+    print(f"  PLACED AT THE WRONG POSITION: {o['x']:.0f},{o['y']:.0f}"); sys.exit(1)
+print(f"  a placed object round-trips at ZH ({o['x']:.0f},{o['y']:.0f}) owned by 'team'")
+PYRD
 fi
 rm -rf "$AS"; trap - EXIT
 

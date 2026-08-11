@@ -693,6 +693,43 @@ public sealed class MapDto
     /// <summary>Surface beyond the grid. Clear by default, so a map is a set of obstacles in
     /// an open plane rather than a box a unit can be spawned outside of and trapped.</summary>
     public string Outside { get; set; } = "clear";
+
+    /// <summary>
+    /// Objects placed on the emitted ZH map — scenery, tech buildings, supply piles, a target
+    /// to shoot at. Positions are in OUR world units, centred on the origin like everything
+    /// else, and are converted on the way out.
+    ///
+    /// These do NOT exist in our simulation. The map block is terrain to us; this is a
+    /// scenario instruction for the other engine, which is why it lives here rather than
+    /// alongside units and why it changes no hash.
+    /// </summary>
+    public List<MapObjectDto> Objects { get; set; } = new();
+}
+
+public sealed class MapObjectDto
+{
+    /// <summary>A ThingTemplate name that must already exist in the target — a retail object,
+    /// or one this pack emits. Nothing validates it here; the engine skips an unknown template
+    /// with a warning rather than crashing.</summary>
+    public string Template { get; set; } = "";
+
+    public double X { get; set; }
+    public double Y { get; set; }
+
+    /// <summary>Facing, in degrees. Their field is radians; converted on the way out.</summary>
+    public double Angle { get; set; }
+
+    /// <summary>
+    /// Team that owns it. <c>"team"</c> is the NEUTRAL side's default team, which is what
+    /// retail's own map objects use and the only owner an emitted map can safely name.
+    ///
+    /// <b>An unknown owner is not a fallback, it is a crash.</b>
+    /// <c>PlayerList::validateTeam</c> guards the miss with <c>DEBUG_CRASH</c> — compiled into
+    /// this build, which is the same reason a duplicate INI block aborts the boot — and only
+    /// then returns the neutral team. Naming a player that exists solely in the lobby, such as
+    /// a skirmish opponent, is exactly that mistake.
+    /// </summary>
+    public string Owner { get; set; } = "team";
 }
 
 public sealed class LintConfigDto

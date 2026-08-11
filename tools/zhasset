@@ -932,6 +932,223 @@ def cmd_artvalidate(a):
     return 0
 
 
+# ============================================================================================
+# DOSSIER — everything about one object, resolved, with its whole ASSET CLOSURE.
+#
+# WHY THIS EXISTS
+#     `catalogue` gives ten summary fields per object, which answers "what is in the game" and
+#     not "how do I make another one of these". The operation an authoring agent actually needs
+#     is: find the nearest existing thing, get EVERYTHING it is made of, change some of it, emit
+#     it back. That requires the object's full definition AND the transitive closure of the art
+#     it names — model, the textures inside that model, animations, death effects, sounds, and
+#     the icons, which are a two-hop lookup nobody guesses right first time
+#     (SelectPortrait -> MappedImage -> a rectangle in a shared texture page).
+#
+#     Every hop below is one that has silently failed at least once in this project: a model
+#     that resolves to no file, a TerrainType whose texture ships in nothing, a MappedImage with
+#     no texture behind it rendering as a blank tile.
+# ============================================================================================
+
+def mapped_images(ini):
+    """MappedImage name -> {texture, coords}. Two hops from an object's SelectPortrait to a
+    rectangle in a shared page, and the middle hop is the one that fails silently."""
+    out = {}
+    root = os.path.join(ini, "MappedImages")
+    if not os.path.isdir(root):
+        return out
+    for dirpath, _, files in os.walk(root):
+        for fn in files:
+            if not fn.lower().endswith(".ini"):
+                continue
+            for kind, name, lines in ini_blocks(os.path.join(dirpath, fn)):
+                if kind != "MappedImage":
+                    continue
+                out[name.lower()] = {"name": name, "texture": field(lines, "Texture"),
+                                     "coords": field(lines, "Coords"),
+                                     "textureWidth": field(lines, "TextureWidth"),
+                                     "textureHeight": field(lines, "TextureHeight")}
+    return out
+
+
+def model_textures(idx, model):
+    """The texture files named INSIDE a .w3d. An object's INI never mentions them, so this is
+    the only way to know what a mesh actually paints itself with."""
+    e = idx.get(model.lower())
+    if not e:
+        return None
+    arc, off, size = e
+    with open(arc, "rb") as f:
+        f.seek(off)
+        d = f.read(size)
+    tex, anims = [], []
+    for _, name, ctype, sz, payload in w3d_walk(d):
+        if name == "TEXTURE_NAME" and payload:
+            t = payload.split(b"\0")[0].decode("latin-1")
+            if t and t not in tex:
+                tex.append(t)
+        elif name == "ANIMATION_HEADER" and payload and len(payload) >= 36:
+            hier = payload[20:36].split(b"\0")[0].decode("latin-1")
+            nm = payload[4:20].split(b"\0")[0].decode("latin-1")
+            anims.append(f"{hier}.{nm}")
+    return {"textures": tex, "animations": anims}
+
+
+def draw_states(lines):
+    """Model per ModelConditionState, which is where BUILDING ASSEMBLY lives.
+
+    A structure's construction is not a separate asset: it is ModelConditionStates —
+    ACTIVELY_BEING_CONSTRUCTED, PARTIALLY_CONSTRUCTED, and the DOOR_n_OPENING states a factory
+    plays to let a unit out. A unit list that reports only the default model misses the whole
+    build-up sequence and the reason a queue can fill and never drain.
+    """
+    states, cur = [], None
+    for ln in lines:
+        st = ln.strip()
+        m = re.match(r"(DefaultConditionState|ConditionState)\s*=?\s*(.*)$", st)
+        if m:
+            cur = {"condition": m.group(2).strip() or "DEFAULT"}
+            states.append(cur)
+            continue
+        if cur is None:
+            continue
+        for key in ("Model", "Animation", "Turret", "WeaponLaunchBone", "WeaponFireFXBone",
+                    "WeaponMuzzleFlash", "HideSubObject", "ShowSubObject"):
+            mm = re.match(rf"{key}\s*=\s*(.+)$", st)
+            if mm:
+                # ASSIGN, never setdefault: the keys were pre-initialised to None once, and
+                # setdefault then refused every real value — every state reported model=None
+                # while the file plainly named one.
+                cur[key[0].lower() + key[1:]] = mm.group(1).strip()
+    return states
+
+
+def cmd_dossier(a):
+    """Everything about one object, in the form an agent can clone and edit."""
+    cat_path = os.path.join(DEF_OUT, "zh-catalogue.json")
+    if not os.path.exists(cat_path):
+        return print(f"  no catalogue at {cat_path} — run `zhasset catalogue` first")
+    cat = json.load(open(cat_path))
+
+    want = a.object.lower()
+    hit = next((k for k in cat["objects"] if k.lower() == want), None)
+    if hit is None:
+        near = [k for k in cat["objects"] if want in k.lower()][:12]
+        return print(f"  no object '{a.object}'." + (f" Did you mean: {', '.join(near)}" if near else ""))
+
+    obj = cat["objects"][hit]
+
+    # The verbatim block, because a clone starts from the real text and not from our summary.
+    block = None
+    objdir = os.path.join(a.ini, "Object")
+    for fn in sorted(os.listdir(objdir)):
+        if not fn.lower().endswith(".ini"):
+            continue
+        for kind, name, lines in ini_blocks(os.path.join(objdir, fn)):
+            if kind == "Object" and name == hit:
+                block = lines
+                break
+        if block:
+            break
+    if block is None:
+        return print(f"  '{hit}' is in the catalogue but its block was not found in {objdir}")
+
+    idx = w3d_index(a.game)
+    mi = mapped_images(a.ini)
+
+    def resolve_icon(name):
+        if not name:
+            return None
+        e = mi.get(name.lower())
+        return {"image": name, **({k: v for k, v in e.items() if k != "name"} if e else
+                                 {"MISSING": "no MappedImage declares this name"})}
+
+    models, assets = [], {}
+    for st in draw_states(block):
+        if st.get("model") and st["model"].lower() not in ("none", "nomodel"):
+            models.append(st["model"])
+    for m in dict.fromkeys(models):
+        assets[m] = model_textures(idx, m) or {"MISSING": "no .w3d ships with this name"}
+
+    weapons = {}
+    for slot in re.findall(r"Weapon\s*=\s*(\S+)\s+(\S+)", "\n".join(block)):
+        weapons[slot[0]] = {"weapon": slot[1], **cat["weapons"].get(slot[1], {})}
+
+    dossier = {
+        "object": hit,
+        "file": obj.get("file"),
+        "side": obj.get("side"),
+        "buildCost": obj.get("buildCost"),
+        "buildTime": obj.get("buildTime"),
+        "kindOf": obj.get("kindOf"),
+        "isStructure": obj.get("isStructure"),
+        "commandSet": obj.get("commandSet"),
+        "prerequisites": [l.strip() for l in block
+                          if re.match(r"\s*(Object|Science)\s*=", l) and "Prereq" not in l][:8],
+        "armor": {(m.group(1) if (m := re.search(r"Armor\s*=\s*(\S+)", l)) else None): None
+                  for l in block if "Armor" in l and "=" in l}.keys().__iter__().__next__()
+                 if any("Armor" in l for l in block) else None,
+        "locomotor": next((re.search(r"Locomotor\s*=\s*\S+\s+(\S+)", l).group(1)
+                           for l in block if re.match(r"\s*Locomotor\s*=", l)
+                           and re.search(r"Locomotor\s*=\s*\S+\s+(\S+)", l)), None),
+        "weapons": weapons,
+        # Where the build-up and the door animations live.
+        "drawStates": draw_states(block),
+        # The asset closure: what each model paints itself with, and what it animates.
+        "assets": assets,
+        "icons": {
+            "selectPortrait": resolve_icon(field(block, "SelectPortrait")),
+            "buttonImage": resolve_icon(field(block, "ButtonImage")),
+        },
+        "sounds": {k: field(block, k) for k in
+                   ("VoiceSelect", "VoiceMove", "VoiceAttack", "VoiceGuard", "VoiceCreate",
+                    "SoundAmbient", "SoundDie", "SoundMoveStart", "UnitSpecificSounds")
+                   if field(block, k)},
+        # Death: FXList / ObjectCreationList names, i.e. the explosion graph's entry points.
+        "death": sorted({m.group(2) for l in block
+                         if (m := re.match(r"\s*(FX|OCL|FXList|DeathFX)\s*=\s*(?:\S+\s+)?(\S+)", l))}),
+        "buildableBy": [side for side, roster in cat["rosterBySide"].items() if hit in roster],
+        "verbatim": block if a.verbatim else f"{len(block)} lines (pass --verbatim)",
+    }
+
+    if a.json:
+        print(json.dumps(dossier, indent=2))
+        return 0
+
+    print(f"  {hit}   side={dossier['side']}  cost={dossier['buildCost']}  "
+          f"time={dossier['buildTime']}  structure={dossier['isStructure']}")
+    print(f"  kindOf: {' '.join((dossier['kindOf'] or [])[:10])}")
+    print(f"  commandSet: {dossier['commandSet']}   buildable by: {dossier['buildableBy'] or '-'}")
+    print(f"  locomotor: {dossier['locomotor']}   weapons: "
+          f"{', '.join(f'{k}={v[chr(39)+chr(39)] if False else v['weapon']}' for k, v in weapons.items()) or '-'}")
+    sts = [x["condition"] for x in dossier["drawStates"]]
+    print(f"  draw states: {len(sts)}"
+          + (f"   construction: {sum('CONSTRUCT' in x for x in sts)}" if any('CONSTRUCT' in x for x in sts) else "")
+          + (f"   door: {sum('DOOR' in x for x in sts)}" if any('DOOR' in x for x in sts) else ""))
+    for st in dossier["drawStates"][:8]:
+        extra = " ".join(f"{k}={v}" for k, v in st.items()
+                         if k not in ("condition", "model") and v)
+        print(f"    {st['condition'][:44]:44s} model={st['model']} {extra}")
+    ntex = len({t for v in assets.values() for t in v.get("textures", [])})
+    print(f"  assets: {len(assets)} models, {ntex} distinct textures")
+    for m, v in list(assets.items())[:6 if not a.json else len(assets)]:
+        if "MISSING" in v:
+            print(f"    {m:20s} !! {v['MISSING']}")
+        else:
+            tx = v["textures"]
+            shown = ", ".join(tx[:6]) + (f", +{len(tx) - 6} more" if len(tx) > 6 else "")
+            print(f"    {m:20s} {len(tx):3d} textures [{shown}]"
+                  + (f" anims={v['animations']}" if v["animations"] else ""))
+    for k, v in dossier["icons"].items():
+        if v:
+            print(f"  {k}: {v.get('image')} -> {v.get('texture') or v.get('MISSING')} "
+                  f"{v.get('coords') or ''}")
+    if dossier["sounds"]:
+        print(f"  sounds: {dossier['sounds']}")
+    if dossier["death"]:
+        print(f"  death FX/OCL: {' '.join(dossier['death'][:8])}")
+    return 0
+
+
 def cmd_show(a):
     cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
     q = a.thing
@@ -1933,6 +2150,12 @@ def main():
                         help="can an art profile be DERIVED from the mesh? (measured answer: no)")
     av.add_argument("--profiles")
     av.set_defaults(fn=cmd_artvalidate)
+
+    do = sub.add_parser("dossier", help="everything about one object, with its asset closure")
+    do.add_argument("object")
+    do.add_argument("--json", action="store_true")
+    do.add_argument("--verbatim", action="store_true", help="include the raw INI block")
+    do.set_defaults(fn=cmd_dossier)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")

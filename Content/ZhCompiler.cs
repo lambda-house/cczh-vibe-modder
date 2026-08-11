@@ -995,7 +995,8 @@ public static class ZhCompiler
                 (Fix64.FromInt(40), Fix64.Zero),
             };
             string mapName = pack + "_map";
-            var m = ZhMapWriter.Write(grid, zh.Scale, zh.Terrain, "MAP:" + mapName, starts);
+            var m = ZhMapWriter.Write(grid, zh.Scale, zh.Terrain, "MAP:" + mapName, starts,
+                                      db.MapObjects);
 
             string mapDir = Path.Combine(outRoot, "Maps", mapName);
             Directory.CreateDirectory(mapDir);
