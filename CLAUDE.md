@@ -352,6 +352,10 @@ something in a match.
   `ControlBarScheme` authors in (`ScreenCreationRes X:800 Y:600`) and it does not move when
   the window does.
 
+Launch with **`-quickstart`** (= `-nologo -noshellmap` + no window animation). `parseNoLogo`
+sets `m_playIntro = FALSE`, which is the supported way past the intro movie; pressing `esc` at
+it was always a workaround and it is what made the first drives flaky.
+
 **Every step must be CONFIRMED, never slept through.** The first scripted drive slept fixed
 intervals, fired all three clicks into the intro movie and reported "in match (probably)".
 The rewrite waits on a *signal* per step — a log line where one exists
@@ -360,6 +364,20 @@ The rewrite waits on a *signal* per step — a log line where one exists
 click pair when it did not land. **It needed that retry on its very first run.**
 *Accessibility is granted to the RESPONSIBLE PROCESS: Terminal.app when Claude Code runs as
 its child, the `claude` binary when it runs as a daemon. Granting the wrong one is silent.*
+
+Four traps, each of which cost a run:
+- **Focus first, every attempt.** macOS eats the first click on an unfocused window. Attempt 1
+  failed on EVERY drive — deterministically, and that determinism is the tell. A stolen focus
+  also corrupts PIXEL READS, which is worse than a lost click because another app's colours
+  come back as data rather than as an error.
+- **Park the cursor centre after every click.** An RTS scrolls whenever the pointer rests near
+  an edge, and a build button at the bottom of the command bar IS in the scroll margin — so
+  clicking one and then pausing pans the world out from under every later world coordinate.
+- **Identify a menu by COUNTING its buttons, not by probing a point.** Main menu 6, Solo Play
+  submenu 7, and they are offset — so one screen's text pixel is the next screen's border.
+  Each button draws a top and bottom border, so the cyan runs come in PAIRS: divide by two.
+- **`esc` does not leave the Solo Play submenu**, which has only a BACK button. A retry that
+  only presses `esc` waits forever on a screen it cannot leave.
 
 **Observe needs no permission and answers every LOAD-TIME question**, which is where every
 bug so far has actually lived. Act buys "click build and see" and nothing before it.
