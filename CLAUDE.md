@@ -226,12 +226,29 @@ one there (rule 3), and touch weapons only alongside an object override (rule 4)
    death FX — the price of adoption, not an unfinished edge.
    *The compiler now writes ART, which it never did before. A `MappedImage` whose texture is
    absent renders as a blank tile with no error, so both halves are emitted or neither.*
-16. **`FXList` IS additively loadable on this build; `ParticleSystem` is NOT.** Settled from
-   GeneralsX's source rather than by probe: it passes `"Data\INI\FXList"` as a dirpath where
-   EA passes none — the same divergence as `Science` — while `TheParticleSystemManager` gets
-   `nullptr` and particles live in a monolithic `Data/INI/ParticleSystem.ini` that the in-game
-   editor rewrites in place. So an authored FXList composing RETAIL particle systems is
-   reachable; an authored particle system is not, without clobbering their file.
+16. **The additive directory list is MEASURED FROM THE BOOT LOG, and 42 types are scanned.**
+   `./run-logged.sh` captures it (see below); the list this build actually scans is:
+   `AIData Armor AudioSettings Campaign ChallengeMode CommandButton CommandMap CommandSet
+   ControlBarScheme Crate DamageFX DrawGroupInfo Eva FXList GameData GameLOD GameLODPresets
+   InGameUI Locomotor MiscAudio Mouse Multiplayer Music Object ObjectCreationList
+   ParticleSystem PlayerTemplate Rank Roads Science ShellMenuScheme SoundEffects SpecialPower
+   Speech Terrain Upgrade Video Voice Water Weapon Weather WindowTransitions`.
+   **`FXList` AND `ParticleSystem` are both there.** *An earlier version of this entry said
+   ParticleSystem was NOT loadable, reasoned from `initSubsystem(TheParticleSystemManager,
+   ..., nullptr)` in GeneralsX's source — and it was WRONG: the manager's own `init()` calls
+   `loadFileDirectory` internally, which no amount of reading the call site reveals.* That is
+   this file's own rule ("check the boot log's `loadDirectory` lines — not the source")
+   violated by the person who wrote it. Note `GameData` is scanned and still does nothing
+   (rule 11): a directory being scanned is necessary, not sufficient.
+17. **The engine logs copiously and `run.sh` throws it away.** `GeneralsXZH` writes `[INI]`,
+   `[CSF]`, `[SUBSYS]`, `[Skirmish]` and `[SHUTDOWN]` lines to stdout — ~12,400 of them for
+   one boot. `~/GeneralsX/GeneralsZH/run-logged.sh` captures them to `logs/latest.log`
+   through a pty (plain redirection block-buffers and loses the tail of a crashed run).
+   *EA's own `DEBUG_LOG` layer is a separate thing and IS compiled out here — `strings` finds
+   `ReleaseCrashInfo.txt` but no `DebugLogFile`. Looking for that file, not finding it, and
+   concluding "this build has no logging" is the trap; GeneralsX's logging is always on.*
+   Rebuilding with `-DRTS_DEBUG_LOGGING=ON` would add EA's layer, but that build stops in
+   DXVK for want of `glslangValidator` and has not been needed.
 
 **VALIDATED END TO END, IN A REAL MATCH.** A faction authored here is selectable in the
 skirmish dropdown, has a working command bar, builds a unit authored here, and that unit
