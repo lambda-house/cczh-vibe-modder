@@ -788,10 +788,22 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
     halts both armies at it in a long attritional exchange; an opaque one denies acquisition,
     so they keep moving to the gate and settle it in one concentrated fight. Cover changes
     what a chokepoint MEANS, not merely how long it takes to walk around.
-    *Not yet verified in the retail engine. Their LOS is height-derived and our blocking cells
-    are already emitted as a plateau clearing their cliff threshold, so the intent should
-    transfer — but `TerrainLogic::isClearLineOfSight` lives behind the renderer and which
-    weapons honour it is unchecked. Gate 25 is the place to settle it.*
+    **COVER DOES NOT TRANSFER, and it is the reverse of what this slice assumed.** ZH HAS the
+    check — `Weapon::isClearFiringLineOfSightTerrain` — and its single call site in
+    `TurretAI.cpp` is **commented out**, with EA's own note that some weapons (Tomahawk) must
+    fire beyond LOS. The only live consumer is `Pathfinder::isAttackViewBlockedByObstacle`,
+    which uses terrain LOS to choose where to STAND, and skips it entirely for
+    `KINDOF_IMMOBILE` ("we can't move around it"). `isWithinAttackRange` is pure distance, so
+    TurretAI's comment that it "checks terrain los now" is stale. Verified identical in
+    GeneralsX's own tree — the source of the running build. So a wall that gives COVER here
+    gives only a DETOUR there, `ZhLint` reports it per map, and a balance measurement that
+    leans on cover does not transfer.
+    *Source-derived, NOT yet confirmed in a match — and the attempt failed for a mechanical
+    reason worth recording: a decisive test needs two hostile units within weapon range across
+    a thin wall, and nothing here can arrange that. Spawns are fixed at ±40 world units, which
+    is eight times any gun's range, so the pair has to WALK into contact and be micro'd there.
+    The real fix is placing objects in the emitted `.map` — `ObjectsList` already supports it
+    and `ZhMapWriter` writes only waypoints into it today.*
 
 Both design decisions this roadmap owed an answer to are now ANSWERED:
 **(a)** ~~flag changes re-select loadouts~~ — `LoadoutSystem` runs between

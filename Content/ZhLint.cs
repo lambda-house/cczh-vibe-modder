@@ -251,6 +251,24 @@ public static class ZhLint
                 r.Divergence.Add($"map resolution: one authored cell is {zhPerOurCell:0.00} of a ZH " +
                                  $"pathfind cell, so features narrower than {Math.Ceiling(1 / zhPerOurCell)} " +
                                  $"cells may not survive the resample. Raise zh.worldScale or cellSize.");
+            // LINE OF SIGHT DOES NOT TRANSFER, and this is the reverse of what the terrain
+            // work assumed. Their engine HAS the check — Weapon::isClearFiringLineOfSightTerrain
+            // — and its one call site in TurretAI.cpp is COMMENTED OUT, with a note that some
+            // weapons (Tomahawk) must fire beyond LOS. The only live consumer is
+            // Pathfinder::isAttackViewBlockedByObstacle, which uses it to pick where to STAND,
+            // and which skips it entirely for KINDOF_IMMOBILE. Verified identical in
+            // GeneralsX's own tree, i.e. the source of the running build.
+            // Consequence: a wall that gives cover HERE gives only a detour THERE.
+            int sight = 0;
+            for (int c = 0; c < pm.CellCount; c++)
+                if (Runtime.PassabilityGrid.BlocksSight(pm.At(c))) sight++;
+            if (sight > 0)
+                r.Divergence.Add($"{sight} cell(s) block LINE OF SIGHT here and will not there. " +
+                                 $"ZH checks firing LOS nowhere: Weapon::isClearFiringLineOfSightTerrain " +
+                                 $"is commented out at its only call site (TurretAI.cpp), and terrain LOS " +
+                                 $"survives only in the pathfinder's choice of firing position. Cover is " +
+                                 $"OURS alone — a measurement that depends on it does not transfer.");
+
             if (soft > 0)
                 r.Divergence.Add($"{soft} water/rubble cell(s) are emitted as OPEN GROUND. Water needs a " +
                                  $"PolygonTrigger with isWater and rubble has no height analogue; only " +
