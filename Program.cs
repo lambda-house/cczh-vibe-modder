@@ -290,7 +290,13 @@ public static class Program
         // survive compilation to their engine, and will it still mean what we measured".
         if (Opt(args, "--target", "") == "zh")
         {
-            var zr = ZhLint.Check(db, ContentDb.LoadZhTarget(contentPath));
+            // The install is the authority on what art exists. Absent (CI, a fresh clone)
+            // the index is unusable and the resolve check SKIPS — a check that cannot run
+            // must never look like a check that failed.
+            var assets = AssetIndex.Load(Opt(args, "--game-dir",
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                             "GeneralsX", "GeneralsZH")));
+            var zr = ZhLint.Check(db, ContentDb.LoadZhTarget(contentPath), assets);
             Console.WriteLine();
             Console.WriteLine($"target zh — {zr.Checked} value(s) round-trip checked");
 

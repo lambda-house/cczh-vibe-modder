@@ -812,13 +812,18 @@ own order. The governing line is already measured and does not move: **a pack on
 authored art borrows 8 retail names, and all 8 are the `zh.sides` HUD.** Content is ours; UI
 furniture is borrowed on purpose.
 
-14. **A pack must CARRY its art, and lint must prove every reference resolves.** (S)
-    *`rts compile` emits INI and exactly one texture — the icon sheet. Every `.w3d` a pack
-    names was copied into the install BY HAND, and `zh.models` is only checked for having a
-    mapping, never for the file existing. Name a mesh that is not there and you get an
-    invisible unit with no error anywhere: the `desertA` failure class, which has already
-    reached a real match once. We can read `.big` TOCs and the loose `Art/` tree, so resolving
-    every name a pack emits is cheap and total.*
+14. ~~**A pack must CARRY its art, and lint must prove every reference resolves.**~~ — done.
+    `zh.art` lists the files a pack ships and the compiler copies them into the output, routed
+    by extension (`.w3d` to `Art/W3D`, images to `Art/Textures`). `AssetIndex` reads the `.big`
+    tables of contents directly plus the loose `Art/` tree — **25,346 assets on this install**
+    — and lint refuses any `zh.models` name that resolves to neither an installed asset nor
+    one the pack ships.
+    *A MAPPING is not a MODEL: the old check only asked whether a `zh.models` entry existed.
+    A typo, or an authored mesh not yet built, produced a unit that moves, shoots, dies and
+    cannot be seen or clicked, with no error from the engine — the `desertA` shape.*
+    **Absent is not failure.** With no install the index is unusable and the check SKIPS; a
+    check that cannot run must never look like a check that failed. Only names are read from
+    the archives, never bytes.
 15. **Derive art profiles FROM THE MESH.** (M) *"2,928 models are free to adopt" and "none of
     them has a measured profile" are the same fact — they are free because nothing uses them,
     and a profile is measured from the objects that do. But the W3D reader now exists:

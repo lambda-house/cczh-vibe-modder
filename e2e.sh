@@ -1698,6 +1698,62 @@ rts replay --a crusader --b battlemaster --seed 7 --mod "$LOS/water.json" | grep
 echo "  a sightless map stays deterministic and opt-in by consequence"
 rm -rf "$LOS"; trap - EXIT
 
+gate "a pack CARRIES its art, and every reference resolves"
+# `rts compile` used to emit INI and one icon sheet. Every authored .w3d was copied into the
+# install BY HAND, and zh.models was only checked for having a MAPPING — never for the file
+# existing. Name a mesh that is not there and the unit moves, shoots, dies and cannot be seen
+# or clicked, with no error from the engine. That is the desertA failure class, and that one
+# reached a real match before anyone noticed.
+AS=$(mktemp -d); trap 'rm -rf "$AS"' EXIT
+GAMEDIR="$HOME/GeneralsX/GeneralsZH"
+
+if [ ! -d "$GAMEDIR" ]; then
+  echo "  (no install: asset resolution can only be checked against one — skipped)"
+else
+  python3 - "$AS" <<'PYART'
+import json, re, sys
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/demo-attach.json').read(), flags=re.M))
+ghost = json.loads(json.dumps(d)); ghost['meta']['name'] = 'ghostmesh'
+ghost['zh']['models']['hellhound'] = 'AVTotallyNotAMesh'
+open(f'{sys.argv[1]}/ghost.json', 'w').write(json.dumps(ghost))
+ships = json.loads(json.dumps(d)); ships['meta']['name'] = 'shipsart'
+ships['zh']['models']['hellhound'] = 'E2EBRANDNEW'
+ships['zh']['art'] = [f'{sys.argv[1]}/E2EBRANDNEW.W3D']
+open(f'{sys.argv[1]}/ships.json', 'w').write(json.dumps(ships))
+PYART
+
+  # --- 1. An unresolvable model is a CAP ERROR, not a warning. ------------------------
+  ghost_out=$(rts lint --target zh --mod "$AS/ghost.json" 2>&1 || true)
+  case "$ghost_out" in
+    *"resolves to no file"*) : ;;
+    *) echo "  A NONEXISTENT MESH WAS ACCEPTED — the unit would be invisible in game"
+       echo "$ghost_out" | tail -3; exit 1 ;;
+  esac
+  if rts lint --target zh --mod "$AS/ghost.json" >/dev/null 2>&1; then
+    echo "  AN UNRESOLVABLE MODEL DID NOT FAIL THE LINT"; exit 1
+  fi
+  echo "  a model that resolves to no file is refused, not warned about"
+
+  # --- 2. Shipping the mesh WITH the pack satisfies it. --------------------------------
+  # Otherwise the check would only permit adopting retail art, which is the opposite of
+  # where this project is going.
+  cp "$GAMEDIR/Art/W3D/RTSBOX.W3D" "$AS/E2EBRANDNEW.W3D" 2>/dev/null \
+    || { echo "  (no authored mesh installed to copy — skipped)"; rm -rf "$AS"; trap - EXIT; }
+  if [ -f "$AS/E2EBRANDNEW.W3D" ]; then
+    rts lint --target zh --mod "$AS/ships.json" >/dev/null 2>&1 \
+      || { echo "  A MESH THE PACK SHIPS WAS STILL REPORTED MISSING"; exit 1; }
+
+    # --- 3. And the compiled output CONTAINS it. ---------------------------------------
+    rts compile --target zh --out "$AS/out" --mod "$AS/ships.json" >/dev/null
+    [ -f "$AS/out/Art/W3D/E2EBRANDNEW.W3D" ] \
+      || { echo "  THE PACK DID NOT CARRY ITS OWN MESH into the output"; exit 1; }
+    cmp -s "$AS/E2EBRANDNEW.W3D" "$AS/out/Art/W3D/E2EBRANDNEW.W3D" \
+      || { echo "  the carried mesh differs from its source"; exit 1; }
+    echo "  a pack ships its own mesh, and the compiled output carries it byte-identically"
+  fi
+fi
+rm -rf "$AS"; trap - EXIT
+
 echo
 echo "== regression: pinned replay hashes =="
 # Re-pinned twice, both deliberate, both recorded:

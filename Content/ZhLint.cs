@@ -39,7 +39,7 @@ public static class ZhLint
         "CAPTURABLE",
     };
 
-    public static Report Check(ContentDb db, ZhTargetDto zh)
+    public static Report Check(ContentDb db, ZhTargetDto zh, AssetIndex? assets = null)
     {
         var r = new Report();
 
@@ -73,6 +73,25 @@ public static class ZhLint
         foreach (var u in db.Units)
             if (!zh.Models.ContainsKey(u.Id) && !(u.IsVariant && zh.Models.ContainsKey(u.RosterId)))
                 r.CapErrors.Add($"unit '{u.Id}' has no zh.models entry — it would be invisible in game");
+
+        // A MAPPING is not a MODEL. Having a zh.models entry was the only thing checked here,
+        // and whether the file existed was nobody's job — so a typo, or an authored mesh not
+        // yet built, produced a unit that moves, shoots, dies and cannot be seen or clicked,
+        // with no error anywhere. Exactly the shape of `desertA`, the TerrainType whose
+        // texture ships in no archive, which reached a real match before anyone noticed.
+        if (assets is { IsUsable: true })
+        {
+            var shipped = zh.Art.Select(Path.GetFileName)
+                                .Where(f => f is not null).Select(f => f!)
+                                .ToList();
+            var packIdx = AssetIndex.Load(null, shipped);
+            foreach (var name in zh.Models.Values.Distinct(StringComparer.OrdinalIgnoreCase)
+                                                 .OrderBy(v => v, StringComparer.Ordinal))
+                if (!assets.Has(name) && !packIdx.Has(name))
+                    r.CapErrors.Add($"model '{name}' resolves to no file — not in the {assets.Count} " +
+                                    $"assets installed, and not shipped by zh.art. The unit would be " +
+                                    $"INVISIBLE in game, with no error from the engine.");
+        }
 
         // ---- ROUND-TRIP --------------------------------------------------------------
         // We author ticks; we emit seconds/milliseconds; their loader ceils back to frames.

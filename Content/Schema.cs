@@ -605,6 +605,17 @@ public sealed class ZhTargetDto
     public string? TerrainType { get; set; }
 
     /// <summary>
+    /// Art files this pack SHIPS, copied into the compiled output. Routed by extension:
+    /// <c>.w3d</c> to <c>Art/W3D/</c>, images to <c>Art/Textures/</c>.
+    ///
+    /// Without this a pack is INI plus one icon sheet, and every authored mesh has to be
+    /// copied into the install by hand — so `rsync`ing the output produced something that
+    /// looked complete, loaded cleanly and rendered nothing. Declaring the files makes the
+    /// pack self-contained and lets lint resolve every model name a pack emits.
+    /// </summary>
+    public List<string> Art { get; set; } = new();
+
+    /// <summary>
     /// Resolved terrain type. Getting this right took THREE goes and the last two both looked
     /// right:
     ///   "DesertSand01" — invented, plausible, absent. The usual trap.

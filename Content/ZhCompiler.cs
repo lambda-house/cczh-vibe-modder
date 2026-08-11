@@ -32,7 +32,7 @@ public static class ZhCompiler
         public List<string> Warnings = new();
         public List<string> Errors = new();
         public int Objects, Weapons, Armors, Locomotors, Buttons, Sets, Templates;
-        public int MapCells, Icons;
+        public int MapCells, Icons, ArtCopied;
     }
 
     /// <summary>Footprint radius for a structure. Shared so the production exit's
@@ -955,6 +955,28 @@ public static class ZhCompiler
             File.WriteAllBytes(tgaPath, icons.Tga());
             r.Files.Add(tgaPath);
             r.Icons = icons.Images.Count;
+        }
+
+        // ---- Art the pack SHIPS -------------------------------------------------------------
+        // Until this, `rts compile` emitted INI and a single icon sheet, and every authored
+        // mesh was copied into the install by hand — so the output looked complete, installed
+        // cleanly, and rendered nothing. Routed by extension because that is how the engine
+        // looks them up: Art/W3D for models, Art/Textures for images.
+        foreach (var src in zh.Art)
+        {
+            if (!File.Exists(src)) { r.Errors.Add($"zh.art: no such file '{src}'"); continue; }
+            string ext = Path.GetExtension(src).ToLowerInvariant();
+            string sub = ext switch
+            {
+                ".w3d" => Path.Combine("Art", "W3D"),
+                ".tga" or ".dds" or ".jpg" or ".png" => Path.Combine("Art", "Textures"),
+                _ => Path.Combine("Art", "Misc"),
+            };
+            string dst = Path.Combine(outRoot, sub, Path.GetFileName(src));
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            File.Copy(src, dst, overwrite: true);
+            r.Files.Add(dst);
+            r.ArtCopied++;
         }
 
         // ---- The map ----------------------------------------------------------------------
