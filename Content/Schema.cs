@@ -9,7 +9,8 @@ namespace RtsSkeleton.Content;
 public sealed class ContentPackDto
 {
     public MetaDto Meta { get; set; } = new();
-    public DefaultsDto Defaults { get; set; } = new();
+    /// <summary>Null = this layer states no defaults block. See <see cref="DefaultsDto"/>.</summary>
+    public DefaultsDto? Defaults { get; set; }
     public List<string> DamageTypes { get; set; } = new();
     public List<string> ArmorClasses { get; set; } = new();
     /// <summary>
@@ -23,8 +24,13 @@ public sealed class ContentPackDto
     public Dictionary<string, WeaponDto> Weapons { get; set; } = new();
     public Dictionary<string, VeterancyTrackDto> VeterancyTracks { get; set; } = new();
     public TechDto Tech { get; set; } = new();
-    /// <summary>Commander ranks in ascending order. Empty = no second currency in this pack.</summary>
-    public List<RankDto> Ranks { get; set; } = new();
+    /// <summary>
+    /// Commander ranks in ascending order. An ORDERED ladder, not a keyed table: a layer
+    /// replaces it whole or inherits it whole, because merging per index would let a mod that
+    /// only wanted a cheaper rank 2 silently reorder the thresholds.
+    /// Null = unstated, inherit. Empty = stated as empty, so no second currency.
+    /// </summary>
+    public List<RankDto>? Ranks { get; set; }
     public Dictionary<string, ScienceDto> Sciences { get; set; } = new();
     public Dictionary<string, PowerDto> Powers { get; set; } = new();
     /// <summary>Modifications to units that already exist in the target game. Keyed by a
@@ -33,7 +39,8 @@ public sealed class ContentPackDto
     public Dictionary<string, UnitDto> Units { get; set; } = new();
     public Dictionary<string, FactionDto> Factions { get; set; } = new();
     public ZhTargetDto Zh { get; set; } = new();
-    public LintConfigDto Lint { get; set; } = new();
+    /// <summary>Null = this layer states no lint block, so the base pack's survives.</summary>
+    public LintConfigDto? Lint { get; set; }
 }
 
 public sealed class MetaDto
@@ -379,17 +386,34 @@ public sealed class VariantDto
 /// every new schema field is a breaking change to every existing unit in every pack.
 /// Cheap to add now, impossible to retrofit once mods exist in the wild.
 /// </summary>
+/// <summary>
+/// Pack-wide fills for fields a unit does not state — Stage 2 of the resolution order
+/// (see <see cref="PackStack"/>). ZH's <c>DefaultThingTemplate</c> is 130 lines serving all
+/// 1,949 objects; without one, every new field is a breaking change to every existing unit.
+///
+/// EVERY FIELD IS NULLABLE, and that is the whole point. A non-nullable field with a C#
+/// initializer cannot tell "the layer omitted this" from "the layer set it to the default",
+/// so a mod that says nothing about defaults would overwrite the base pack's with the
+/// compiler's. Null means unstated and inherits; a value means stated and wins.
+/// </summary>
 public sealed class DefaultsDto
 {
-    public UnitDefaultsDto Unit { get; set; } = new();
+    public UnitDefaultsDto? Unit { get; set; }
 }
 
 public sealed class UnitDefaultsDto
 {
-    public int Cost { get; set; } = 0;
-    public int BuildTicks { get; set; } = 1;
-    public int UnitsPerPurchase { get; set; } = 1;
-    public List<string> Prerequisites { get; set; } = new();
+    public int? Cost { get; set; }
+    public int? BuildTicks { get; set; }
+    public int? UnitsPerPurchase { get; set; }
+    public List<string>? Prerequisites { get; set; }
+
+    /// <summary>What a field falls back to when no layer states it. These are the compiler's
+    /// own defaults and the only place they are written down.</summary>
+    public static readonly UnitDefaultsDto Root = new()
+    {
+        Cost = 0, BuildTicks = 1, UnitsPerPurchase = 1, Prerequisites = new(),
+    };
 }
 
 /// <summary>
@@ -513,8 +537,12 @@ public sealed class ZhTargetDto
     /// <summary>
     /// World-unit scale. Our ranges and speeds are in our own units; ZH's are roughly 16x
     /// larger (a Crusader's 150 range against our 9). Applied to range, radius and speed.
+    /// Null = unstated by this layer; read <see cref="Scale"/>, never this.
     /// </summary>
-    public double WorldScale { get; set; } = 16.0;
+    public double? WorldScale { get; set; }
+
+    /// <summary>The resolved scale. 16 is measured, not chosen.</summary>
+    public double Scale => WorldScale ?? 16.0;
 
     /// <summary>Draw module class per unit id; defaults to W3DModelDraw, which suits anything.</summary>
     public Dictionary<string, string> DrawModules { get; set; } = new();

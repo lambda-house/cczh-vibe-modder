@@ -327,6 +327,44 @@ are emitted by `rts compile`, not hand-written.
   add a mutable array field, deep-copy it there; do not revert to an explicit list.
   Note the ordering trap that made it worse: rules compile AFTER `ResolveFactions`, so the
   clone sees an empty rule array and rules must be handed to variants in the rules pass.
+- **Content resolves in ONE total order, three stages, each exactly once.** `PackStack` is
+  the authoritative statement of it; this is the summary.
+  1. **LAYER** — packs fold in ordinal order, per-key last-wins, `null` REMOVES. Produces one
+     composed DTO and knows nothing of units or factions.
+  2. **DEFAULT** — the composed `defaults` block fills every unit field left unstated.
+  3. **INHERIT + ROSTER** — faction `extends` flattens parents before children; within one
+     faction, strictly `remove` → `add` → `modify`.
+
+  **There is no entity-level `extends` and there will not be one.** A unit never inherits from
+  a unit. Faction `modify` plus layering already express every case, and a third inheritance
+  axis is the complexity this order exists to bound.
+
+  Each stage completing before the next is what makes the awkward questions answerable:
+  a `modify` is a delta on whatever the unit ends up being *after* layering, so a mod that
+  retunes a unit keeps every faction's tweaks on top of the new definition. **"A pack patch
+  removes what a faction modify replaced" is therefore not a merge conflict at all** — the
+  removal lands in stage 1, so by stage 3 the name does not exist and every reference is an
+  ordinary dangling reference, reported with the layer that took it away. The corollary that
+  surprises authors: a later layer cannot *amend* a faction's `modify` block, because factions
+  are keyed entries and it replaces the whole faction. Layering is for deltas BETWEEN packs;
+  faction `extends` is for deltas WITHIN one.
+
+  The two intra-faction adjacencies each buy something. **remove before add** is the DE-FORK
+  idiom — drop the parent's variant, re-adopt the shared prototype; add-first would make it a
+  duplicate-key error with no way to say "inherit everything except this fork". **remove
+  before modify** makes the contradictory pair a deterministic error rather than a patch that
+  is computed, allocated and then silently discarded.
+- **The pack merge must be TOTAL over `ContentPackDto`, and it is checked by reflection on
+  every load.** *This was a live bug of exactly the `CloneForFaction` shape:* `defaults` was
+  missing from the merge's object initializer, so every multi-layer stack silently reverted to
+  the compiler's built-ins. Nothing failed; the numbers were just wrong. `MergedProperties`
+  now declares what is handled and `AssertMergeIsTotal` refuses to load if the type has grown
+  past it. e2e proves the guard bites by adding a property and asserting the load fails.
+- **In a layered block, ABSENT is not the same as DEFAULT.** A non-nullable field with a C#
+  initializer cannot tell "this layer omitted it" from "this layer set it to the default", so
+  a mod saying nothing would overwrite the base pack's value with the compiler's. `defaults`,
+  `lint`, `ranks` and `zh.worldScale` are therefore nullable, and the root fallbacks live in
+  exactly one place (`UnitDefaultsDto.Root`). Any new pack-wide block must be nullable too.
 - **Reference resolution is faction-scoped for variants and global for everything else.**
   `ContentDb.ResolveUnitRef` goes through the owning faction's *resolved roster* — never by
   mangling a name into `fid/ref`, because inheritance means only the roster knows which
@@ -404,11 +442,10 @@ are emitted by `rts compile`, not hand-written.
 ## Known simplifications (intentional; see README for replacement plans)
 
 Flat archetype not ECS; tombstones not generational handles; no
-collision/pathing; cumulative-only modifier stacking; no upgrade/general's-power
-content types yet (the algebra exists, the vocabulary doesn't); content is one
-monolithic game.json rather than layered packs; economy is abstract (two team queues, income from a
-finite pool, cost deducted at build start, no power, no buildings — so rushes
-can only spawn-camp, there are no economic targets).
+collision/pathing; cumulative-only modifier stacking; economy is abstract (two team queues,
+income from a finite pool, cost deducted at build start).
+*Struck as slices landed: layered packs (1), upgrades (6), structures and economic targets
+(5), powers and the second currency (9). Do not re-add them to this list.*
 
 **Anti-pattern, never adopt: a presentation-only or partial-field variant type.** ZH's
 `ObjectReskin` is restricted to ten appearance fields and cannot change Side, cost,
@@ -433,6 +470,9 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
 1. ~~**Layered content packs + `rts diff`**~~ — done. N-layer `--mod` stacking, ordinal
    sorted; `contentHash` is an ordered hash over `(ordinal, packName, version, bytesHash)`
    plus resolved content; `rts diff` emits the delta taxonomy and duplication ratio.
+   A `null` value REMOVES a key, and removing a name no earlier layer declared is an error —
+   the same reasoning as retail's 88 dangling references, caught one step earlier where the
+   author can still see what they meant. See the total-resolution-order invariant above.
    *Rationale: this is the authoring substrate. Everything below is a sim verb, and
    every one of them would otherwise be authored by hand-editing a single monolithic
    `game.json` — which is precisely the workflow this product exists to replace. It
@@ -551,11 +591,12 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
 13. **Elevation as a boolean LOS gate only**. (M) *Conditional — defer until measurement
     shows 7 and 11 didn't move the counter matrix enough.*
 
-Two design decisions this roadmap owes an answer to before the slice that needs them:
-**(a)** ~~flag changes re-select loadouts~~ — ANSWERED: `LoadoutSystem` runs between
-production and cooldowns; see the system-order invariant above. **(b)** `defaults` → entity `extends` → faction
-`modify` → pack `patch` is four inheritance mechanisms; state one total resolution order
-and what happens when a pack patch removes what a faction modify replaced.
+Both design decisions this roadmap owed an answer to are now ANSWERED:
+**(a)** ~~flag changes re-select loadouts~~ — `LoadoutSystem` runs between
+production and cooldowns; see the system-order invariant above.
+**(b)** ~~one total resolution order~~ — see the invariant below. There turned out to be
+THREE mechanisms, not four: an entity-level `extends` was never built, and deliberately
+will not be.
 
 Deliberately out, on evidence: terrain types as content (ZH's are inert — 291 blocks,
 one call site, a flag nothing sets); art/FX/audio; prerequisite OR-expressions; slope-

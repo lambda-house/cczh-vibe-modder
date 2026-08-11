@@ -101,15 +101,15 @@ public static class ZhCompiler
             int msPerShot = (int)Math.Floor(w.CooldownTicks * 1000.0 / ContentDb.TicksPerSecond);
             sb.AppendLine($"Weapon {P(w.Id)}");
             sb.AppendLine($"  PrimaryDamage = {F(w.Damage)}");
-            sb.AppendLine($"  PrimaryDamageRadius = {F(Math.Sqrt(w.PrimaryRadiusSq.ToDoubleForDisplay()) * zh.WorldScale)}");
+            sb.AppendLine($"  PrimaryDamageRadius = {F(Math.Sqrt(w.PrimaryRadiusSq.ToDoubleForDisplay()) * zh.Scale)}");
             if (w.SecondaryRadiusSq > Fix64.Zero)
             {
                 sb.AppendLine($"  SecondaryDamage = {F(w.SecondaryDamage)}");
-                sb.AppendLine($"  SecondaryDamageRadius = {F(Math.Sqrt(w.SecondaryRadiusSq.ToDoubleForDisplay()) * zh.WorldScale)}");
+                sb.AppendLine($"  SecondaryDamageRadius = {F(Math.Sqrt(w.SecondaryRadiusSq.ToDoubleForDisplay()) * zh.Scale)}");
             }
-            sb.AppendLine($"  AttackRange = {F(w.Range.ToDoubleForDisplay() * zh.WorldScale)}");
+            sb.AppendLine($"  AttackRange = {F(w.Range.ToDoubleForDisplay() * zh.Scale)}");
             if (w.MinRangeSq > Fix64.Zero)
-                sb.AppendLine($"  MinimumAttackRange = {F(Math.Sqrt(w.MinRangeSq.ToDoubleForDisplay()) * zh.WorldScale)}");
+                sb.AppendLine($"  MinimumAttackRange = {F(Math.Sqrt(w.MinRangeSq.ToDoubleForDisplay()) * zh.Scale)}");
             sb.AppendLine($"  DamageType = {dmg[db.DamageTypes[w.DamageTypeIdx]]}");
             sb.AppendLine("  DeathType = NORMAL");
             sb.AppendLine("  WeaponSpeed = 1000");
@@ -134,7 +134,7 @@ public static class ZhCompiler
         {
             if (u.IsStructure) continue;
             double spd = u.BaseStats[(int)Stat.Speed].ToDoubleForDisplay()
-                         * ContentDb.TicksPerSecond * zh.WorldScale;
+                         * ContentDb.TicksPerSecond * zh.Scale;
             sb.AppendLine($"Locomotor {P(u.Id)}Loco");
             sb.AppendLine("  Surfaces = GROUND");
             sb.AppendLine($"  Speed = {F(spd)}");
@@ -250,7 +250,7 @@ public static class ZhCompiler
                     // Emitting the radius into the bool is a type error their parser rejects.
                     // Copied from SUPERWEAPON_RebelAmbush1, which loads.
                     sb.AppendLine("   SpreadFormation = Yes");
-                    sb.AppendLine($"   MinDistanceAFormation = {F(e.Spread.ToDoubleForDisplay() * zh.WorldScale)}");
+                    sb.AppendLine($"   MinDistanceAFormation = {F(e.Spread.ToDoubleForDisplay() * zh.Scale)}");
                 }
                 sb.AppendLine(" End");
             }
@@ -285,8 +285,8 @@ public static class ZhCompiler
             sb.AppendLine($"  EditorSorting = {(u.IsStructure ? "STRUCTURE" : "VEHICLE")}");
             sb.AppendLine($"  BuildCost = {u.Cost}");
             sb.AppendLine($"  BuildTime = {F(u.BuildTicks / (double)ContentDb.TicksPerSecond)}");
-            sb.AppendLine($"  VisionRange = {F(weapon.Range.ToDoubleForDisplay() * zh.WorldScale * 1.2)}");
-            sb.AppendLine($"  ShroudClearingRange = {F(weapon.Range.ToDoubleForDisplay() * zh.WorldScale * 1.5)}");
+            sb.AppendLine($"  VisionRange = {F(weapon.Range.ToDoubleForDisplay() * zh.Scale * 1.2)}");
+            sb.AppendLine($"  ShroudClearingRange = {F(weapon.Range.ToDoubleForDisplay() * zh.Scale * 1.5)}");
 
             var kinds = new List<string> { "SELECTABLE", "CAN_ATTACK", "SCORE" };
             kinds.AddRange(u.KindOf.Where(k => !k.StartsWith("IS_") && k != "MP_COUNT_FOR_VICTORY"));
@@ -852,7 +852,7 @@ public static class ZhCompiler
                     anyLoco = true;
                     loco.AppendLine($"Locomotor {locoName}");
                     loco.AppendLine("  Surfaces = GROUND RUBBLE");
-                    loco.AppendLine($"  Speed = {F(o.Speed.ToDoubleForDisplay() * ContentDb.TicksPerSecond * zh.WorldScale)}");
+                    loco.AppendLine($"  Speed = {F(o.Speed.ToDoubleForDisplay() * ContentDb.TicksPerSecond * zh.Scale)}");
                     loco.AppendLine("  TurnRate = 500");
                     loco.AppendLine("  Acceleration = 200");
                     loco.AppendLine("  Braking = 200");

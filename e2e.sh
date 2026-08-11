@@ -19,23 +19,23 @@ echo "build: OK"
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
 echo
-echo "== gate 1/20: content lint =="
+echo "== gate 1/21: content lint =="
 rts lint
 
 echo
-echo "== gate 2/20: replay determinism =="
+echo "== gate 2/21: replay determinism =="
 rts replay --a crusader --b battlemaster --seed 7
 
 echo
-echo "== gate 3/20: duel smoke =="
+echo "== gate 3/21: duel smoke =="
 rts duel --a crusader --b technical --n 20 --seed 42
 
 echo
-echo "== gate 4/20: econ determinism =="
+echo "== gate 4/21: econ determinism =="
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
 echo
-echo "== gate 5/20: faction layering resolves =="
+echo "== gate 5/21: faction layering resolves =="
 rts faction
 
 echo
@@ -51,7 +51,7 @@ echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
 echo
-echo "== gate 6/20: layered packs + diff =="
+echo "== gate 6/21: layered packs + diff =="
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -75,7 +75,173 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 echo "  base unaffected by the mod: $base_again"
 
 echo
-echo "== gate 7/20: structures are economic targets =="
+echo "== gate 7/21: the total resolution order =="
+# Three mechanisms compose content and they run in ONE order, each exactly once:
+#   1. LAYER    packs fold in ordinal order; per-key last-wins; null removes
+#   2. DEFAULT  the composed `defaults` block fills what a unit left unstated
+#   3. INHERIT  faction `extends`, then per-faction remove -> add -> modify
+# There is deliberately no entity-level `extends`. Every claim below is one of those
+# adjacencies, and each is here because getting it wrong is silent.
+ORD=$(mktemp -d)
+
+# --- 1. The merge must be TOTAL over the DTO, and the guard must actually bite. -------
+# `defaults` was dropped by the merge for the whole life of the layering feature: absent
+# from the object initializer, so every multi-layer stack quietly reverted to the
+# compiler's built-ins. Nothing failed. It is the same shape as CloneForFaction copying 9
+# of 20 fields. So the guard is tested GENERATIVELY — add a property, prove the loader
+# refuses to run, put it back — rather than asserted by reading the code.
+SCHEMA_BAK="$ORD/Schema.cs.bak"
+cp Content/Schema.cs "$SCHEMA_BAK"
+python3 - <<'PY'
+p = 'Content/Schema.cs'; s = open(p).read()
+anchor = "    public ZhTargetDto Zh { get; set; } = new();"
+assert anchor in s, "anchor moved; the totality probe needs updating"
+s = s.replace(anchor, anchor + "\n    public List<string> E2EUnmergedProbe { get; set; } = new();", 1)
+open(p, 'w').write(s)
+PY
+probe_build=1
+dotnet build -c Release --nologo -v quiet >/dev/null 2>&1 || probe_build=0
+probe_out=""
+[ "$probe_build" = 1 ] && probe_out=$(rts lint 2>&1 || true)
+cp "$SCHEMA_BAK" Content/Schema.cs
+dotnet build -c Release --nologo -v quiet >/dev/null
+case "$probe_out" in
+  *"not total over ContentPackDto"*E2EUnmergedProbe*)
+    echo "  merge totality is enforced: an unmerged DTO property fails the load" ;;
+  *) echo "  TOTALITY GUARD DID NOT FIRE: a new DTO property would be silently dropped"
+     echo "  got: ${probe_out:-<build failed>}"; rm -rf "$ORD"; exit 1 ;;
+esac
+
+# --- 2/3. Absent is not the same as DEFAULT. -----------------------------------------
+# `defaults` and `lint` are whole blocks with compiler-supplied fallbacks, so a layer that
+# says nothing about them must INHERIT, not overwrite with the fallback. The witness is
+# chosen to be unmissable in both directions: `scout` states no cost at all, so losing
+# defaults turns it into a hard "cost must be > 0" error, and the band [9000, 9001] cannot
+# be confused with the built-in [20, 200].
+python3 - "$ORD" <<'PY'
+import json, re, sys
+d = json.loads(re.sub(r'//.*', '', open('content/game.json').read()))
+d['meta'] = {'name': 'withdefaults', 'version': 1}
+d['defaults'] = {'unit': {'cost': 1234}}
+d['lint'] = {'dpsPer1000CostBand': [9000, 9001]}
+scout = dict(d['units']['ranger'])
+for k in ('cost', 'buildSeconds', 'buildTicks'): scout.pop(k, None)
+d['units']['scout'] = scout
+d['factions']['usa']['units'] = d['factions']['usa']['units'] + ['scout']
+open(f'{sys.argv[1]}/base.json', 'w').write(json.dumps(d))
+json.dump({'meta': {'name': 'silent', 'version': 1}}, open(f'{sys.argv[1]}/silent.json', 'w'))
+PY
+layered=$(rts lint --content "$ORD/base.json" --mod "$ORD/silent.json" 2>&1)
+case "$layered" in
+  *"cost must be > 0"*) echo "  DEFAULTS LOST: a silent layer reverted them to the built-ins"
+                        rm -rf "$ORD"; exit 1 ;;
+esac
+case "$layered" in
+  *"band [9000, 9001]"*) : ;;
+  *) echo "  LINT CONFIG LOST: a silent layer reverted the band to the built-in"
+     rm -rf "$ORD"; exit 1 ;;
+esac
+echo "  a layer that states no defaults/lint inherits them instead of overwriting"
+
+# --- 4/5. null REMOVES, and a removal that matches nothing is an error. ---------------
+# Removal is what makes "pack patch removes what a faction modify replaced" answerable at
+# all. The answer is that it is not a merge conflict: removal lands in stage 1, so by stage
+# 3 the name does not exist and every reference to it is an ordinary dangling reference —
+# reported with the layer that took it away, because an error that names its cause is a
+# repair instruction and one that does not is a scavenger hunt.
+echo '{ "meta": { "name": "nocrusader", "version": 1 }, "units": { "crusader": null } }' > "$ORD/rm.json"
+echo '{ "meta": { "name": "typo", "version": 1 }, "units": { "crusadar": null } }' > "$ORD/typo.json"
+rm_out=$(rts lint --mod "$ORD/rm.json" 2>&1 || true)
+case "$rm_out" in
+  *"faction 'usa': unknown unit 'crusader' — removed by layer 2 ('nocrusader')"*)
+    echo "  null removes a key, and the dangling reference names the layer that did it" ;;
+  *) echo "  REMOVAL NOT REPORTED WITH PROVENANCE"; echo "$rm_out"; rm -rf "$ORD"; exit 1 ;;
+esac
+typo_out=$(rts lint --mod "$ORD/typo.json" 2>&1 || true)
+case "$typo_out" in
+  *"removes 'crusadar', which no earlier layer declared"*)
+    echo "  removing a name nothing declared is an error, not a silent no-op" ;;
+  *) echo "  A NO-OP REMOVAL WAS ACCEPTED"; echo "$typo_out"; rm -rf "$ORD"; exit 1 ;;
+esac
+
+# --- 6/7. Within a faction: remove -> add -> modify, and both adjacencies matter. -----
+# remove-before-add is the DE-FORK idiom (drop the parent's variant, re-adopt the shared
+# prototype); under add-first it would be a duplicate-key error and there would be no way
+# to say "inherit everything except this one fork".
+# remove-before-modify makes the contradictory pair a deterministic ERROR; under
+# modify-first the patch is computed, a variant allocated, and then discarded — work whose
+# only trace is a unit that is mysteriously absent.
+cat > "$ORD/defork.json" <<'EOF'
+{ "meta": { "name": "defork", "version": 1 },
+  "factions": { "china_stock": { "extends": "china_tank",
+                                 "remove": ["battlemaster"], "add": ["battlemaster"] } } }
+EOF
+cat > "$ORD/contradict.json" <<'EOF'
+{ "meta": { "name": "contradict", "version": 1 },
+  "factions": { "china_broken": { "extends": "china_tank", "remove": ["battlemaster"],
+                                  "modify": { "battlemaster": { "cost": 100 } } } } }
+EOF
+defork=$(rts faction --mod "$ORD/defork.json" 2>&1)
+parent_cost=$(printf '%s' "$defork" | sed -n 's/.*china_tank\/battlemaster *cost= *\([0-9]*\).*/\1/p')
+child=$(printf '%s' "$defork" | awk '/china_stock/{f=1} f&&/-> battlemaster /{print; exit}')
+case "$child" in
+  *"-> battlemaster"*"+added"*) : ;;
+  *) echo "  DE-FORK BROKEN: remove+add did not re-adopt the shared prototype"
+     echo "$defork"; rm -rf "$ORD"; exit 1 ;;
+esac
+child_cost=$(printf '%s' "$child" | sed -n 's/.*cost= *\([0-9]*\).*/\1/p')
+[ -n "$parent_cost" ] && [ "$child_cost" != "$parent_cost" ] \
+  || { echo "  DE-FORK BROKEN: child cost $child_cost still equals the fork's $parent_cost"
+       rm -rf "$ORD"; exit 1; }
+echo "  remove->add de-forks: child re-adopts the shared prototype ($child_cost, not $parent_cost)"
+contra=$(rts lint --mod "$ORD/contradict.json" 2>&1 || true)
+case "$contra" in
+  *"modify 'battlemaster' is not in the roster"*)
+    echo "  remove->modify is a deterministic error, never a silently discarded patch" ;;
+  *) echo "  CONTRADICTORY ROSTER OPS WERE ACCEPTED"; echo "$contra"; rm -rf "$ORD"; exit 1 ;;
+esac
+
+# --- 8. The zh target block composes through the SAME merge. -------------------------
+# It used to be folded by a second, near-identical loop in ContentDb.LoadZhTarget: two
+# implementations of one contract, which is how they drift.
+# The witness is per-KEY union across layers, not last-layer-wins: the emitted objects must
+# name a model the BASE pack maps (AVAmbulance for ranger) and one only the MOD maps
+# (RTSMAST for its factory). Losing either half would still compile cleanly.
+rts compile --target zh --out "$ORD/zh" --mod content/mods/demo-attach.json >/dev/null
+zh_obj="$ORD/zh/Data/INI/Object/demo.ini"
+for m in AVAmbulance RTSMAST; do
+  grep -q "$m" "$zh_obj" \
+    || { echo "  ZH BLOCK LOST IN THE MERGE: no '$m' in the emitted objects"; rm -rf "$ORD"; exit 1; }
+done
+grep -q "ARMOR_PIERCING" "$ORD/zh/Data/INI/Weapon/demo.ini" \
+  || { echo "  ZH DAMAGE-TYPE MAP LOST: the base layer's mapping did not survive"; rm -rf "$ORD"; exit 1; }
+echo "  zh target data composes per key through the one merge (base + mod models both emitted)"
+
+# --- 9. A removal must be USABLE, not merely diagnosable — and diffed without phantoms.
+# The weapon table is a dictionary sorted into an array, so removing any weapon renumbers
+# every index after it. `rts diff` used to compare those indices and reported each shifted
+# unit as changed, with IDENTICAL names on both sides of the arrow: 6 changes where there
+# were 3, and a duplication ratio of 40% where it was 100%. Same rule as prototype
+# identity — an ordinal is an array position and never stands in for a name.
+cat > "$ORD/drop.json" <<'EOF'
+{ "meta": { "name": "nocrusader", "version": 2 },
+  "units": { "crusader": null },
+  "weapons": { "crusader_cannon": null },
+  "factions": { "usa": { "units": ["ranger"] },
+                "usa_laser": { "extends": "usa", "add": ["laser_crusader"] } } }
+EOF
+rts lint --mod "$ORD/drop.json" | tail -1 | grep -q "^lint: OK$" \
+  || { echo "  A CONSISTENT REMOVAL DID NOT LINT"; rts lint --mod "$ORD/drop.json" | tail -3
+       rm -rf "$ORD"; exit 1; }
+drop_changes=$(rts diff --head-mod "$ORD/drop.json" --json \
+               | python3 -c "import sys,json; print(json.load(sys.stdin)['changes'])")
+[ "$drop_changes" = "3" ] \
+  || { echo "  PHANTOM DIFF: expected 3 changes (unit, weapon, roster), got $drop_changes"
+       rts diff --head-mod "$ORD/drop.json"; rm -rf "$ORD"; exit 1; }
+echo "  a consistent removal lints, and diffs as exactly 3 changes with no index phantoms"
+rm -rf "$ORD"
+echo
+echo "== gate 8/21: structures are economic targets =="
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -98,7 +264,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 echo "  factory present => units build and win (A 3/3)"
 
 echo
-echo "== gate 8/20: flags and conditional variants =="
+echo "== gate 9/21: flags and conditional variants =="
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -128,7 +294,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
 echo
-echo "== gate 9/20: event rules {on, when, do} =="
+echo "== gate 10/21: event rules {on, when, do} =="
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -170,7 +336,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 echo "  stalled queues are reported, not silent"
 
 echo
-echo "== gate 10/20: factions are startable, not just rosters =="
+echo "== gate 11/21: factions are startable, not just rosters =="
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -190,7 +356,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 echo "  the loser's stall is reported, not silent"
 
 echo
-echo "== gate 11/20: compile to a Zero Hour mod =="
+echo "== gate 12/21: compile to a Zero Hour mod =="
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -217,7 +383,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
 echo "  emitted enum values are ones retail actually uses"
 
 echo
-echo "== gate 12/20: target-zh lint — caps, round-trip, divergence =="
+echo "== gate 13/21: target-zh lint — caps, round-trip, divergence =="
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -294,7 +460,7 @@ tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first co
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
 
 echo
-echo "== gate 13/20: faction-scoped reference resolution =="
+echo "== gate 14/21: faction-scoped reference resolution =="
 FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
 
 # A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
@@ -362,7 +528,7 @@ sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' require
 echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
 
 echo
-echo "== gate 14/20: garrison + capture =="
+echo "== gate 15/21: garrison + capture =="
 # GARRISONABLE is the only terrain-shaped combat modifier in all of Zero Hour and it needs
 # no geometry at all. Occupants cannot be targeted; damage reaches them only as spill from a
 # ClearsGarrison weapon hitting the HOST — 17 of retail's 363 weapons, 4.7% of the arsenal.
@@ -410,7 +576,7 @@ grep -q "AutoDepositUpdate" "$GOUT/Data/INI/Object/garrison.ini" \
 echo "  compiles to GarrisonContain + AutoDepositUpdate + AllowAttackGarrisonedBldgs"
 
 echo
-echo "== gate 15/20: sciences — a second currency earned by fighting =="
+echo "== gate 16/21: sciences — a second currency earned by fighting =="
 # Skill points come from KILLS and from nothing else; no economy converts into them. ZH's
 # whole ladder is five Rank.ini blocks: 0/800/1500/2500/5000 needed, 1/1/1/1/3 granted, so
 # seven points for a game against 13-20 purchasable sciences per faction. Every purchasable
@@ -469,7 +635,7 @@ rl=$(rts lint --target zh --mod content/mods/sciences.json | grep -c "rank ladde
 echo "  Science blocks compile additively; the numbered Rank ladder is reported, not overwritten"
 
 echo
-echo "== gate 16/20: spatial index is a PURE accelerator =="
+echo "== gate 17/21: spatial index is a PURE accelerator =="
 # Every radius query used to be a full scan, so tick cost was O(n^2) — and this product's
 # value is BATCH measurement, where a matrix is pairs x runs x ticks. The grid must change
 # the COST and nothing else, so the gate is equivalence, not speed: same seed, same content,
@@ -509,7 +675,7 @@ print(f'  ~2000 units: {g:.2f}s with the grid vs {b:.2f}s without ({b/g:.1f}x)')
 "
 
 echo
-echo "== gate 17/20: overrides compile to map.ini, and only there =="
+echo "== gate 18/21: overrides compile to map.ini, and only there =="
 # Modifying a unit that ALREADY EXISTS in the target game is a different problem from
 # authoring one, and the rules were each bought with a crash. The author states intent; the
 # compiler picks the file and the mechanism. This gate asserts it keeps picking correctly.
@@ -572,7 +738,7 @@ rts lint --mod "$OVO/theirs.json" >/dev/null 2>&1 \
 echo "  naming the target's own weapon is refused at lint, not discovered in a match"
 
 echo
-echo "== gate 18/20: an emitted object is PLAYABLE, not merely parseable =="
+echo "== gate 19/21: an emitted object is PLAYABLE, not merely parseable =="
 # Every check here corresponds to a silent in-game failure found by playing the compiled
 # output: the file parsed, the engine booted 42/42, and something just never happened.
 # A field-diff against AmericaWarFactory and AmericaTankCrusader is what surfaced them.
@@ -701,7 +867,7 @@ done
 echo "  reversing every keyed table in the pack emits byte-identical output"
 
 echo
-echo "== gate 19/20: W3D round-trip and authoring =="
+echo "== gate 20/21: W3D round-trip and authoring =="
 # Adopting art needs a retail install and caps what a standalone conversion can be. The
 # question is whether a model can be understood well enough to REMAKE, and the test is
 # byte-identity: the high bit of a chunk's size marks a container, so sizes must be recomputed
@@ -927,7 +1093,7 @@ else
 fi
 
 echo
-echo "== gate 20/20: MCP server — the agent-facing seam =="
+echo "== gate 21/21: MCP server — the agent-facing seam =="
 # The whole project points at this: an agent authors a pack, is told exactly what is wrong,
 # measures it, and compiles it, with no human in the loop. JSON-RPC 2.0 over newline-delimited
 # stdio and ZERO dependencies, so the root NuGet.config's <clear/> stays untouched.

@@ -258,16 +258,12 @@ e2e.sh      build + verification gate + balance demos + shell equivalence check
   net worth 3640/700), because everything above ~50/s piles up unspendable.
   Until production can run in parallel, "spend faster" is not a strategy the
   harness can express, and net worth over-counts money that can never be used.
-- No buildings/economic targets on the map → rushes can only spawn-camp; a
-  timing window can't be converted into economic damage until production and
-  supply lines are destructible (the ECS/building slice).
-- Faction layering covers rosters and unit stats, but a general is more than
-  that in Zero Hour: superweapons, faction-wide upgrades, unique structures and
-  general's powers. The modifier algebra already expresses the buffs; what's
-  missing is upgrade *content types* and a purchase/research path for them.
-- Content is one monolithic `game.json`. A real modding platform layers packs
-  (base pack + mod pack) the way factions now layer, so a mod ships as a file
-  that patches rather than a fork of the whole pack.
+- No collision or pathing, so there are no chokepoints and no flanking; both are
+  emergent from a passability grid rather than authored, which is why that slice
+  is next and why it will deliberately re-baseline the pinned hashes.
+- Capture is proximity-based and there are only two teams, so a capturable
+  building is always somebody's — there is no neutral owner to take it from, and
+  attackers stop at weapon range and shell it rather than walk onto it.
 - JSON-with-comments content → YAML once external packages are acceptable.
 - FNV-1a state hash → xxHash3 when state size grows.
 

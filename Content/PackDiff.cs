@@ -71,12 +71,17 @@ public static class PackDiff
                 r.Entries.Add(new Entry(Kind.UnitScalar, id, $"cost {x.Cost} -> {y.Cost}"));
             if (x.BuildTicks != y.BuildTicks)
                 r.Entries.Add(new Entry(Kind.UnitScalar, id, $"buildTicks {x.BuildTicks} -> {y.BuildTicks}"));
-            if (x.WeaponIdx != y.WeaponIdx)
-                r.Entries.Add(new Entry(Kind.UnitWeapon, id,
-                    $"{b.Weapons[x.WeaponIdx].Id} -> {h.Weapons[y.WeaponIdx].Id}"));
-            if (x.ArmorClassIdx != y.ArmorClassIdx)
-                r.Entries.Add(new Entry(Kind.UnitArmor, id,
-                    $"{b.ArmorClasses[x.ArmorClassIdx]} -> {h.ArmorClasses[y.ArmorClassIdx]}"));
+            // Compare by NAME, never by index. A weapon index is a position in a table built
+            // by sorting a dictionary, so removing ANY weapon renumbers everything after it
+            // and an index comparison reports every shifted unit as changed — with identical
+            // names on both sides of the arrow. Same rule as prototype identity: an ordinal
+            // is a runtime array position and must never stand in for identity.
+            var (xw, yw) = (b.Weapons[x.WeaponIdx].Id, h.Weapons[y.WeaponIdx].Id);
+            if (!string.Equals(xw, yw, StringComparison.Ordinal))
+                r.Entries.Add(new Entry(Kind.UnitWeapon, id, $"{xw} -> {yw}"));
+            var (xa, ya) = (b.ArmorClasses[x.ArmorClassIdx], h.ArmorClasses[y.ArmorClassIdx]);
+            if (!string.Equals(xa, ya, StringComparison.Ordinal))
+                r.Entries.Add(new Entry(Kind.UnitArmor, id, $"{xa} -> {ya}"));
 
             for (int s = 0; s < StatResolver.StatCount; s++)
                 if (x.BaseStats[s].Raw != y.BaseStats[s].Raw)

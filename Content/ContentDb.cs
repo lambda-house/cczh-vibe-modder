@@ -319,26 +319,23 @@ public sealed class ContentDb
         => Load(new[] { path }, out errors, out warnings);
 
     /// <summary>
+    /// Why a referenced name does not exist, when the answer is "a later layer removed it".
+    /// Appended to the ordinary "unknown x" errors, because an error that names the cause is a
+    /// repair instruction and one that does not is a scavenger hunt — the same principle the
+    /// MCP surface follows when it answers a bad prototype id with the list of good ones.
+    /// Empty when the name was simply never declared, which reads correctly either way.
+    /// </summary>
+    private static string Why(Dictionary<string, string> removedBy, string table, string id)
+        => PackStack.WhyRemoved(removedBy, table, id) is string w ? $" — removed by {w}" : "";
+
+    /// <summary>
     /// The ZH target block, composed across the same stack so a mod can supply model and
     /// damage-type mappings for the units it adds without restating the base pack's.
+    /// One line, because the composition lives in <see cref="PackStack"/> with every other
+    /// field. It used to be a second fold here — two implementations of one contract.
     /// </summary>
     public static ZhTargetDto LoadZhTarget(IReadOnlyList<string> paths)
-    {
-        var acc = new ZhTargetDto();
-        foreach (var layer in PackStack.Compose(paths).Layers)
-        {
-            var z = layer.Dto.Zh;
-            foreach (var (k, v) in z.DamageTypes) acc.DamageTypes[k] = v;
-            foreach (var (k, v) in z.Models) acc.Models[k] = v;
-            foreach (var (k, v) in z.DrawModules) acc.DrawModules[k] = v;
-            foreach (var (k, v) in z.Sides) acc.Sides[k] = v;
-            foreach (var (k, v) in z.ArtRig) acc.ArtRig[k] = v;
-            foreach (var (k, v) in z.Animations) acc.Animations[k] = v;
-            foreach (var t in z.Turreted) if (!acc.Turreted.Contains(t)) acc.Turreted.Add(t);
-            if (z.WorldScale != 16.0) acc.WorldScale = z.WorldScale;
-        }
-        return acc;
-    }
+        => PackStack.Compose(paths).Dto.Zh;
 
     /// <summary>
     /// Load an ordered stack of packs: base first, mods after, last-wins.
@@ -349,7 +346,13 @@ public sealed class ContentDb
         errors = new List<string>();
         warnings = new List<string>();
 
-        var (dto, layers) = PackStack.Compose(paths);
+        // STAGE 1 of the resolution order: fold the layers into one DTO. Everything below
+        // reads a composed pack and never a layer, which is what makes the order total.
+        // PackStack is the authoritative statement of all three stages.
+        var composed = PackStack.Compose(paths);
+        var (dto, layers) = (composed.Dto, composed.Layers);
+        errors.AddRange(composed.Diagnostics);
+        var removedBy = composed.RemovedBy;
 
         var db = new ContentDb
         {
@@ -361,7 +364,7 @@ public sealed class ContentDb
             // 54e18480c04a7dc8). State hashes are unaffected; only provenance labels move.
             ContentHash = PackStack.StackHash(layers),
             Layers = layers,
-            LintConfig = dto.Lint,
+            LintConfig = dto.Lint ?? new LintConfigDto(),
         };
 
         // --- Vocabulary tables --------------------------------------------------
@@ -550,6 +553,22 @@ public sealed class ContentDb
             errors.Add($"flag vocabulary is {db.Flags.Count}; the mask holds {FlagTable.MaxFlags}");
 
         // --- Units --------------------------------------------------------------
+        //
+        // STAGE 2 of the resolution order: the composed `defaults` block fills every unit
+        // field left unstated, so adding a schema field later is not a breaking change to
+        // every pack in existence. Resolved ONCE, here, against the compiler's own root
+        // defaults — a field null at both levels has exactly one answer and it is written
+        // down in UnitDefaultsDto.Root rather than scattered through this loop.
+        var rootDefaults = UnitDefaultsDto.Root;
+        var packDefaults = dto.Defaults?.Unit;
+        var ud = new UnitDefaultsDto
+        {
+            Cost = packDefaults?.Cost ?? rootDefaults.Cost,
+            BuildTicks = packDefaults?.BuildTicks ?? rootDefaults.BuildTicks,
+            UnitsPerPurchase = packDefaults?.UnitsPerPurchase ?? rootDefaults.UnitsPerPurchase,
+            Prerequisites = packDefaults?.Prerequisites ?? rootDefaults.Prerequisites,
+        };
+
         var units = new List<UnitProto>();
         foreach (var (id, u) in dto.Units.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
@@ -565,7 +584,8 @@ public sealed class ContentDb
             }
             if (!weaponIdx.TryGetValue(c.WeaponBearer.Weapon, out int wpn))
             {
-                errors.Add($"unit '{id}': unknown weapon '{c.WeaponBearer.Weapon}'");
+                errors.Add($"unit '{id}': unknown weapon '{c.WeaponBearer.Weapon}'"
+                           + Why(removedBy, "weapons", c.WeaponBearer.Weapon));
                 continue;
             }
             int vet = -1;
@@ -574,12 +594,9 @@ public sealed class ContentDb
                 errors.Add($"unit '{id}': unknown veterancy track '{c.VeterancyCarrier.Track}'");
                 vet = -1;
             }
-            // Defaults fill anything the unit does not state, so adding a schema field
-            // later is not a breaking change to every pack in existence.
-            var ud = dto.Defaults.Unit;
-            var prereqs = u.Prerequisites ?? ud.Prerequisites;
-            int cost = u.Cost ?? ud.Cost;
-            int perPurchase = u.UnitsPerPurchase ?? ud.UnitsPerPurchase;
+            var prereqs = u.Prerequisites ?? ud.Prerequisites!;
+            int cost = u.Cost ?? ud.Cost!.Value;
+            int perPurchase = u.UnitsPerPurchase ?? ud.UnitsPerPurchase!.Value;
 
             // Durations quantise to whole ticks with ceil(), once, at the load boundary —
             // the same discipline as Fix64.FromDoubleAtLoadBoundary. ZH does this too
@@ -588,7 +605,7 @@ public sealed class ContentDb
             // frames. Authored seconds must never silently mean a fractional tick.
             int buildTicks = u.BuildSeconds is double secs
                 ? (int)Math.Ceiling(secs * TicksPerSecond)
-                : (u.BuildTicks ?? ud.BuildTicks);
+                : (u.BuildTicks ?? ud.BuildTicks!.Value);
 
             // A prerequisite names EITHER a tech node OR another unit — and the unit form is
             // how ZH really models it (`Prerequisites { Object = AmericaWarFactory }`, 624 such
@@ -596,7 +613,8 @@ public sealed class ContentDb
             // STANDING, not a research flag that can never be taken away.
             foreach (var req in prereqs)
                 if (!dto.Tech.Nodes.ContainsKey(req) && !dto.Units.ContainsKey(req))
-                    errors.Add($"unit '{id}': prerequisite '{req}' is neither a tech node nor a unit");
+                    errors.Add($"unit '{id}': prerequisite '{req}' is neither a tech node nor a unit"
+                               + Why(removedBy, "units", req) + Why(removedBy, "tech.nodes", req));
             if (cost <= 0) errors.Add($"unit '{id}': cost must be > 0");
             if (buildTicks <= 0) errors.Add($"unit '{id}': buildTicks must be > 0");
             if (perPurchase <= 0) errors.Add($"unit '{id}': unitsPerPurchase must be > 0");
@@ -723,7 +741,7 @@ public sealed class ContentDb
         // Base prototypes keep their indices; variants are appended in a deterministic
         // order (faction resolution order, then roster order) so adding a general never
         // renumbers an existing unit and never perturbs an existing replay.
-        ResolveFactions(db, dto, units, errors, warnings);
+        ResolveFactions(db, dto, units, removedBy, errors, warnings);
         db.Units = units.ToArray();
         for (int i = 0; i < db.Units.Length; i++) db.Units[i].SelfIdx = i;
 
@@ -837,7 +855,7 @@ public sealed class ContentDb
         // ladder is 0/800/1500/2500/5000 needed and 1/1/1/1/3 granted: seven points for an
         // entire game, against 13-20 purchasable sciences per faction.
         var ranks = new List<RankDef>();
-        foreach (var rk in dto.Ranks)
+        foreach (var rk in dto.Ranks ?? new List<RankDto>())
             ranks.Add(new RankDef
             {
                 SkillPointsNeeded = Math.Max(0, rk.SkillPointsNeeded),
@@ -1028,12 +1046,31 @@ public sealed class ContentDb
     }
 
     /// <summary>
-    /// Flattens the faction inheritance chain. Parents resolve before children, so a
-    /// child patches an already-flattened roster and grandchildren compose naturally.
-    /// A cycle or a missing parent leaves the faction unresolved and reports an error
-    /// rather than looping.
+    /// STAGE 3 of the resolution order (see <see cref="PackStack"/>): faction inheritance,
+    /// then the roster operations. Parents resolve before children, so a child patches an
+    /// already-flattened roster and grandchildren compose naturally. A cycle or a missing
+    /// parent leaves the faction unresolved and reports an error rather than looping.
+    ///
+    /// <para><b>Within one faction the order is fixed: remove → add → modify.</b> It is not
+    /// arbitrary, and each adjacency buys something:</para>
+    /// <list type="bullet">
+    ///   <item><b>remove before add</b> makes <c>remove X</c> + <c>add X</c> the DE-FORK
+    ///     idiom: drop the parent's faction-local variant of X and re-adopt the shared
+    ///     prototype. Under add-first it would instead be a duplicate-key error, and there
+    ///     would be no way to say "inherit everything except this one fork".</item>
+    ///   <item><b>remove before modify</b> makes <c>remove X</c> + <c>modify X</c> a
+    ///     deterministic ERROR rather than a silent no-op. Under modify-first the patch would
+    ///     be computed, a variant allocated, and then thrown away — work whose only trace is
+    ///     a unit that is mysteriously absent.</item>
+    /// </list>
+    ///
+    /// <para>Each op iterates in Ordinal key order, so a faction's variants land in the unit
+    /// array at positions that do not depend on JSON key order. Identity is name-derived
+    /// (<c>StableId</c>), so this affects allocation order only — never a hash.</para>
     /// </summary>
-    private static void ResolveFactions(ContentDb db, ContentPackDto dto, List<UnitProto> units, List<string> errors, List<string> warnings)
+    private static void ResolveFactions(ContentDb db, ContentPackDto dto, List<UnitProto> units,
+                                        Dictionary<string, string> removedBy,
+                                        List<string> errors, List<string> warnings)
     {
         var order = new List<string>();
         var state = new Dictionary<string, int>(StringComparer.Ordinal); // 0=unvisited 1=visiting 2=done
@@ -1050,7 +1087,7 @@ public sealed class ContentDb
             if (!string.IsNullOrEmpty(parent))
             {
                 if (!dto.Factions.ContainsKey(parent))
-                    errors.Add($"faction '{id}': unknown parent faction '{parent}'");
+                    errors.Add($"faction '{id}': unknown parent faction '{parent}'" + Why(removedBy, "factions", parent));
                 else Visit(parent);
             }
             state[id] = 2;
@@ -1074,18 +1111,19 @@ public sealed class ContentDb
                 foreach (var uid in f.Units)
                 {
                     if (!db.UnitIndexById.TryGetValue(uid, out int idx))
-                    { errors.Add($"faction '{fid}': unknown unit '{uid}'"); continue; }
+                    { errors.Add($"faction '{fid}': unknown unit '{uid}'" + Why(removedBy, "units", uid)); continue; }
                     roster[uid] = idx;
                 }
 
             foreach (var uid in f.Remove.OrderBy(x => x, StringComparer.Ordinal))
                 if (!roster.Remove(uid))
-                    errors.Add($"faction '{fid}': remove '{uid}' is not in the inherited roster");
+                    errors.Add($"faction '{fid}': remove '{uid}' is not in the inherited roster"
+                               + Why(removedBy, "units", uid));
 
             foreach (var uid in f.Add.OrderBy(x => x, StringComparer.Ordinal))
             {
                 if (!db.UnitIndexById.TryGetValue(uid, out int idx))
-                { errors.Add($"faction '{fid}': add references unknown unit '{uid}'"); continue; }
+                { errors.Add($"faction '{fid}': add references unknown unit '{uid}'" + Why(removedBy, "units", uid)); continue; }
                 if (!roster.TryAdd(uid, idx))
                     errors.Add($"faction '{fid}': add '{uid}' is already in the roster");
             }
@@ -1094,7 +1132,8 @@ public sealed class ContentDb
             foreach (var (uid, patch) in f.Modify.OrderBy(kv => kv.Key, StringComparer.Ordinal))
             {
                 if (!roster.TryGetValue(uid, out int baseIdx))
-                { errors.Add($"faction '{fid}': modify '{uid}' is not in the roster"); continue; }
+                { errors.Add($"faction '{fid}': modify '{uid}' is not in the roster"
+                                  + Why(removedBy, "units", uid)); continue; }
                 if (patch.Cost is <= 0) errors.Add($"faction '{fid}': modify '{uid}' cost must be > 0");
                 if (patch.BuildTicks is <= 0) errors.Add($"faction '{fid}': modify '{uid}' buildTicks must be > 0");
 
@@ -1138,7 +1177,8 @@ public sealed class ContentDb
             {
                 if (roster.TryGetValue(sb, out int own)) startBuilding = own;
                 else if (db.UnitIndexById.TryGetValue(sb, out int glob)) startBuilding = glob;
-                else errors.Add($"faction '{fid}': startingBuilding '{sb}' is not a unit");
+                else errors.Add($"faction '{fid}': startingBuilding '{sb}' is not a unit"
+                                + Why(removedBy, "units", sb));
 
                 if (startBuilding >= 0 && !units[startBuilding].IsStructure)
                     warnings.Add($"faction '{fid}': startingBuilding '{sb}' is not a STRUCTURE");
@@ -1150,7 +1190,8 @@ public sealed class ContentDb
             {
                 if (roster.TryGetValue(su, out int own)) startUnits.Add(own);
                 else if (db.UnitIndexById.TryGetValue(su, out int glob)) startUnits.Add(glob);
-                else errors.Add($"faction '{fid}': startingUnit '{su}' is not a unit");
+                else errors.Add($"faction '{fid}': startingUnit '{su}' is not a unit"
+                                + Why(removedBy, "units", su));
             }
 
             db.Factions[fid] = new FactionDef
