@@ -32,6 +32,7 @@ public static class ZhCompiler
         public List<string> Warnings = new();
         public List<string> Errors = new();
         public int Objects, Weapons, Armors, Locomotors, Buttons, Sets, Templates;
+        public int MapCells;
     }
 
     /// <summary>Footprint radius for a structure. Shared so the production exit's
@@ -923,8 +924,54 @@ public static class ZhCompiler
 
             Write(r, Path.Combine(outRoot, "map.ini"), mi);
             if (anyLoco) Write(r, Path.Combine(ini, "Locomotor", pack + "_overrides.ini"), loco);
-            r.Warnings.Add($"{db.Overrides.Length} override(s) emitted to map.ini — copy it beside a .map " +
-                           $"(e.g. Maps/<name>/map.ini). Data/INI files install as usual.");
+            // If this pack also authors a map, the block below MOVES this file beside it.
+            // Left here, it is somewhere loadMapINI never looks.
+            r.Warnings.Add($"{db.Overrides.Length} override(s) emitted to map.ini — it must sit beside a " +
+                           $".map (Maps/<name>/map.ini) or it is never read. A pack that authors its own " +
+                           $"map gets this for free. Data/INI files install as usual.");
+        }
+
+        // ---- The map ----------------------------------------------------------------------
+        // Emitted only when the pack authored one, on the same opt-in-by-content rule as every
+        // feature since slice 5: a pack with no map plays on whatever the player picks, exactly
+        // as before, and nothing about its output changes.
+        if (db.Map is { } grid)
+        {
+            // Start positions are the harness's own spawn columns, so a battle measured here
+            // is set up there the same way round. Without this the two engines would agree on
+            // the terrain and disagree on where the armies stand, which is the more confusing
+            // half of a divergence to chase.
+            var starts = new List<(Fix64, Fix64)>
+            {
+                (Fix64.FromInt(-40), Fix64.Zero),
+                (Fix64.FromInt(40), Fix64.Zero),
+            };
+            string mapName = pack + "_map";
+            var m = ZhMapWriter.Write(grid, zh.Scale, zh.Terrain, "MAP:" + mapName, starts);
+
+            string mapDir = Path.Combine(outRoot, "Maps", mapName);
+            Directory.CreateDirectory(mapDir);
+            string mapPath = Path.Combine(mapDir, mapName + ".map");
+            File.WriteAllBytes(mapPath, m.Bytes);
+            r.Files.Add(mapPath);
+            r.MapCells = m.Width * m.Height;
+
+            // If the pack also emitted overrides, map.ini has to sit BESIDE a .map to be read
+            // at all — GameLogic::loadMapINI is the only caller using INI_LOAD_CREATE_OVERRIDES
+            // and it runs from startNewGame against the chosen map's directory. Now that we
+            // write a map, put it where it will actually load instead of telling the user to.
+            string strayIni = Path.Combine(outRoot, "map.ini");
+            if (File.Exists(strayIni))
+            {
+                File.Move(strayIni, Path.Combine(mapDir, "map.ini"), overwrite: true);
+                r.Files.Remove(strayIni);
+                r.Files.Add(Path.Combine(mapDir, "map.ini"));
+            }
+
+            r.Warnings.Add($"map '{mapName}': {m.Width}x{m.Height} cells " +
+                           $"({m.PlayableWidth}x{m.PlayableHeight} playable, {m.BlockedCells} raised), " +
+                           $"install to <userdata>/Maps/{mapName}/ — MapCache picks it up on boot.");
+            foreach (var note in m.Notes) r.Warnings.Add("map: " + note);
         }
 
         // A mesh with no measured profile is the interesting case, and it is the COMMON one

@@ -593,6 +593,26 @@ public sealed class ZhTargetDto
     public List<string> Turreted { get; set; } = new();
 
     /// <summary>
+    /// The retail <c>TerrainType</c> the emitted <c>.map</c> paints itself with. Resolved
+    /// through <c>TheTerrainTypes</c> to a tile sheet under <c>Art/Terrain</c>, so an unknown
+    /// name draws NOTHING — <c>readTexClass</c> just fails to open the file and returns, with
+    /// no error anywhere.
+    ///
+    /// Our own docs call <c>Terrain.ini</c> inert, and for GAMEPLAY it is: 291 blocks, one
+    /// call site, a <c>RestrictConstruction</c> flag nothing sets. This IS that call site.
+    /// Gameplay-dead is not the same as unused, and a map cannot be drawn without naming one.
+    /// </summary>
+    public string? TerrainType { get; set; }
+
+    /// <summary>
+    /// Resolved terrain type. <c>desertA</c> is a name COPIED from a retail Terrain.ini block,
+    /// not one that sounded right — the first draft of this said "DesertSand01", which is
+    /// plausible, absent, and would have drawn an untextured map with no error. Sixth time
+    /// that shape has bitten; the rule is the same as for their closed enums.
+    /// </summary>
+    public string Terrain => TerrainType ?? "desertA";
+
+    /// <summary>
     /// Our faction id -> the retail BASE side whose UI chrome it borrows ("USA", "China",
     /// "GLA"). Our faction keeps its OWN Side; only the presentation is inherited.
     ///

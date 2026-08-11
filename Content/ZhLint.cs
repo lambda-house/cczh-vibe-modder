@@ -222,22 +222,39 @@ public static class ZhLint
         // named, so emitting ours would REPLACE retail's rather than add to it — the one place
         // in this compiler where additive emission is impossible by construction. A pack that
         // retunes the ladder therefore plays on retail's thresholds in game.
-        // Terrain is the one content type that CANNOT cross over, and saying so is the point
-        // of this category. Their maps are a binary .map with a compiled blockmap and a height
-        // field; ours is a drawn grid. A pack measured on a chokepoint here plays on whatever
-        // map the player picks there, so the two numbers are not comparable — which is a
-        // divergence to report, not a bug to fix from content.
+        // The map DOES cross over now, and this category used to say the opposite. What is
+        // left is not "terrain cannot transfer" but a much narrower and more useful claim:
+        // which SURFACES transfer, and at what resolution.
+        //
+        // Their engine has no authored passability layer at all — a cell is a cliff when the
+        // corners of one 10-unit cell differ by more than 9.8 units. So a blocked cell is
+        // emitted as a plateau and their pathfinder derives the block. Only the two surfaces
+        // that mean "ground cannot pass" survive that translation: water needs a water
+        // PolygonTrigger and rubble needs its own pass, and neither is written yet, so they
+        // become ordinary open ground rather than something silently wrong.
         if (db.Map is { } pm)
         {
-            int blocked = 0;
+            int blocked = 0, soft = 0;
             for (int c = 0; c < pm.CellCount; c++)
-                if (pm.At(c) != Runtime.Surface.Clear) blocked++;
-            if (blocked > 0)
-                r.Divergence.Add($"the {pm.Width}x{pm.Height} passability map ({blocked} non-clear cells) " +
-                                 "is NOT emitted: ZH terrain lives in a binary .map with its own blockmap, " +
-                                 "not in Data/INI. Measurements taken on this map do not transfer — the " +
-                                 "match will be played on whatever map the player picks. Locomotor " +
-                                 "Surfaces DO transfer, so a hovercraft stays a hovercraft.");
+            {
+                var s = pm.At(c);
+                if (s is Runtime.Surface.Cliff or Runtime.Surface.Impassable) blocked++;
+                else if (s != Runtime.Surface.Clear) soft++;
+            }
+
+            // Their height grid is 10 of their units; ours is a power of two of ours. The two
+            // have no common divisor, so the map is RESAMPLED and a feature thinner than one
+            // of their cells can vanish in the process. Report the ratio rather than the
+            // reassurance: a one-cell gate at a coarse ratio is the case that silently closes.
+            double zhPerOurCell = pm.CellSize.ToDoubleForDisplay() * zh.Scale / 10.0;
+            if (blocked > 0 && zhPerOurCell < 1.0)
+                r.Divergence.Add($"map resolution: one authored cell is {zhPerOurCell:0.00} of a ZH " +
+                                 $"pathfind cell, so features narrower than {Math.Ceiling(1 / zhPerOurCell)} " +
+                                 $"cells may not survive the resample. Raise zh.worldScale or cellSize.");
+            if (soft > 0)
+                r.Divergence.Add($"{soft} water/rubble cell(s) are emitted as OPEN GROUND. Water needs a " +
+                                 $"PolygonTrigger with isWater and rubble has no height analogue; only " +
+                                 $"cliff and impassable become terrain their pathfinder blocks on.");
         }
 
         if (db.Ranks.Length > 0)

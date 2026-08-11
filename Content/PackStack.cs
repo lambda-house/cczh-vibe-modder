@@ -211,6 +211,7 @@ public static class PackStack
         nameof(ZhTargetDto.Animations),
         nameof(ZhTargetDto.Turreted),
         nameof(ZhTargetDto.WorldScale),
+        nameof(ZhTargetDto.TerrainType),
     };
 
     /// <summary>Handled by <see cref="MergeDefaults"/>.</summary>
@@ -336,6 +337,7 @@ public static class PackStack
         Animations = LastWins(b.Animations, over.Animations),
         Turreted = UnionOrdered(b.Turreted, over.Turreted),
         WorldScale = over.WorldScale ?? b.WorldScale,
+        TerrainType = over.TerrainType ?? b.TerrainType,
     };
 
     private static Dictionary<string, string> LastWins(Dictionary<string, string> b, Dictionary<string, string> over)

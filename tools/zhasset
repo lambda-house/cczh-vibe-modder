@@ -20,7 +20,7 @@ COMMANDS
     deps                                INI -> art reference resolution, both directions
     show <thing>                        explain one unit / weapon / faction / terrain type
 """
-import argparse, fnmatch, json, os, re, struct, sys
+import argparse, fnmatch, glob, json, os, re, struct, sys, zlib
 from collections import Counter, defaultdict
 
 HOME = os.path.expanduser("~")
@@ -523,6 +523,316 @@ def cmd_coverage(a):
 
 
 # ---------------------------------------------------------------- show
+# ============================================================================================
+# .map — the terrain format
+#
+# EA's DataChunk container (Common/System/DataChunk.cpp), NOT the W3D one, though the family
+# resemblance is close: a symbol table maps chunk names to ids, then (id, version, size)
+# records that nest. Two differences worth remembering because both bite:
+#   - the size field is honest; there is no high-bit container marker as in W3D. Nesting is
+#     implied by the parser that is registered, not by the bytes.
+#   - dict KEYS are entries in the same symbol table as chunk names, so the table cannot be
+#     written until the body is, and a dict key you never used is not in it.
+#
+# Files may be refpack-compressed behind an "EAR\0" + uint32-length header. They may equally
+# well be raw: CachedFileInputStream::open sniffs and falls through. Several shipped maps are
+# raw, which is what lets our writer skip having a compressor at all.
+# ============================================================================================
+
+def refpack_decode(src):
+    """EA refpack, transcribed from Libraries/Source/Compression/EAC/refdecode.c."""
+    out = bytearray()
+    t = (src[0] << 8) | src[1]; s = 2
+    ssize = 4 if (t & 0x8000) else 3
+    if t & 0x100:
+        s += ssize                     # a compressed-size field we do not need
+    ulen = 0
+    for _ in range(ssize):
+        ulen = (ulen << 8) | src[s]; s += 1
+    while True:
+        first = src[s]; s += 1
+        if not (first & 0x80):                                   # short form
+            second = src[s]; s += 1
+            run = first & 3
+            out += src[s:s+run]; s += run
+            ref = len(out) - 1 - (((first & 0x60) << 3) + second)
+            for _ in range(((first & 0x1c) >> 2) + 3):
+                out.append(out[ref]); ref += 1
+        elif not (first & 0x40):                                 # int form
+            second, third = src[s], src[s+1]; s += 2
+            run = second >> 6
+            out += src[s:s+run]; s += run
+            ref = len(out) - 1 - (((second & 0x3f) << 8) + third)
+            for _ in range((first & 0x3f) + 4):
+                out.append(out[ref]); ref += 1
+        elif not (first & 0x20):                                 # very long form
+            second, third, forth = src[s], src[s+1], src[s+2]; s += 3
+            run = first & 3
+            out += src[s:s+run]; s += run
+            ref = len(out) - 1 - ((((first & 0x10) >> 4) << 16) + (second << 8) + third)
+            for _ in range((((first & 0x0c) >> 2) << 8) + forth + 5):
+                out.append(out[ref]); ref += 1
+        else:
+            run = ((first & 0x1f) << 2) + 4
+            if run <= 112:                                       # literal
+                out += src[s:s+run]; s += run
+                continue
+            run = first & 3                                      # eof + 0..3 literal
+            out += src[s:s+run]; s += run
+            break
+    if len(out) != ulen:
+        raise ValueError(f"refpack: produced {len(out)} bytes, header claims {ulen}")
+    return bytes(out)
+
+
+def map_load(path):
+    """CompressionManager::getCompressionType sniffs a 4-byte magic; anything unrecognised is
+    COMPRESSION_NONE and read as-is. We handle the two families that actually ship in maps."""
+    d = open(path, "rb").read()
+    if d[:4] == b"EAR\0":
+        return refpack_decode(d[8:]), "refpack"
+    if d[:2] == b"ZL" and d[2:3].isdigit() and d[3:4] == b"\0":
+        return zlib.decompress(d[8:]), "zlib"          # ZL1..ZL9, one magic per zlib level
+    if d[:4] == b"CkMp":
+        return d, "raw"
+    raise ValueError(f"{os.path.basename(path)}: not a map ({d[:4]!r})")
+
+
+class MapReader:
+    def __init__(self, b):
+        self.b = b; self.p = 0
+    def u8(self):  v = self.b[self.p]; self.p += 1; return v
+    def u16(self): v, = struct.unpack_from("<H", self.b, self.p); self.p += 2; return v
+    def i32(self): v, = struct.unpack_from("<i", self.b, self.p); self.p += 4; return v
+    def u32(self): v, = struct.unpack_from("<I", self.b, self.p); self.p += 4; return v
+    def f32(self): v, = struct.unpack_from("<f", self.b, self.p); self.p += 4; return v
+    def s(self):
+        n = self.u16(); v = self.b[self.p:self.p+n].decode("latin-1"); self.p += n; return v
+    def toc(self):
+        if self.b[self.p:self.p+4] != b"CkMp":
+            raise ValueError("missing CkMp tag")
+        self.p += 4
+        m = {}
+        for _ in range(self.i32()):
+            n = self.u8(); name = self.b[self.p:self.p+n].decode("latin-1"); self.p += n
+            m[self.u32()] = name
+        return m
+    def dict(self, names):
+        out = {}
+        for _ in range(self.u16()):
+            kt = self.i32(); t = kt & 0xFF; k = names.get(kt >> 8, f"?{kt >> 8}")
+            if   t == 0: out[k] = bool(self.u8())
+            elif t == 1: out[k] = self.i32()
+            elif t == 2: out[k] = round(self.f32(), 4)
+            elif t == 3: out[k] = self.s()
+            elif t == 4:
+                n = self.u16(); out[k] = self.b[self.p:self.p+n*2].decode("utf-16-le"); self.p += n*2
+            else: raise ValueError(f"dict type {t}")
+        return out
+
+
+def map_chunks(b):
+    """Top-level chunks as {name: (version, offset, size)}, in file order."""
+    r = MapReader(b); names = r.toc()
+    out = []
+    while r.p < len(b):
+        cid = r.u32(); ver = r.u16(); size = r.i32()
+        out.append((names.get(cid, f"?{cid}"), ver, r.p, size))
+        r.p += size
+    if r.p != len(b):
+        raise ValueError(f"trailing {len(b) - r.p} bytes after last chunk")
+    return names, out
+
+
+def map_parse(b):
+    """Field-level parse of the chunks we author. Chunks we only pass through are sized."""
+    names, chunks = map_chunks(b)
+    m = {"chunks": {n: {"version": v, "size": sz} for n, v, _, sz in chunks},
+         "order": [n for n, _, _, _ in chunks]}
+    r = MapReader(b)
+    for name, ver, off, size in chunks:
+        r.p = off
+        if name == "HeightMapData":
+            w, h, border = r.i32(), r.i32(), r.i32()
+            nb = r.i32(); bounds = [(r.i32(), r.i32()) for _ in range(nb)]
+            dsz = r.i32(); data = b[r.p:r.p+dsz]
+            if dsz != w * h:
+                raise ValueError(f"HeightMapData dataSize {dsz} != {w}*{h}")
+            m["height"] = {"width": w, "height": h, "border": border, "boundaries": bounds,
+                           "min": min(data), "max": max(data),
+                           "distinct": len(set(data)), "data": data}
+        elif name == "BlendTileData":
+            n = r.i32()
+            r.p += n * 2 * 4                                   # four int16 index planes
+            r.p += (m["height"]["height"]) * ((m["height"]["width"] + 7) // 8)
+            nb, nbl, ncl = r.i32(), r.i32(), r.i32()
+            ntc = r.i32(); classes = []
+            for _ in range(ntc):
+                first, cnt, wid, _legacy = r.i32(), r.i32(), r.i32(), r.i32()
+                classes.append({"firstTile": first, "numTiles": cnt, "width": wid,
+                                "name": r.s()})
+            m["blend"] = {"len": n, "numBitmapTiles": nb, "numBlendedTiles": nbl,
+                          "numCliffInfo": ncl, "classes": classes}
+        elif name == "WorldInfo":
+            m["worldInfo"] = r.dict(names)
+        elif name == "ObjectsList":
+            end = off + size; objs = []
+            while r.p < end:
+                r.u32(); r.u16(); sz = r.i32(); e = r.p + sz
+                x, y, z, ang = r.f32(), r.f32(), r.f32(), r.f32()
+                r.i32()
+                tmpl = r.s(); d = r.dict(names)
+                objs.append({"template": tmpl, "x": x, "y": y, "z": z, "dict": d})
+                r.p = e
+            m["objects"] = objs
+    return m
+
+
+def map_start_spots(m):
+    """Exactly MapUtil.cpp:334 — count Player_N_Start upward from 1, stop at the first gap."""
+    have = {o["dict"].get("waypointName") for o in m.get("objects", [])}
+    n = 0
+    while f"Player_{n + 1}_Start" in have:
+        n += 1
+    return n
+
+
+def cmd_map(a):
+    if a.action == "scan":
+        root = a.path or os.path.join(DEF_GAME, "Maps")
+        files = sorted(glob.glob(os.path.join(root, "**", "*.map"), recursive=True))
+        hist, vers, store, bad = Counter(), defaultdict(set), Counter(), []
+        for f in files:
+            try:
+                b, how = map_load(f); store[how] += 1
+                _, chunks = map_chunks(b)
+                for n, v, _, _ in chunks:
+                    hist[n] += 1; vers[n].add(v)
+            except Exception as e:
+                bad.append((os.path.basename(f), str(e)[:60]))
+        ok = len(files) - len(bad)
+        print(f"  {ok}/{len(files)} maps decoded   storage {dict(store)}")
+        for n, c in hist.most_common():
+            print(f"    {c:4d}/{ok}  {n:18s} versions {sorted(vers[n])}")
+        for n, e in bad:
+            print(f"    UNDECODED {n}: {e}")
+        return 0
+
+    b, how = map_load(a.path)
+    m = map_parse(b)
+    if a.action == "read":
+        hm = m["height"]
+        print(f"  {os.path.basename(a.path)}  {len(b)} bytes uncompressed ({how})")
+        print(f"  chunks: " + ", ".join(f"{n} v{m['chunks'][n]['version']}" for n in m["order"]))
+        print(f"  heightmap {hm['width']}x{hm['height']} border={hm['border']} "
+              f"playable={hm['boundaries']}")
+        span = (hm["boundaries"][0][0] * 10, hm["boundaries"][0][1] * 10)
+        print(f"  playable span {span[0]}x{span[1]} world units; "
+              f"elevation {(hm['max'] - hm['min']) * 10 / 16:.1f} "
+              f"({hm['distinct']} distinct height bytes)")
+        print(f"  terrain classes: {[c['name'] for c in m['blend']['classes']]}")
+        print(f"  worldInfo: {m.get('worldInfo')}")
+        print(f"  objects {len(m.get('objects', []))}, start spots {map_start_spots(m)}")
+        for o in m.get("objects", []):
+            wn = o["dict"].get("waypointName")
+            if wn:
+                print(f"    waypoint {wn!r} at ({o['x']:.0f}, {o['y']:.0f})")
+        return 0
+
+    if a.action == "verify":
+        # Assertions a WRITTEN map must satisfy to be loadable and skirmish-playable. Every
+        # one of these is a throw or an early-out in their loader, not a matter of taste.
+        errs, hm = [], m["height"]
+        need = ["HeightMapData", "BlendTileData", "WorldInfo", "SidesList",
+                "ObjectsList", "PolygonTriggers", "GlobalLighting", "WaypointsList"]
+        for n in need:
+            if n not in m["chunks"]:
+                errs.append(f"missing chunk {n} (all 149 decodable retail maps carry it)")
+        if hm["width"] * hm["height"] != len(hm["data"]):
+            errs.append("HeightMapData dataSize != width*height — a hard throw in their parser")
+        if m["chunks"].get("GlobalLighting", {}).get("size") != 872:
+            errs.append(f"GlobalLighting is {m['chunks'].get('GlobalLighting', {}).get('size')} "
+                        f"bytes, not the 872 every shipped map has")
+        if m["blend"]["len"] != hm["width"] * hm["height"]:
+            errs.append("BlendTileData len != heightmap dataSize — their parser throws")
+        if not m["blend"]["classes"]:
+            errs.append("no texture class: the map has nothing to draw itself with")
+        spots = map_start_spots(m)
+        if spots < 2:
+            errs.append(f"{spots} start spots; a skirmish map needs Player_1_Start and "
+                        f"Player_2_Start, contiguous from 1")
+        # A wall only blocks if it clears their slope limit: 9.8 world units over one cell,
+        # which is 15.68 height bytes, so the step must be at least 16.
+        d, w, h = hm["data"], hm["width"], hm["height"]
+        worst = 0
+        for y in range(h - 1):
+            row, nxt = y * w, (y + 1) * w
+            for x in range(w - 1):
+                q = (d[row+x], d[row+x+1], d[nxt+x], d[nxt+x+1])
+                worst = max(worst, max(q) - min(q))
+        cliffy = worst >= 16
+        print(f"  chunks: {len(m['chunks'])}/8   heightmap {hm['width']}x{hm['height']} "
+              f"border={hm['border']} playable={hm['boundaries'][0]}")
+        print(f"  start spots {spots}   terrain {[c['name'] for c in m['blend']['classes']]}")
+        print(f"  steepest cell step {worst} bytes ({worst * 10 / 16:.1f} world units) — "
+              f"{'clears' if cliffy else 'BELOW'} their 9.8 cliff limit")
+        if a.expect_cliff and not cliffy:
+            errs.append(f"expected blocking terrain but the steepest step is {worst} bytes "
+                        f"(<16): their pathfinder will call all of it walkable")
+
+        # Reachability under THEIR rule, not ours. This is the assertion that catches the
+        # failure a chunk-level check cannot see: our grid and their height field have no
+        # common cell size, so every map is RESAMPLED, and a resample can quietly close a
+        # gate that was open in the authored map. Flood-filling the emitted bytes with
+        # setCellCliffFlagFromHeights answers "can their units still get through" directly.
+        # The flood fill is confined to the PLAYABLE region, and that is not a tidiness
+        # choice: W3DTerrainLogic::getMaximumPathfindExtent returns 0..boundary*MAP_XY_FACTOR,
+        # so Pathfinder::newMap allocates cells for the playable rectangle ALONE. The border
+        # is flat, walkable-looking and unreachable. A fill that ignores it reports every
+        # full-width barrier as leaky, which is what the first version of this check did.
+        border = hm["border"]
+        pw, ph = hm["boundaries"][0]
+        cliff = bytearray(w * h)
+        for y in range(h - 1):
+            row, nxt = y * w, (y + 1) * w
+            for x in range(w - 1):
+                q = (d[row+x], d[row+x+1], d[nxt+x], d[nxt+x+1])
+                if max(q) - min(q) > 9.8 * 16 / 10:          # PATHFIND_CLIFF_SLOPE_LIMIT_F
+                    cliff[row + x] = 1
+
+        def inplay(cx, cy):
+            return border <= cx < border + pw and border <= cy < border + ph
+
+        def cell_of(o):
+            return (int(o["x"] / 10) + border, int(o["y"] / 10) + border)
+
+        spot = {o["dict"]["waypointName"]: cell_of(o) for o in m.get("objects", [])
+                if o["dict"].get("waypointName", "").startswith("Player_")}
+        reach = None
+        if len(spot) >= 2:
+            (sx, sy) = spot["Player_1_Start"]; goal = spot["Player_2_Start"]
+            seen = {(sx, sy)}; stack = [(sx, sy)]
+            while stack:
+                cx, cy = stack.pop()
+                if (cx, cy) == goal: break
+                for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
+                    nx, ny = cx + dx, cy + dy
+                    if inplay(nx, ny) and (nx, ny) not in seen and not cliff[ny * w + nx]:
+                        seen.add((nx, ny)); stack.append((nx, ny))
+            reach = goal in seen
+            print(f"  start spots {'CONNECTED' if reach else 'SEPARATED'} under their own "
+                  f"cliff rule ({sum(cliff)} cliff cells, {pw}x{ph} pathable)")
+        if a.expect_connected and reach is not True:
+            errs.append("start spots are not reachable from each other: the resample closed "
+                        "the route their pathfinder would take")
+        if a.expect_separated and reach is not False:
+            errs.append("start spots are still connected: the barrier did not survive the "
+                        "resample into their height field")
+        for e in errs:
+            print(f"  FAIL: {e}")
+        return 1 if errs else 0
+
+
 def cmd_show(a):
     cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
     q = a.thing
@@ -1456,6 +1766,17 @@ def main():
     tg.add_argument("--cells", type=int, default=8)
     tg.add_argument("--rgb", type=int, nargs=3, default=[40, 170, 220])
     tg.set_defaults(fn=cmd_tga)
+
+    mp = sub.add_parser("map", help="read, scan or verify Zero Hour .map terrain files")
+    mp.add_argument("action", choices=["read", "scan", "verify"])
+    mp.add_argument("path", nargs="?")
+    mp.add_argument("--expect-cliff", action="store_true",
+                    help="verify: require terrain steep enough that THEIR pathfinder blocks it")
+    mp.add_argument("--expect-connected", action="store_true",
+                    help="verify: the two start spots must be mutually reachable")
+    mp.add_argument("--expect-separated", action="store_true",
+                    help="verify: the two start spots must NOT be mutually reachable")
+    mp.set_defaults(fn=cmd_map)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")

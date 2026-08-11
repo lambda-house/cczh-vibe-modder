@@ -840,12 +840,16 @@ case "$hover_loco" in
   *) echo "  HOVERCRAFT DID NOT CROSS OVER: emitted Surfaces is wrong"
      echo "$hover_loco"; rm -rf "$PAS"; exit 1 ;;
 esac
+# Water has no height analogue — it needs a PolygonTrigger with isWater, which the map
+# writer does not emit — so it must be REPORTED as flattened rather than quietly shipped as
+# ground that a hovercraft has no reason to prefer.
 zh_lint=$(rts lint --target zh --mod "$PAS/river.json" 2>&1 || true)
 case "$zh_lint" in
-  *"passability map"*"is NOT emitted"*) : ;;
-  *) echo "  THE UNEMITTABLE MAP IS NOT REPORTED AS A DIVERGENCE"; rm -rf "$PAS"; exit 1 ;;
+  *"water/rubble cell"*"OPEN GROUND"*) : ;;
+  *) echo "  FLATTENED WATER IS NOT REPORTED AS A DIVERGENCE"; echo "$zh_lint"
+     rm -rf "$PAS"; exit 1 ;;
 esac
-echo "  Surfaces cross over verbatim; the map cannot, and lint reports it as divergence"
+echo "  Surfaces cross over verbatim; water flattens and lint says so"
 rm -rf "$PAS"
 gate "overrides compile to map.ini, and only there"
 # Modifying a unit that ALREADY EXISTS in the target game is a different problem from
@@ -1327,6 +1331,105 @@ if "no prototype 'nope'" not in err or "Available:" not in err:
     print(f"  bad input did not produce an actionable error: {err[:80]}"); sys.exit(1)
 print(f"  handshake, {len(names)} tools with schemas, results carry contentHash, errors name the fix")
 PY3
+
+gate "an authored map crosses to a real .map"
+# The pivot terrain has been waiting for: until now every terrain number the harness produced
+# was measured on a map their engine had never seen, and target-zh lint said so as a
+# divergence. `rts compile` now writes an actual .map, so the SAME authored shape can be
+# checked against THEIR rules.
+#
+# The reader doing the checking is a second, independent implementation (`zhasset map`), and
+# it earns that job by decoding the whole shipped corpus first. A writer graded by its own
+# reader proves only that the two agree.
+MAPD=$(mktemp -d); trap 'rm -rf "$MAPD"' EXIT
+
+CORPUS="$HOME/GeneralsX/GeneralsZH"
+if [ -d "$CORPUS" ]; then
+  for arc in "$CORPUS/MapsZH.big" "$CORPUS/ZH_Generals/maps.big"; do
+    [ -f "$arc" ] && ./tools/zhasset archives extract --archive "$arc" --glob '*.map' \
+      --dest "$MAPD/corpus" >/dev/null 2>&1
+  done
+  scan=$(./tools/zhasset map scan "$MAPD/corpus" 2>&1 || true)
+  total=$(echo "$scan" | sed -n 's/^ *\([0-9]*\)\/\([0-9]*\) maps decoded.*/\1 \2/p')
+  case "$total" in
+    "") echo "  MAP CORPUS SCAN PRODUCED NO RESULT"; echo "$scan"; exit 1 ;;
+    *) ok=${total%% *}; all=${total##* }
+       [ "$ok" = "$all" ] || { echo "  READER FAILED ON $((all-ok)) OF $all SHIPPED MAPS"
+                               echo "$scan"; exit 1; }
+       echo "  reader decodes $ok/$all shipped maps — all 8 chunks, every version" ;;
+  esac
+else
+  echo "  (no retail install: reader-vs-corpus check skipped)"
+fi
+
+# Two authored shapes that our own sim already disagrees about: gate 18 measures the gated
+# wall at 27.4s and the solid one as a timeout draw. Their engine must reach the same verdict
+# from a height field alone — no passability layer, no flags, just slope.
+python3 - "$MAPD" <<'PYMAP'
+import json, re, sys
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/chokepoint.json').read(), flags=re.M))
+rows, legend = d['map']['rows'], d['map']['legend']
+wall = next(k for k, v in legend.items() if v != 'clear')
+d['meta']['name'] = 'e2egate'
+open(f'{sys.argv[1]}/gated.json', 'w').write(json.dumps(d))
+d = json.loads(json.dumps(d))
+d['meta']['name'] = 'e2esolid'
+d['map']['rows'] = [''.join(wall if 21 <= i <= 26 else c for i, c in enumerate(r)) for r in rows]
+open(f'{sys.argv[1]}/solid.json', 'w').write(json.dumps(d))
+PYMAP
+
+rts compile --target zh --out "$MAPD/gated" --mod "$MAPD/gated.json" >/dev/null
+rts compile --target zh --out "$MAPD/solid" --mod "$MAPD/solid.json" >/dev/null
+
+gated_map="$MAPD/gated/Maps/e2egate_map/e2egate_map.map"
+solid_map="$MAPD/solid/Maps/e2esolid_map/e2esolid_map.map"
+[ -f "$gated_map" ] || { echo "  NO .map EMITTED for a pack that authored one"; exit 1; }
+
+# A pack with NO map must emit no Maps/ directory at all: opt-in by content, the same rule
+# every slice since structures has followed.
+rts compile --target zh --out "$MAPD/nomap" >/dev/null
+[ ! -d "$MAPD/nomap/Maps" ] || { echo "  A MAPLESS PACK EMITTED A MAP"; exit 1; }
+echo "  opt-in by content: no authored map, no Maps/ directory"
+
+./tools/zhasset map verify "$gated_map" --expect-cliff --expect-connected \
+  || { echo "  GATED MAP FAILED VERIFICATION"; exit 1; }
+./tools/zhasset map verify "$solid_map" --expect-cliff --expect-separated \
+  || { echo "  SOLID BARRIER LEAKS IN THEIR ENGINE"; exit 1; }
+echo "  the same two shapes separate and connect under THEIR cliff rule, not ours"
+
+# The map must name a TerrainType that retail actually declares. An absent one is the
+# quietest failure in the format: readTexClass simply fails to open the file and returns,
+# and the map draws untextured with no error anywhere.
+tt=$(./tools/zhasset map read "$gated_map" | sed -n "s/.*terrain classes: \['\([^']*\)'\].*/\1/p")
+TERRAIN_INI="$HOME/work/oss/zh-retail/Data/INI/Terrain.ini"
+if [ -f "$TERRAIN_INI" ]; then
+  # Two traps in one line, both of which this file has hit before:
+  #   tr -d '\r' — retail INI is CRLF, so a "$" anchor matches nothing (gate 18).
+  #   grep -c, not -q — under `set -o pipefail`, grep -q exits on the first match, SIGPIPEs
+  #   the upstream tr, and the pipeline reports failure on a SUCCESSFUL match.
+  hit=$(tr -d '\r' < "$TERRAIN_INI" | grep -ci "^Terrain $tt\$" || true)
+  [ "$hit" -ge 1 ] \
+    || { echo "  INVENTED TERRAIN TYPE '$tt': retail declares no such block"; exit 1; }
+  echo "  terrain type '$tt' is one retail declares, not one that sounded plausible"
+fi
+
+# map.ini is only read from beside a .map — GameLogic::loadMapINI is the sole caller using
+# INI_LOAD_CREATE_OVERRIDES and it runs against the chosen map's own directory. Emitting it
+# to the pack root left it somewhere the engine never looks.
+rts compile --target zh --out "$MAPD/ovr" --mod content/mods/chokepoint.json \
+  --mod content/mods/retail-override.json >/dev/null
+if [ -f "$MAPD/ovr/map.ini" ]; then
+  echo "  OVERRIDES LEFT AT THE PACK ROOT, where loadMapINI never looks"; exit 1
+fi
+# The stack is named for its TOP layer, so the map directory is the override pack's, not the
+# terrain pack's — find it rather than spelling it.
+beside=$(find "$MAPD/ovr/Maps" -name map.ini | head -1)
+[ -n "$beside" ] || { echo "  OVERRIDES NOT PLACED BESIDE THE EMITTED MAP"; exit 1; }
+[ -f "$(dirname "$beside")"/*.map ] 2>/dev/null || \
+  ls "$(dirname "$beside")"/*.map >/dev/null 2>&1 \
+  || { echo "  map.ini has no .map beside it, so loadMapINI will never read it"; exit 1; }
+echo "  overrides land beside the .map, which is the only place they are read"
+rm -rf "$MAPD"; trap - EXIT
 
 echo
 echo "== regression: pinned replay hashes =="

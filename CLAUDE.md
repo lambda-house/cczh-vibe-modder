@@ -51,6 +51,9 @@ of them.
 - `docs/ZERO-HOUR-ASSETS.md` — the **shipped assets** and what can be replaced, measured
   from retail. Where the two disagree on a count, **retail wins** (the 104p patch adds
   content: 363 weapons vs 420, 53 armor sets vs 57, 96 sciences vs 100).
+- `docs/ZERO-HOUR-MAPS.md` — the **terrain format**, decoded from all 150 shipped maps. The
+  container, the eight chunks, the two scale constants and the slope at which their engine
+  decides a cell is a cliff.
 
 Sources on disk:
 
@@ -189,6 +192,25 @@ one there (rule 3), and touch weapons only alongside an object override (rule 4)
    and the profile is per-MESH, not per-unit. `zh.artRig` and `zh.turreted` are the stopgap;
    structure geometry is still hardcoded to AmericaWarFactory's numbers. The real fix is a
    catalogue of adoptable meshes with measured profiles, which `tools/zhasset` can generate.*
+
+14. **The `.map` format is READ AND WRITTEN, and passability is DERIVED not authored.**
+   `docs/ZERO-HOUR-MAPS.md` has the whole study; the four facts that shape code here:
+   - **Compression is optional.** `CachedFileInputStream::open` sniffs a magic and falls
+     through to raw bytes. 4 of 150 shipped maps are raw, so our writer needs no compressor.
+   - **A height field is one unsigned byte per vertex**, 10 world units apart
+     (`MAP_XY_FACTOR`), 0.625 units per byte (`MAP_HEIGHT_SCALE`). Total relief is therefore
+     capped at 159 world units — the real constraint on importing real elevation.
+   - **They have no authored passability layer at all.** `setCellCliffFlagFromHeights` calls a
+     cell a cliff when its corners differ by more than `PATHFIND_CLIFF_SLOPE_LIMIT_F` = 9.8
+     units, i.e. **16 height bytes**. Our blocked cells are emitted as a plateau and their
+     pathfinder derives the block. A 15-byte step is a wall units walk over, silently.
+   - **The border is drawn and NOT pathable.** `getMaximumPathfindExtent` returns the playable
+     boundary only. A reachability check over the whole grid reports every full-width barrier
+     as leaky — which is exactly what the first version of ours did.
+   *The map is always RESAMPLED: our cell size is a power of two in our units, theirs is fixed
+   at 10 of theirs, and the two have no common divisor. The writer preserves the world SPAN,
+   because span is what a measured battle length depends on; lint reports the ratio when a
+   feature could be narrower than one of their cells.*
 
 **VALIDATED END TO END, IN A REAL MATCH.** A faction authored here is selectable in the
 skirmish dropdown, has a working command bar, builds a unit authored here, and that unit
@@ -428,6 +450,11 @@ are emitted by `rts compile`, not hand-written.
 - **Terrain blocks movement and NOTHING else.** There is no line of sight, so a wall thinner
   than weapon range measures as exactly zero: both sides walk up to it and shoot over it. Any
   map authored as a balance test needs walls wider than the longest gun until slice 13 lands.
+- **An authored map is CHECKED BY A SECOND IMPLEMENTATION.** `Content/ZhMapWriter.cs` writes
+  and `tools/zhasset map` reads, and the reader earns that job by decoding all 150 shipped
+  maps before it grades ours. A writer checked by its own reader proves only that the two
+  agree. e2e asserts the two-sided result: the same authored shapes that measure 27.4s and a
+  timeout draw here come out CONNECTED and SEPARATED under their cliff rule there.
 - **New randomness gets its own `Pcg32` stream id** (next free integer in
   `Sim`'s constructor). Never share a stream between systems; never reuse an id.
 - **Every new sim-state field must be added to the state hash**
