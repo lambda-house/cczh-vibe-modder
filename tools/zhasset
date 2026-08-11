@@ -1149,6 +1149,241 @@ def cmd_dossier(a):
     return 0
 
 
+# ============================================================================================
+# TECH TREE — factions, what they build, and what has to exist first.
+#
+# In ZH this is not one table but a JOIN across five files, and none of them names the graph:
+#     PlayerTemplate  startingBuilding, IntrinsicSciences        -> the roots
+#     Object          CommandSet, and a Prerequisites sub-block   -> the gates
+#     CommandSet      numbered slots -> CommandButton names       -> the edges
+#     CommandButton   Command = UNIT_BUILD | PLAYER_UPGRADE | SPECIAL_POWER  -> the targets
+#     Science / Rank  purchase costs, prerequisites, skill-point thresholds  -> the second tree
+#
+# The two trees meet: an Object's Prerequisites can require a Science, and a SPECIAL_POWER
+# button can require one, so the superweapons and the experience ladder are the SAME graph
+# reached from a different root. That is why this is one command and not three.
+# ============================================================================================
+
+def subblock(lines, name):
+    """The lines of an indented `<name> ... End` sub-block, e.g. Prerequisites."""
+    out, depth = [], 0
+    for ln in lines:
+        st = ln.strip()
+        if depth == 0:
+            if re.match(rf"{name}\s*$", st) or re.match(rf"{name}\s+", st):
+                depth = 1
+            continue
+        if st.lower() == "end":
+            break
+        out.append(st)
+    return out
+
+
+def command_sets(ini):
+    out = {}
+    for fn in ("CommandSet.ini",):
+        path = os.path.join(ini, fn)
+        if not os.path.exists(path):
+            continue
+        for kind, name, lines in ini_blocks(path):
+            if kind != "CommandSet":
+                continue
+            slots = {}
+            for ln in lines:
+                m = re.match(r"\s*(\d+)\s*=\s*(\S+)", ln)
+                if m:
+                    slots[int(m.group(1))] = m.group(2)
+            out[name] = slots
+    return out
+
+
+def command_buttons(ini):
+    out = {}
+    path = os.path.join(ini, "CommandButton.ini")
+    if not os.path.exists(path):
+        return out
+    for kind, name, lines in ini_blocks(path):
+        if kind != "CommandButton":
+            continue
+        out[name] = {
+            "command": field(lines, "Command"),
+            "object": field(lines, "Object"),
+            "upgrade": field(lines, "Upgrade"),
+            "specialPower": field(lines, "SpecialPower"),
+            "science": (field(lines, "Science") or "").split() or None,
+            "options": (field(lines, "Options") or "").split() or None,
+        }
+    return out
+
+
+def object_prereqs(ini):
+    """object -> {objects: [...], sciences: [...]}. An OR is expressed as several names on one
+    line; ZH takes any one of them, which is why these stay as lists rather than being
+    flattened into a single requirement."""
+    out = {}
+    objdir = os.path.join(ini, "Object")
+    for fn in sorted(os.listdir(objdir)):
+        if not fn.lower().endswith(".ini"):
+            continue
+        for kind, name, lines in ini_blocks(os.path.join(objdir, fn)):
+            if kind != "Object":
+                continue
+            pre = subblock(lines, "Prerequisites")
+            if not pre:
+                continue
+            objs, scis = [], []
+            for ln in pre:
+                m = re.match(r"(Object|Science)\s*=\s*(.+)$", ln)
+                if m:
+                    (objs if m.group(1) == "Object" else scis).append(m.group(2).split())
+            out[name] = {"objects": objs, "sciences": scis}
+    return out
+
+
+def ranks(ini):
+    out = []
+    path = os.path.join(ini, "Rank.ini")
+    if not os.path.exists(path):
+        return out
+    for kind, name, lines in ini_blocks(path):
+        if kind != "Rank":
+            continue
+        out.append({
+            "rank": int(name) if name.isdigit() else name,
+            "skillPointsNeeded": field(lines, "SkillPointsNeeded"),
+            "purchasePointsGranted": field(lines, "SciencePurchasePointsGranted"),
+            "sciencesGranted": (field(lines, "SciencesGranted") or "").split(),
+        })
+    return sorted(out, key=lambda r: r["rank"] if isinstance(r["rank"], int) else 0)
+
+
+def cmd_techtree(a):
+    cat_path = os.path.join(DEF_OUT, "zh-catalogue.json")
+    if not os.path.exists(cat_path):
+        return print(f"  no catalogue at {cat_path} — run `zhasset catalogue` first")
+    cat = json.load(open(cat_path))
+
+    csets, cbuttons = command_sets(a.ini), command_buttons(a.ini)
+    prereqs, rank_list = object_prereqs(a.ini), ranks(a.ini)
+    objects, sciences, powers = cat["objects"], cat["sciences"], cat["specialPowers"]
+
+    def produces(obj_name):
+        """What one object's command set offers: units, upgrades, powers."""
+        cs = (objects.get(obj_name) or {}).get("commandSet")
+        got = {"builds": [], "constructs": [], "upgrades": [], "powers": [], "sciences": []}
+        for _, btn in sorted((csets.get(cs) or {}).items()):
+            b = cbuttons.get(btn)
+            if not b:
+                continue
+            # The verb is what distinguishes the four kinds of edge, and there are more of them
+            # than the obvious one. UNIT_BUILD (259) makes units; DOZER_CONSTRUCT (192) makes
+            # STRUCTURES and is why a tree built from UNIT_BUILD alone stops dead at the dozer;
+            # PURCHASE_SCIENCE (82) IS the experience tree, spent from rank points;
+            # OBJECT_UPGRADE (37) is per-object rather than per-player. Some lines carry a
+            # trailing space, so normalise before comparing.
+            cmd = (b["command"] or "").strip().upper()
+            if cmd == "UNIT_BUILD" and b["object"]:
+                got["builds"].append(b["object"])
+            elif cmd == "DOZER_CONSTRUCT" and b["object"]:
+                got["constructs"].append(b["object"])
+            elif cmd in ("PLAYER_UPGRADE", "OBJECT_UPGRADE") and b["upgrade"]:
+                got["upgrades"].append(b["upgrade"])
+            elif cmd == "PURCHASE_SCIENCE" and b["science"]:
+                got["sciences"].extend(b["science"])
+            elif cmd.startswith("SPECIAL_POWER") and b["specialPower"]:
+                got["powers"].append({"power": b["specialPower"], "science": b["science"]})
+        return got
+
+    factions = [f for f in cat["factions"]
+                if a.faction.lower() in f.lower()] if a.faction else list(cat["factions"])
+    if not factions:
+        return print(f"  no faction matching '{a.faction}'. Have: {', '.join(cat['factions'])}")
+
+    trees = {}
+    for fid in factions:
+        f = cat["factions"][fid]
+        root = f.get("startingBuilding")
+        # BFS from the starting building through command sets. The DEPTH is the useful part:
+        # it is how far into the tree a thing sits, which no file states anywhere.
+        depth, order, frontier = {}, [], [root] if root else []
+        for r in frontier:
+            depth[r] = 0
+        while frontier:
+            nxt = []
+            for cur in frontier:
+                order.append(cur)
+                p = produces(cur)
+                # Both edges advance the tree: a factory BUILDS units, a dozer CONSTRUCTS
+                # buildings, and the buildings are what carry the next tier's command sets.
+                for child in p["builds"] + p["constructs"]:
+                    if child not in depth:
+                        depth[child] = depth[cur] + 1
+                        nxt.append(child)
+            frontier = nxt
+        producers = {o: produces(o) for o in order if any(produces(o).values())}
+        # Sciences reachable from this faction: intrinsic, rank-granted, and any named by a
+        # power button the faction can reach.
+        reach_sci = set(f.get("intrinsicSciences") or [])
+        for r in rank_list:
+            reach_sci.update(r["sciencesGranted"])
+        sw = {}
+        for o, p in producers.items():
+            reach_sci.update(p["sciences"])
+            for entry in p["powers"]:
+                pw = powers.get(entry["power"], {})
+                sw[entry["power"]] = {"fromObject": o, "science": entry["science"],
+                                      "requiredScience": pw.get("RequiredScience"),
+                                      "reloadTime": pw.get("ReloadTime"),
+                                      "enum": pw.get("Enum")}
+                for sc in (entry["science"] or []):
+                    reach_sci.add(sc)
+                if pw.get("RequiredScience"):
+                    reach_sci.add(pw["RequiredScience"])
+        trees[fid] = {
+            "side": f.get("side"), "playable": f.get("playable"),
+            "startingBuilding": root,
+            "intrinsicSciences": f.get("intrinsicSciences"),
+            "depth": depth, "producers": producers, "superweapons": sw,
+            "sciences": {k: {**sciences.get(k, {}),
+                             "reachable": k in reach_sci} for k in sorted(reach_sci)},
+            "prerequisites": {o: prereqs[o] for o in depth if o in prereqs},
+        }
+
+    if a.json:
+        print(json.dumps({"ranks": rank_list, "factions": trees}, indent=2))
+        return 0
+
+    print(f"  rank ladder: " + "  ".join(
+        f"{r['rank']}@{r['skillPointsNeeded']}(+{r['purchasePointsGranted']})" for r in rank_list)
+        + f"   = {sum(int(r['purchasePointsGranted'] or 0) for r in rank_list)} purchase points a game")
+    for fid, t in trees.items():
+        print(f"\n  {fid}  side={t['side']}  playable={t['playable']}  root={t['startingBuilding']}")
+        if not t["startingBuilding"]:
+            print("    (no starting building — nothing is reachable, so no tree)")
+            continue
+        bytier = {}
+        for o, d in t["depth"].items():
+            bytier.setdefault(d, []).append(o)
+        for d in sorted(bytier):
+            names = sorted(bytier[d])
+            print(f"    tier {d}: {len(names)}  {', '.join(names[:6])}"
+                  + (f", +{len(names)-6} more" if len(names) > 6 else ""))
+        upg = sorted({u for p in t["producers"].values() for u in p["upgrades"]})
+        print(f"    upgrades purchasable: {len(upg)}   "
+              f"purchasable sciences: {len([k for k in t['sciences'] if sciences.get(k, {}).get('SciencePurchasePointCost')])}")
+        gated = {o: p for o, p in t["prerequisites"].items() if p["sciences"]}
+        if gated:
+            print(f"    science-gated objects: " +
+                  ", ".join(f"{o}<-{'/'.join(sum(p['sciences'], []))}" for o, p in list(gated.items())[:4]))
+        if t["superweapons"]:
+            print(f"    superweapons: {len(t['superweapons'])}")
+            for pw, v in list(t["superweapons"].items())[:6]:
+                print(f"      {pw:34s} from {v['fromObject']:26s} science={v['requiredScience']} "
+                      f"reload={v['reloadTime']}")
+        print(f"    reachable sciences: {len(t['sciences'])}")
+    return 0
+
+
 def cmd_show(a):
     cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
     q = a.thing
@@ -2156,6 +2391,11 @@ def main():
     do.add_argument("--json", action="store_true")
     do.add_argument("--verbatim", action="store_true", help="include the raw INI block")
     do.set_defaults(fn=cmd_dossier)
+
+    tt = sub.add_parser("techtree", help="factions: what they build, what gates it, superweapons, ranks")
+    tt.add_argument("faction", nargs="?")
+    tt.add_argument("--json", action="store_true")
+    tt.set_defaults(fn=cmd_techtree)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")

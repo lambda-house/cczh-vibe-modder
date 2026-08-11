@@ -808,6 +808,35 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
     attack, and the first attempt looked like LOS blocking when it was simply no order at all.
     Ctrl+click force-fire is the one that tests anything.*
 
+## The extracted reference model (`tools/zhasset`)
+
+The extraction exists so an agent can reason over ZH's content and derive new content from it,
+rather than re-deriving the corpus each time. Three commands carry the model; `reference/` is
+their output and is gitignored — ship the extractor, never the extract.
+
+- `catalogue` — the resolved corpus: 15 factions, 2,102 objects, 363 weapons, 96 sciences,
+  79 powers. Answers *what is in the game*.
+- **`dossier <object>`** — one object COMPLETE, with its asset closure. Answers *how do I make
+  another one of these*. Full definition, every `ModelConditionState` with its model and
+  animation, the textures named INSIDE each `.w3d`, icons resolved through both hops, sounds,
+  and the death FX/OCL entry points.
+  *`AmericaWarFactory` is 86 draw states — 36 of them construction, 9 of them door animations —
+  across 36 models and 155 distinct textures. **Building assembly is not a separate asset**; it
+  is `ACTIVELY_BEING_CONSTRUCTED` / `PARTIALLY_CONSTRUCTED` states, and a summary reporting only
+  the default model misses the whole build-up.*
+- **`techtree [faction]`** — the graph, joined across five files none of which names it:
+  `PlayerTemplate` roots, `Object` command sets and `Prerequisites`, `CommandSet` slots,
+  `CommandButton` verbs, `Science`/`Rank`. Every playable faction resolves to 4 tiers.
+  **The verb is the edge, and there are more than the obvious one:** `UNIT_BUILD` (259) makes
+  units, **`DOZER_CONSTRUCT` (192) makes STRUCTURES** — a tree built from `UNIT_BUILD` alone
+  stops dead at the dozer — **`PURCHASE_SCIENCE` (82) IS the experience tree**, and
+  `OBJECT_UPGRADE` is per-object where `PLAYER_UPGRADE` is per-player. Some lines carry a
+  trailing space, so the verb is normalised before comparing.
+  *The two trees are ONE graph: an `Object`'s `Prerequisites` can require a Science and a
+  `SPECIAL_POWER` button can require one, so superweapons and the promotion ladder are reached
+  from different roots of the same structure. Measured: 5 ranks at 0/800/1500/2500/5000 grant
+  7 purchase points a game against 14-24 reachable sciences per faction.*
+
 ## Roadmap: the ASSET MODEL
 
 The sim roadmap above is finished bar the lockstep layer. What is left is art, and it has its
