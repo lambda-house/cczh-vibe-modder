@@ -392,11 +392,19 @@ all three fail, and the portrait reads pure black.
 *The structure is found by COLOUR, never by coordinate: the start position is randomised, so
 the same map put the factory at game (512,139) one run and (297,165) the next.*
 
+**Never read or click game-space coordinates unless the game is FRONTMOST.** Chrome took focus
+mid-sequence and `find` returned a point inside ITS window, after which every click went into a
+browser. A pixel read of the wrong app comes back as plausible DATA rather than as an error,
+which makes reading the more dangerous half. `shot` is exempt — capturing the screen is always
+safe and is how you find out what went wrong.
+
 **A failed drive must name WHO failed it.** `zhdrive` records where it parked the cursor and
 checks it before diagnosing anything, because a wedged shell and a stray human click look
 identical in a screenshot and have opposite fixes — one wants a relaunch, the other wants
 hands off and a retry. This driver blamed the engine twice without being able to rule the
-other out, which is not a diagnosis.
+other out, which is not a diagnosis. *Every place that moves the cursor must RECORD where it
+left it — the guard's first outing blamed a human for the driver's own focus click on a retry,
+and a guard that cries wolf is worse than none.*
 
 **Observe needs no permission and answers every LOAD-TIME question**, which is where every
 bug so far has actually lived. Act buys "click build and see" and nothing before it.
@@ -938,15 +946,27 @@ furniture is borrowed on purpose.
     safe from a compiled map: a skirmish opponent's name exists in the LOBBY, not in the map's
     `SidesList`, so naming one is the crash rather than the fallback.
     *This is what finally settled the LOS question below.*
-17. **Author an `FXList` and a `ParticleSystem`.** (M) *Both directories are scanned — measured
-    from the boot log, after this file asserted the opposite from source and was wrong. Today
-    an adopted mesh inherits a peer's death FX and a fully AUTHORED one dies silently and
-    invisibly, which is the last place adopted art is structurally required.*
-    **The extraction half is done** (`zhasset fx`), and it sized the authoring half: 1,087
-    particle systems share 81 textures, all of them small additive sprites, and `zhasset tga`
-    already writes the format. What remains is the emitter plus the closed enum check —
-    `Priority`, `Shader` and `Type` are C++ name tables, so this is the fifth place an invented
-    literal would be a hard load error.
+17. ~~**Author an `FXList` and a `ParticleSystem`.**~~ — done. `rts compile` writes three
+    particle systems, an `FXList` and the additive sprite they draw with. **This was the last
+    category where adopting retail art was structurally required**: an adopted mesh inherits
+    its peer's death FX and an authored one inherited nothing, so a wholly authored unit died
+    silently and invisibly.
+    *Ours is the FALLBACK, never the override — a mesh retail uses brings presentation that
+    fits it, and `OCL_CrusaderTurret` throws THAT tank's turret. Structures had no death
+    presentation at all and now get `FXListDie`, which 842 retail objects use for this.*
+    **Two files, not one.** ParticleSystems go to `Data/INI/ParticleSystem/` and the FXList to
+    `Data/INI/FXList/` — the directories each manager actually scans. Emitting both into one
+    file removes no work and adds a question about which subsystem parses what, in what order.
+    **The three enums were checked against the C++ name tables, not a grep** — and the tables
+    contain `SCORCHMARK` and `SMUDGE`, which are legal and appear in no shipped INI. A grep
+    would have under-counted the vocabulary, which is exactly why the rule reads that way.
+    *An ADDITIVE sprite's empty is BLACK, not transparent: additive blending ignores alpha, so
+    the compositing instinct leaves a visible square. Falloff is squared, because a linear ramp
+    reads as a flat disc with a hard edge rather than a glow.*
+    Verified: legal enums, our own reader walks the emitted FXList to its texture, and the
+    engine loads both files (`[INI] load('Data/INI/ParticleSystem/…')`). **The explosion has not
+    yet been seen rendering** — the attempt was abandoned when Chrome stole focus mid-sequence,
+    which is what prompted the frontmost guard below.
 18. **Audio.** (L) *The largest untouched category: not one line is emitted and every unit is
     silent. `SoundEffects`, `Speech`, `Voice` and `MiscAudio` are all in the 42 scanned dirs.
     It is also 0% of the simulation, so it changes no measurement — which is why it is here

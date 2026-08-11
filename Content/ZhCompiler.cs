@@ -92,6 +92,13 @@ public static class ZhCompiler
         // pack has no reason to reinvent to prove a unit works.
         var icons = ZhIcons.Begin(pack + "_icons");
 
+        // The pack's own death effect. Authored unconditionally and used wherever an adopted
+        // mesh does not supply one, which is every authored mesh and every structure — those
+        // died silently and invisibly before this, the last place adopting retail art was
+        // structurally required rather than merely convenient.
+        var fx = ZhFx.Write(pack, pack + "_spark.tga");
+        string packDeathFx = fx.FxLists[0];
+
         var dmg = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var dt in db.DamageTypes)
         {
@@ -566,13 +573,23 @@ public static class ZhCompiler
                 // Death presentation, adopted with the mesh rather than invented: the FINAL
                 // OCL is often mesh-specific (OCL_CrusaderTurret throws THAT tank's turret),
                 // so guessing one would attach the wrong debris to the wrong hull.
-                if (art.TryGet(model, out var dfx))
-                {
-                    if (dfx.DeathFX is string f0) sb.AppendLine($"    FX = INITIAL {f0}");
-                    if (dfx.DeathOCL is string o0) sb.AppendLine($"    OCL = MIDPOINT {o0}");
-                    if (dfx.DeathFXFinal is string f1) sb.AppendLine($"    FX = FINAL {f1}");
-                    if (dfx.DeathOCLFinal is string o1) sb.AppendLine($"    OCL = FINAL {o1}");
-                }
+                art.TryGet(model, out var dfx);
+                // Ours is the FALLBACK, never the override: a mesh retail uses brings death
+                // presentation that fits it, and OCL_CrusaderTurret throws THAT tank's turret.
+                // Authored art has no such peer, so it gets the pack's effect instead of none.
+                sb.AppendLine($"    FX = INITIAL {dfx?.DeathFX ?? packDeathFx}");
+                if (dfx?.DeathOCL is string o0) sb.AppendLine($"    OCL = MIDPOINT {o0}");
+                if (dfx?.DeathFXFinal is string f1) sb.AppendLine($"    FX = FINAL {f1}");
+                if (dfx?.DeathOCLFinal is string o1) sb.AppendLine($"    OCL = FINAL {o1}");
+                sb.AppendLine("  End");
+            }
+
+            else
+            {
+                // A structure has no SlowDeathBehavior to hang FX on, so it needs its own
+                // module. 842 retail objects use FXListDie for exactly this.
+                sb.AppendLine("  Behavior = FXListDie ModuleTag_DeathFX");
+                sb.AppendLine($"    DeathFX = {packDeathFx}");
                 sb.AppendLine("  End");
             }
 
@@ -955,6 +972,23 @@ public static class ZhCompiler
             File.WriteAllBytes(tgaPath, icons.Tga());
             r.Files.Add(tgaPath);
             r.Icons = icons.Images.Count;
+        }
+
+        // ---- FX: the pack's own explosion -----------------------------------------------
+        {
+            var psb = new StringBuilder();
+            Banner(psb, db, "ParticleSystem");
+            psb.Append(fx.Systems);
+            Write(r, Path.Combine(ini, "ParticleSystem", pack + ".ini"), psb);
+
+            var fi = new StringBuilder();
+            Banner(fi, db, "FXList");
+            fi.Append(fx.Ini);
+            Write(r, Path.Combine(ini, "FXList", pack + ".ini"), fi);
+            string sp = Path.Combine(outRoot, "Art", "Textures", fx.SpriteName);
+            Directory.CreateDirectory(Path.GetDirectoryName(sp)!);
+            File.WriteAllBytes(sp, fx.Sprite);
+            r.Files.Add(sp);
         }
 
         // ---- Art the pack SHIPS -------------------------------------------------------------

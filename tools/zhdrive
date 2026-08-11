@@ -108,6 +108,35 @@ def interference():
             if dx + dy > 4 else None)
 
 
+def game_is_front():
+    try:
+        return subprocess.run(
+            ["osascript", "-e", 'tell application "System Events" to return name of '
+                                'first process whose frontmost is true'],
+            capture_output=True, text=True, timeout=10).stdout.strip() == "GeneralsXZH"
+    except subprocess.TimeoutExpired:
+        return False
+
+
+def assert_game_front(what):
+    """Refuse to read or click game-space coordinates while another app is in front.
+
+    Not paranoia — this happened: Chrome took focus mid-sequence and `find` cheerfully
+    returned a point in ITS window, after which every click went into a browser. A pixel read
+    of the wrong app comes back as plausible DATA rather than as an error, which makes it the
+    more dangerous half. `shot` is deliberately exempt: capturing the screen is always safe and
+    is how you find out what went wrong.
+    """
+    if not game_is_front():
+        who = subprocess.run(
+            ["osascript", "-e", 'tell application "System Events" to return name of '
+                                'first process whose frontmost is true'],
+            capture_output=True, text=True).stdout.strip() or "something else"
+        sys.exit(f"  REFUSING TO {what}: '{who}' is frontmost, not the game.\n"
+                 f"  Game-space coordinates would land in the wrong window. "
+                 f"Raise the game and re-run.")
+
+
 def require_cliclick():
     if not CLICLICK:
         sys.exit("cliclick not installed:  brew install cliclick")
@@ -321,10 +350,12 @@ def wait_pixel(gx, gy, test, timeout=60, poke=None, desc=""):
 
 
 def cmd_pixel(a):
+    assert_game_front("READ A PIXEL")
     print(f"  game({a.x},{a.y}) rgb={pixel(a.x, a.y)}")
 
 
 def cmd_ui(a):
+    assert_game_front("CLICK")
     require_cliclick()
     gx, gy = UI[a.target] if a.target in UI else (int(a.target.split(",")[0]),
                                                   int(a.target.split(",")[1]))
@@ -425,6 +456,11 @@ def focus_game(timeout=30):
     subprocess.run([CLICLICK, f"m:{tx},{ty}"], check=True)
     time.sleep(0.2)
     subprocess.run([CLICLICK, f"c:{tx},{ty}"], check=True)
+    # RECORD IT. Every place that moves the cursor must, or the interference check blames a
+    # human for OUR move. It did exactly that on a retry — the first attempt sets the cursor
+    # via ui_click, the retry's focus click moves it, and the wedge path then reports external
+    # input on a run nobody touched. A guard that cries wolf is worse than no guard.
+    _LEFT_CURSOR[0] = (tx, ty)
     time.sleep(0.8)
     return False
 
@@ -512,6 +548,7 @@ def find_structure():
 
 
 def cmd_find(a):
+    assert_game_front("SEARCH THE SCREEN")
     where = find_structure()
     print(f"  structure at game {where}" if where else "  no structure found")
 
@@ -557,6 +594,7 @@ def cmd_verify_pack(a):
     """
     require_cliclick()
     focus_game()
+    assert_game_front("VERIFY")
     fails = []
 
     # Selecting can miss, and a missed click looks EXACTLY like broken icons — an unlit
