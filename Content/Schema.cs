@@ -534,6 +534,18 @@ public sealed class ZhTargetDto
     public Dictionary<string, string> ArtRig { get; set; } = new();
 
     /// <summary>
+    /// Our unit id -> "&lt;Skeleton&gt;.&lt;Animation&gt;:&lt;MODE&gt;", e.g. "RTSMAST_SKL.RTSSPIN:LOOP".
+    ///
+    /// The dotted name is not a convention we invented: <c>HRawAnimClass::Load_W3D</c> registers
+    /// every animation as <c>HierarchyName + "." + Name</c> taken from the animation's own
+    /// header, and the INI is looked up against exactly that string. So both halves must match
+    /// what the .w3d files declare internally — the FILENAMES are irrelevant.
+    ///
+    /// MODE is one of MANUAL, LOOP, ONCE, LOOP_PINGPONG, LOOP_BACKWARDS, ONCE_BACKWARDS.
+    /// </summary>
+    public Dictionary<string, string> Animations { get; set; } = new();
+
+    /// <summary>
     /// Unit ids whose adopted model has a TURRET. A turreted mesh needs a Turret block with
     /// ControlledWeaponSlots or the weapon can never be brought to bear — the unit simply
     /// never fires, with no error anywhere.

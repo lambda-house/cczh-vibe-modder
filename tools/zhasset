@@ -683,9 +683,14 @@ def cmd_artprofile(a):
 # ---------------------------------------------------------------- W3D (mesh/skeleton/anim)
 # Format is IFF-style chunks: uint32 type, uint32 size whose HIGH BIT means "contains
 # subchunks". The authoritative taxonomy is EA's own GPL header,
-# Generals/Code/Tools/WW3D/pluglib/w3d_file.h -- 69 chunk ids with their structs. That header
-# is engine SOURCE, so it is readable, re-implementable, and the reason a from-scratch art
-# pipeline is a real option rather than reverse engineering.
+# Generals/Code/Libraries/Source/WWVegas/WW3D2/w3d_file.h -- engine SOURCE, so it is readable,
+# re-implementable, and the reason a from-scratch art pipeline is real rather than reverse
+# engineering.
+#
+# NOT Tools/WW3D/pluglib/w3d_file.h, which is a STALE COPY: its chunk enum stops at 0x600, it
+# has no HLOD family at all, and it still calls the mesh header field HierarchyModelName where
+# the live one says ContainerName. Everything static we wrote happened not to touch the
+# difference; skinning does, because skinning needs HLOD.
 W3D_CHUNKS = {
     0x0000: "MESH", 0x0001: "MESH_HEADER", 0x0002: "VERTICES", 0x0003: "VERTEX_NORMALS",
     0x000C: "MESH_USER_TEXT", 0x000E: "VERTEX_INFLUENCES", 0x001F: "MESH_HEADER3",
@@ -1084,12 +1089,12 @@ def cmd_w3dbox(a):
     lo_u = min(u for u, _ in uvs); lo_v = min(t for _, t in uvs)
     uvs = [((u - lo_u) / span, (t - lo_v) / span) for u, t in uvs]
 
-    vbuf = b"".join(struct.pack("<3f", *v) for v in verts)
     nbuf = b"".join(struct.pack("<3f", *n) for n in norms)
     tbuf = b"".join(struct.pack("<2f", *t) for t in uvs)
     # One shade index per vertex; the template carries a uint32 array of them.
     sbuf = b"".join(struct.pack("<I", 0) for _ in verts)
     # W3dTriStruct: uint32 Vindex[3], uint32 Attributes, W3dVectorStruct Normal, float32 Dist.
+    vbuf = b"".join(struct.pack("<3f", *v) for v in verts)
     fbuf = b""
     for (i0, i1, i2) in tris:
         # The GEOMETRIC plane normal, from the winding — not a vertex normal. These coincide
@@ -1105,10 +1110,33 @@ def cmd_w3dbox(a):
         dist = sum(fn[k] * p0[k] for k in range(3))
         fbuf += struct.pack("<3II3ff", i0, i1, i2, 0, *fn, dist)
 
+    # SKINNING. Each vertex is assigned a bone, and its position is rewritten into that bone's
+    # LOCAL bind-pose space — the exporter does `pos * Inverse(boneBindWorldTransform)`, and the
+    # loader does `world = boneCurrentTransform * stored`. Store world-space positions and the
+    # mesh would be displaced by the bone transform the moment it animated.
+    # Our skeleton is a pure Z-translation chain, so the inverse is a subtraction.
+    bone_of = None
+    if a.skin:
+        bone_of = []
+        split = (mx[2] + mn[2]) / 2.0 if False else None      # placeholder, set after bounds
     xs = [v[0] for v in verts]; ys = [v[1] for v in verts]; zs = [v[2] for v in verts]
     mn = (min(xs), min(ys), min(zs)); mx = (max(xs), max(ys), max(zs))
     ctr = tuple((mn[i] + mx[i]) / 2.0 for i in range(3))
     rad = max(sum((v[i] - ctr[i]) ** 2 for i in range(3)) for v in verts) ** 0.5
+
+    if a.skin:
+        # Split at the bone-2 origin: everything above it rides the rotating bone, everything
+        # below stays on bone 1. An obvious, checkable division rather than a smooth weight map,
+        # because W3D skinning is ONE BONE PER VERTEX with no weights at all.
+        split = a.skin_split
+        bone_of = [2 if v[2] >= split else 1 for v in verts]
+        moved = []
+        for v, b in zip(verts, bone_of):
+            moved.append((v[0], v[1], v[2] - split) if b == 2 else v)
+        verts = moved
+        vbuf = b"".join(struct.pack("<3f", *v) for v in verts)
+        # Face normals in the TRIANGLES chunk are recomputed below from these same positions,
+        # so the bone-local shift stays self-consistent.
 
     def patch(nodes):
         out = []
@@ -1117,6 +1145,14 @@ def cmd_w3dbox(a):
                 h = bytearray(payload)
                 if a.name:
                     h[8:24] = a.name.encode("latin-1")[:15].ljust(16, b"\0")
+                if a.skin:
+                    # Geometry-type bits, not the legacy 0x2 flag the live header calls
+                    # obsolete. ContainerName at offset 24 must match what the HLOD sub-object
+                    # names, because the render object is looked up as "Container.MeshName".
+                    attrs = struct.unpack_from("<I", h, 4)[0]
+                    attrs = (attrs & ~0x00FF0000) | 0x00020000
+                    struct.pack_into("<I", h, 4, attrs)
+                    h[24:40] = (a.name or "SKIN").encode("latin-1")[:15].ljust(16, b"\0")
                 # ARBITRARY TOPOLOGY lives here: the counts are what stop a template being
                 # anything but the shape it already was. Offsets from W3dMeshHeader3Struct,
                 # with W3D_NAME_LEN 16 -- Version, Attributes, MeshName[16], Hierarchy[16].
@@ -1141,6 +1177,30 @@ def cmd_w3dbox(a):
         return out
 
     tree = patch(tree)
+
+    if a.skin:
+        # One W3dVertInfStruct per vertex: uint16 BoneIdx + 6 pad bytes = 8. The loader reads
+        # exactly NumVertices entries, so the chunk size IS the contract.
+        inf = b"".join(struct.pack("<H6x", b) for b in bone_of)
+        out = []
+        for ctype, payload, kids in tree:
+            if ctype == 0x0000 and kids:                      # MESH
+                kids = kids + [(W3D_VERTEX_INFLUENCES, inf, [])]
+            out.append((ctype, payload, kids))
+        tree = out
+
+        # HLOD is NOT optional for a skin: it is what binds the mesh to a skeleton by NAME, and
+        # without it the render object has no HTree and cannot deform. BoneIndex 0 for a skinned
+        # sub-object matches every shipped example — deformation comes from the per-vertex
+        # influences, not from this field.
+        sub = struct.pack("<I", 0) + f"{a.name}.{a.name}".encode("latin-1")[:31].ljust(32, b"\0")
+        lod = _chunk(W3D_HLOD_SUBOBJ_HEADER, struct.pack("<If", 1, 3.4028235e38)) \
+              + _chunk(W3D_HLOD_SUBOBJ, sub)
+        hl = _chunk(W3D_HLOD_HEADER,
+                    struct.pack("<II", 0x00010000, 1) + _name16(a.name) + _name16(a.skin)) \
+             + _chunk(W3D_HLOD_LOD_ARRAY, lod, container=True)
+        tree.append((W3D_HLOD, None, w3d_tree(hl)))
+
     data = w3d_emit(tree)
     open(a.out, "wb").write(data)
     print(f"authored {a.out}  {len(data):,} bytes")
@@ -1172,6 +1232,100 @@ def cmd_w3dbox(a):
         json.dump(data, open(cat, "w"), indent=1, sort_keys=True)
         print(f"  profile declared in {cat}: BOX "
               f"{max(mx[0], -mn[0]):.1f} x {max(mx[1], -mn[1]):.1f} x {mx[2]-mn[2]:.1f}")
+    return 0
+
+
+# ---------------------------------------------------------------- skinning + animation
+# Struct layouts byte-verified against AIHERO_SKL/SKN/ISTA. Sizes are load-bearing: the loader
+# derives element counts by dividing chunk size by struct size, so a wrong size silently yields
+# the wrong number of bones, vertices or frames rather than an error.
+W3D_HIERARCHY, W3D_HIER_HEADER, W3D_PIVOTS = 0x0100, 0x0101, 0x0102
+W3D_VERTEX_INFLUENCES = 0x000E
+W3D_HLOD, W3D_HLOD_HEADER, W3D_HLOD_LOD_ARRAY = 0x0700, 0x0701, 0x0702
+W3D_HLOD_SUBOBJ_HEADER, W3D_HLOD_SUBOBJ = 0x0703, 0x0704
+W3D_ANIMATION, W3D_ANIM_HEADER, W3D_ANIM_CHANNEL = 0x0200, 0x0201, 0x0202
+# Geometry-type bits, NOT the legacy W3D_MESH_FLAG_SKIN 0x2 which the live header marks
+# "obsolete as of 4.1".
+W3D_MESH_GEOMETRY_TYPE_MASK = 0x00FF0000
+W3D_MESH_GEOMETRY_TYPE_SKIN = 0x00020000
+ANIM_CHANNEL_Q = 6
+
+
+def _name16(s):
+    return s.encode("latin-1")[:15].ljust(16, b"\0")
+
+
+def _chunk(ctype, payload, container=False):
+    return struct.pack("<II", ctype, len(payload) | (0x80000000 if container else 0)) + payload
+
+
+def cmd_w3dskel(a):
+    """Author a SKELETON: W3D_CHUNK_HIERARCHY with a chain of pivots.
+
+    Pivot 0 is always ROOTTRANSFORM with ParentIdx 0xFFFFFFFF — every shipped skeleton does
+    this, and the loader asserts the single parentless pivot is index 0. Remaining bones chain
+    upward, each translated by its own segment length in its PARENT's space.
+
+    EulerAngles and PIVOT_FIXUPS are both written by the real exporter and both IGNORED by the
+    loader (read_pivots builds its transform from Translation + the Rotation quaternion only),
+    so this emits neither and stays byte-legal.
+    """
+    n = a.bones
+    pivots = b""
+    pivots += _name16("ROOTTRANSFORM") + struct.pack("<I", 0xFFFFFFFF) \
+              + struct.pack("<3f", 0, 0, 0) + struct.pack("<3f", 0, 0, 0) \
+              + struct.pack("<4f", 0, 0, 0, 1)
+    for i in range(1, n):
+        # Each bone sits `segment` above its parent, so a rotation on bone k swings everything
+        # above k — which is what makes the animation visible.
+        dz = 0.0 if i == 1 else a.segment
+        pivots += _name16(f"BONE{i:02d}") + struct.pack("<I", i - 1) \
+                  + struct.pack("<3f", 0, 0, dz) + struct.pack("<3f", 0, 0, 0) \
+                  + struct.pack("<4f", 0, 0, 0, 1)
+
+    hdr = struct.pack("<I", 0x00040001) + _name16(a.name) + struct.pack("<I", n) \
+          + struct.pack("<3f", 0, 0, 0)
+    body = _chunk(W3D_HIER_HEADER, hdr) + _chunk(W3D_PIVOTS, pivots)
+    open(a.out, "wb").write(_chunk(W3D_HIERARCHY, body, container=True))
+    print(f"authored {a.out}  skeleton '{a.name}', {n} pivots "
+          f"(ROOTTRANSFORM + {n-1} chained {a.segment} apart)")
+    return 0
+
+
+def cmd_w3danim(a):
+    """Author an ANIMATION: quaternion rotation of one pivot over N frames.
+
+    UNCOMPRESSED (0x200), deliberately. The compressed flavours need time-code packet maths or
+    adaptive-delta nibble quantisation against a 256-entry filter table; uncompressed is a flat
+    float array behind a 12-byte header, and it is what the shipped AIHERO_ISTA.W3D uses, so it
+    is known to load.
+
+    The registered name is HierarchyName + "." + Name, built by HRawAnimClass::Load_W3D — which
+    is exactly the `SKELETON.ANIM` form the INI references. The skeleton must ALREADY be loaded
+    under that name or the animation drops silently.
+    """
+    import math
+    frames = a.frames
+    hdr = struct.pack("<I", 0x00040001) + _name16(a.name) + _name16(a.skeleton) \
+          + struct.pack("<II", frames, a.fps)
+
+    # Pivot indices are RAW indices into the skeleton's pivot array — never names. A channel
+    # whose pivot is out of range is dropped with a debug warning, so a wrong-but-in-range
+    # index animates the wrong bone rather than failing.
+    quats = b""
+    for f in range(frames):
+        ang = 2.0 * math.pi * f / frames * a.turns
+        half = ang / 2.0
+        ax, ay, az = a.axis
+        ln = math.sqrt(ax*ax + ay*ay + az*az) or 1.0
+        sn = math.sin(half)
+        quats += struct.pack("<4f", ax/ln*sn, ay/ln*sn, az/ln*sn, math.cos(half))
+
+    chan = struct.pack("<6H", 0, frames - 1, 4, ANIM_CHANNEL_Q, a.pivot, 0) + quats
+    body = _chunk(W3D_ANIM_HEADER, hdr) + _chunk(W3D_ANIM_CHANNEL, chan)
+    open(a.out, "wb").write(_chunk(W3D_ANIMATION, body, container=True))
+    print(f"authored {a.out}  '{a.skeleton}.{a.name}': {frames} frames @ {a.fps}fps, "
+          f"pivot {a.pivot} rotating {a.turns} turn(s) about {tuple(a.axis)}")
     return 0
 
 
@@ -1269,6 +1423,9 @@ def main():
     wb.add_argument("--name"); wb.add_argument("--size", type=float, nargs=3, default=[20, 20, 20])
     wb.add_argument("--out-dir", dest="out_dir", help="where to write art-profiles.json")
     wb.add_argument("--texture", help="replace TEXTURE_NAME, e.g. RTSGRID.tga")
+    wb.add_argument("--skin", help="bind to this skeleton name; emits VERTEX_INFLUENCES + HLOD")
+    wb.add_argument("--skin-split", dest="skin_split", type=float, default=70.0,
+                    help="Z above which vertices bind to bone 2 instead of bone 1")
     wb.add_argument("--shape", choices=sorted(SHAPES), default="box")
     wb.add_argument("--segments", type=int, default=12, help="radial segments for cylinder/pyramid")
     wb.add_argument("--smooth", dest="smooth", action="store_true", default=None,
@@ -1280,6 +1437,19 @@ def main():
     od.add_argument("--emitted", required=True, help="a compiled Data/INI/Object directory")
     od.add_argument("-v", "--verbose", action="store_true", help="also list cosmetic/peer-specific gaps")
     od.set_defaults(fn=cmd_objectdiff)
+
+    sk = sub.add_parser("w3dskel", help="author a skeleton (HIERARCHY + PIVOTS)")
+    sk.add_argument("--out", required=True); sk.add_argument("--name", required=True)
+    sk.add_argument("--bones", type=int, default=3); sk.add_argument("--segment", type=float, default=40.0)
+    sk.set_defaults(fn=cmd_w3dskel)
+
+    an = sub.add_parser("w3danim", help="author an animation rotating one pivot")
+    an.add_argument("--out", required=True); an.add_argument("--name", required=True)
+    an.add_argument("--skeleton", required=True)
+    an.add_argument("--frames", type=int, default=60); an.add_argument("--fps", type=int, default=30)
+    an.add_argument("--pivot", type=int, default=2); an.add_argument("--turns", type=float, default=1.0)
+    an.add_argument("--axis", type=float, nargs=3, default=[0, 0, 1])
+    an.set_defaults(fn=cmd_w3danim)
 
     tg = sub.add_parser("tga", help="author an uncompressed TGA texture from scratch")
     tg.add_argument("--out", required=True); tg.add_argument("--size", type=int, default=128)

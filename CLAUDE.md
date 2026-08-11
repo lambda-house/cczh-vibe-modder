@@ -208,7 +208,7 @@ are emitted by `rts compile`, not hand-written.
    no retail `map.ini` overrides `GameData` either. Do not spend more time on it from content.
 
 12. **The model format is READ AND WRITTEN, verified byte-identically.** W3D is IFF-style
-   chunks and the taxonomy is EA's GPL header `Tools/WW3D/pluglib/w3d_file.h` — engine source,
+   chunks and the taxonomy is EA's GPL header `Libraries/Source/WWVegas/WW3D2/w3d_file.h` — engine source,
    the half the GPL covers. `zhasset w3dround` re-emits every sample byte-for-byte (the high
    bit of `size` marks a container, so sizes are recomputed, not remembered), and
    `zhasset w3dbox` AUTHORS geometry — vertices, normals, per-face normals with plane
@@ -250,8 +250,31 @@ are emitted by `rts compile`, not hand-written.
    under flat shading — the moment smooth normals made them deliberately differ, culling and
    the plane distance would have been fed a lie. It is now computed from the winding.*
 
-   *Still not done, and not claimed: skinning (`VERTEX_INFLUENCES` against a `HIERARCHY`) and
-   animation (`ANIMATION_CHANNEL`). So this authors static props and buildings, not characters.*
+13. **Skeletons, skinning and animation are AUTHORED too — the format is now closed end to
+   end.** `zhasset w3dskel|w3danim` and `w3dbox --skin` write a hierarchy, bind a mesh to it
+   and move it; confirmed in-game as visible motion on a fully authored object. **Nothing of
+   EA's remains in it but the material flag words.**
+   - **One bone per vertex, no weights.** `W3dVertInfStruct` is 8 bytes: a `uint16` bone
+     index and 6 bytes of padding. There is no blend, no second influence — smooth skinning
+     is not available in this mesh type. Seams therefore belong AT JOINTS, where the hard
+     boundary reads as a bend; put one across a smooth surface and it shears, which is
+     exactly what a rotating cylinder showed. That is the format's limit, not a bug to fix.
+   - **Skinned vertices are stored in BONE-LOCAL bind-pose space**, not model space. Every
+     vertex must be shifted by the inverse of its bone's rest transform before writing, or
+     the mesh explodes to the pivot offsets on the first frame.
+   - **An HLOD is MANDATORY for a skin, and binding is BY NAME**, never by file: the
+     `HLOD_HEADER`'s `HierarchyName` must equal the skeleton's `HIERARCHY_HEADER.Name`, and
+     the sub-object name must equal the mesh's `ContainerName`. Filenames play no part.
+   - **Animations register as `HierarchyName + "." + Name`** — so `zh.animations` names
+     `RTSMAST_SKL.RTSSPIN`, not the `.w3d` it lives in. Uncompressed `0x200` is what shipped
+     assets use; the compressed families are not needed.
+   - **Element counts are DIVIDED out of chunk sizes, never stated.** `VERTEX_INFLUENCES` is
+     `NumVertices * 8`, a channel payload is `frames * VectorLen * 4`. A wrong struct size
+     yields the wrong number of bones or frames rather than an error, so e2e asserts each
+     division explicitly.
+   - *The header to cite is `Libraries/Source/WWVegas/WW3D2/w3d_file.h`. `Tools/WW3D/pluglib`
+     has a stale copy that stops at chunk `0x600` and has no HLOD at all — following it would
+     make a skin that silently never binds.*
 
 ## Build / verify
 

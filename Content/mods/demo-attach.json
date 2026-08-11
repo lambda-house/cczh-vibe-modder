@@ -67,7 +67,13 @@
     // hellfire_works points at RTSBOX: a mesh whose geometry was AUTHORED by
     // `zhasset w3dbox`, not adopted. If the building renders as a box in game, the write path
     // is real and the standalone zero-EA-art route is open.
-    "models": { "hellhound": "AVLeopard", "hellfire_works": "RTSBOX" },
+    // RTSMAST is a fully AUTHORED animated object: skeleton, skinned mesh and motion all
+    // written by zhasset, with nothing of EA's in it but the material flag words.
+    "models": { "hellhound": "AVLeopard", "hellfire_works": "RTSMAST" },
+
+    // <Skeleton>.<Animation> exactly as the .w3d headers declare it — HRawAnimClass registers
+    // every animation under HierarchyName + "." + Name, and filenames play no part.
+    "animations": { "hellfire_works": "RTSMAST_SKL.RTSSPIN:LOOP" },
     "sides":  { "hellfire": "USA" }
   },
 

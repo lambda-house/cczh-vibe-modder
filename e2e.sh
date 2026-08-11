@@ -858,6 +858,70 @@ PY6
     exit 1
   fi
   echo "  no behaviour gaps against retail peers sharing the same mesh"
+
+  # SKINNING + ANIMATION. Geometry bound to a skeleton, and motion, both authored from nothing.
+  # Every size here is load-bearing: the loader derives element counts by DIVIDING chunk size by
+  # struct size, so a wrong struct size yields the wrong number of bones, vertices or frames
+  # rather than an error.
+  ./tools/zhasset w3dskel --out "$WOUT/sk.w3d" --name E2E_SKL --bones 3 --segment 70 >/dev/null
+  ./tools/zhasset w3dbox --template "$WOUT/ABPWRPLANT_D01.W3D" --out "$WOUT/skin.w3d" \
+      --name E2ESKIN --shape cylinder --segments 16 --size 40 40 140 \
+      --skin E2E_SKL --skin-split 70 --out-dir "$WOUT" >/dev/null
+  ./tools/zhasset w3danim --out "$WOUT/anim.w3d" --name E2EANIM --skeleton E2E_SKL \
+      --frames 30 --pivot 2 --axis 1 0 0 >/dev/null
+  for f in sk skin anim; do
+    ./tools/zhasset w3dround "$WOUT/$f.w3d" | grep -q "BYTE-IDENTICAL" \
+      || { echo "  authored $f.w3d does not round-trip"; exit 1; }
+  done
+  python3 - "$WOUT" <<'PY7'
+import struct, sys
+d = sys.argv[1]
+def chunks(buf, off=0, end=None):
+    end = len(buf) if end is None else end
+    while off + 8 <= end:
+        t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+        if raw & 0x80000000: yield from chunks(buf, body, body + sz)
+        else: yield t, buf[body:body+sz]
+        off = body + sz
+
+sk = dict((t, p) for t, p in chunks(open(f"{d}/sk.w3d","rb").read()))
+hh, pv = sk[0x0101], sk[0x0102]
+if struct.unpack_from("<I", hh, 20)[0] != 3 or len(pv) != 3 * 60:
+    print(f"  skeleton wrong: NumPivots={struct.unpack_from('<I',hh,20)[0]} pivots={len(pv)}B"); sys.exit(1)
+if struct.unpack_from("<I", pv, 16)[0] != 0xFFFFFFFF:
+    print("  pivot 0 must be the parentless root (0xFFFFFFFF)"); sys.exit(1)
+
+buf = open(f"{d}/skin.w3d","rb").read()
+c = {}
+for t, p in chunks(buf): c.setdefault(t, p)
+attrs = struct.unpack_from("<I", c[0x001F], 4)[0]
+nv = struct.unpack_from("<I", c[0x001F], 44)[0]
+if attrs & 0x00FF0000 != 0x00020000:
+    print(f"  mesh is not marked SKIN: geomType 0x{attrs & 0xFF0000:06X}"); sys.exit(1)
+if len(c[0x000E]) != nv * 8:
+    print(f"  VERTEX_INFLUENCES {len(c[0x000E])}B != NumVertices*8 ({nv*8})"); sys.exit(1)
+if c[0x001F][24:40].rstrip(b"\0") != b"E2ESKIN":
+    print("  ContainerName must match what the HLOD sub-object names"); sys.exit(1)
+if c[0x0701][24:40].rstrip(b"\0") != b"E2E_SKL":
+    print("  HLOD does not bind the skeleton by name — a skin without it cannot deform"); sys.exit(1)
+bones = {struct.unpack_from("<H", c[0x000E], i*8)[0] for i in range(nv)}
+if bones != {1, 2}:
+    print(f"  expected vertices split across bones 1 and 2, got {sorted(bones)}"); sys.exit(1)
+
+an = dict((t, p) for t, p in chunks(open(f"{d}/anim.w3d","rb").read()))
+ah = an[0x0201]
+if ah[4:20].rstrip(b"\0") != b"E2EANIM" or ah[20:36].rstrip(b"\0") != b"E2E_SKL":
+    print("  animation header names wrong — registered name is Hierarchy + '.' + Name"); sys.exit(1)
+frames = struct.unpack_from("<I", ah, 36)[0]
+ch = an[0x0202]
+first, last, vlen, flags, pivot, _ = struct.unpack_from("<6H", ch, 0)
+if vlen != 4 or flags != 6:
+    print(f"  expected a quaternion channel (VectorLen 4, Flags 6), got {vlen}/{flags}"); sys.exit(1)
+if len(ch) - 12 != frames * 4 * 4:
+    print(f"  channel payload {len(ch)-12}B != frames*VectorLen*4 ({frames*16})"); sys.exit(1)
+print(f"  skeleton 3 pivots, skin {nv} verts across bones {sorted(bones)}, "
+      f"anim E2E_SKL.E2EANIM {frames} frames")
+PY7
 else
   echo "  (skipped: no local retail install at $W3DBIG)"
 fi

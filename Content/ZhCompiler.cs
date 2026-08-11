@@ -582,6 +582,15 @@ public static class ZhCompiler
             // half aims and fires perfectly while its gun stays welded to the hull.
             if (art.TryGet(model, out var tb) && tb.TurretBone is string tbone)
                 sb.AppendLine($"      Turret = {tbone}");
+            // An animation is bound inside the condition state, and the name is
+            // <Skeleton>.<Animation> exactly as the .w3d headers declare it — filenames play
+            // no part in the lookup.
+            if (zh.Animations.TryGetValue(u.Id, out var anim))
+            {
+                var bits = anim.Split(':');
+                sb.AppendLine($"      Animation = {bits[0]}");
+                sb.AppendLine($"      AnimationMode = {(bits.Length > 1 ? bits[1] : "LOOP")}");
+            }
             // Bones and the flash sub-object: measured profile first, content override wins.
             if (!zh.ArtRig.TryGetValue(u.Id, out var rig) && art.TryGet(model, out var bp))
                 rig = $"{bp.LaunchBone ?? bp.FireFXBone ?? ""}:{bp.MuzzleFlash ?? ""}";
