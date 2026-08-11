@@ -54,6 +54,10 @@ of them.
 - `docs/ZERO-HOUR-MAPS.md` — the **terrain format**, decoded from all 150 shipped maps. The
   container, the eight chunks, the two scale constants and the slope at which their engine
   decides a cell is a cliff.
+- `docs/ZERO-HOUR-MODEL.md` — the **extracted model**: what `tools/zhasset` produces, as a
+  CONTRACT rather than a finding, so a skill can rely on the shape instead of re-deriving the
+  corpus. The JSON shapes, the joins that are not obvious, and the two things the model
+  deliberately does not contain because they were measured and found underivable.
 
 Sources on disk:
 
