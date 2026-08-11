@@ -1384,6 +1384,160 @@ def cmd_techtree(a):
     return 0
 
 
+# ============================================================================================
+# NEAREST — find the closest existing object to clone.
+#
+# The authoring loop is: pick the nearest existing thing, take everything it is made of
+# (`dossier`), change some of it, emit it. This is the first step, and the whole question is
+# what makes two units SUBSTITUTABLE.
+#
+# It is not cost, and it is not stats. It is ROLE — a 900-cost tank and a 900-cost jet share a
+# number and nothing else, while a Crusader and a Battlemaster are the same thing wearing
+# different flags. Role lives in KindOf, and KindOf is a set, so the role term is a Jaccard
+# overlap and it is weighted heaviest. Everything else breaks ties.
+#
+# Distances are reported PER AXIS rather than as one number, because an agent choosing a
+# template has to know WHY something came back nearest — "same role, 12% cheaper, shorter
+# ranged" is actionable and "score 0.83" is not.
+# ============================================================================================
+
+# KindOf entries that say nothing about role. PRELOAD is a loading hint; SCORE and
+# CAN_CAST_REFLECTIONS are bookkeeping and presentation. Leaving them in inflates every
+# object's similarity to every other, because almost everything carries them.
+KINDOF_NOISE = {"PRELOAD", "SCORE", "CAN_CAST_REFLECTIONS", "SELECTABLE",
+                "ATTACK_NEEDS_LINE_OF_SIGHT", "MP_COUNT_FOR_VICTORY", "CLICK_THROUGH"}
+
+
+def object_rigs(ini):
+    """object -> primary weapon, locomotor, armor. Not in the catalogue, and one pass gets it."""
+    out = {}
+    objdir = os.path.join(ini, "Object")
+    for fn in sorted(os.listdir(objdir)):
+        if not fn.lower().endswith(".ini"):
+            continue
+        for kind, name, lines in ini_blocks(os.path.join(objdir, fn)):
+            if kind != "Object":
+                continue
+            body = "\n".join(lines)
+            wm = re.search(r"Weapon\s*=\s*PRIMARY\s+(\S+)", body)
+            lm = re.search(r"Locomotor\s*=\s*\S+\s+(\S+)", body)
+            am = re.search(r"Armor\s*=\s*(\S+)", body)
+            out[name] = {"weapon": wm.group(1) if wm else None,
+                         "locomotor": lm.group(1) if lm else None,
+                         "armor": am.group(1) if am else None}
+    return out
+
+
+def _num(v, default=0.0):
+    try:
+        return float(str(v).split()[0])
+    except (TypeError, ValueError, IndexError):
+        return default
+
+
+def cmd_nearest(a):
+    cat_path = os.path.join(DEF_OUT, "zh-catalogue.json")
+    if not os.path.exists(cat_path):
+        return print(f"  no catalogue at {cat_path} — run `zhasset catalogue` first")
+    cat = json.load(open(cat_path))
+    objects, weapons, locos = cat["objects"], cat["locomotors"], cat["locomotors"]
+    weapons = cat["weapons"]
+    rigs = object_rigs(a.ini)
+
+    def feats(name):
+        o = objects.get(name) or {}
+        r = rigs.get(name) or {}
+        w = weapons.get(r.get("weapon") or "", {})
+        l = cat["locomotors"].get(r.get("locomotor") or "", {})
+        return {
+            "cost": _num(o.get("buildCost")),
+            "role": {k for k in (o.get("kindOf") or []) if k not in KINDOF_NOISE},
+            "structure": bool(o.get("isStructure")),
+            "damage": _num(w.get("PrimaryDamage")),
+            "range": _num(w.get("AttackRange")),
+            "dtype": w.get("DamageType"),
+            "speed": _num(l.get("Speed")),
+            "surfaces": l.get("Surfaces"),
+            "side": o.get("side"),
+        }
+
+    # Only things a player could plausibly build are candidates. A cost of 0 is scenery, a
+    # cinematic prop or a piece of a larger object, and there are far more of those than units.
+    # CINE_ objects are byte-identical cutscene clones — they rank first every time and are
+    # useless as a template, since cloning a clone inherits nothing the original does not have.
+    # Excluded by default and nameable with --include-cine, because "why is CINE_X my nearest
+    # match" is a question worth never having to ask.
+    pool = [n for n, o in objects.items()
+            if (a.include_cine or not n.upper().startswith("CINE_"))
+            and _num(o.get("buildCost")) > 0
+            and (not a.side or (o.get("side") or "").lower() == a.side.lower())
+            and (a.structures or not o.get("isStructure"))
+            and (not a.kindof or a.kindof.upper() in (o.get("kindOf") or []))]
+
+    if a.like:
+        hit = next((k for k in objects if k.lower() == a.like.lower()), None)
+        if hit is None:
+            near = [k for k in objects if a.like.lower() in k.lower()][:10]
+            return print(f"  no object '{a.like}'." + (f" Close: {', '.join(near)}" if near else ""))
+        target = feats(hit)
+        pool = [n for n in pool if n != hit]
+    else:
+        target = {"cost": _num(a.cost), "role": {k.upper() for k in (a.role or "").split(",") if k},
+                  "structure": bool(a.structures), "damage": _num(a.damage), "range": _num(a.range),
+                  "dtype": None, "speed": _num(a.speed), "surfaces": None, "side": a.side}
+        hit = None
+
+    def ratio(x, y):
+        """Symmetric relative gap, 0 = identical. Ratios not differences: 100 vs 200 damage is
+        the same distance as 1000 vs 2000, and an absolute diff would call the second far worse."""
+        if x <= 0 and y <= 0:
+            return 0.0
+        if x <= 0 or y <= 0:
+            return 1.0
+        return abs(x - y) / max(x, y)
+
+    scored = []
+    for n in pool:
+        f = feats(n)
+        if f["structure"] != target["structure"]:
+            continue
+        jac = (len(f["role"] & target["role"]) / len(f["role"] | target["role"])
+               if (f["role"] | target["role"]) else 0.0)
+        axes = {
+            "role": (1.0 - jac, 3.0),          # heaviest: role is what makes two units swap
+            "cost": (ratio(f["cost"], target["cost"]), 1.0),
+            "damage": (ratio(f["damage"], target["damage"]), 1.0),
+            "range": (ratio(f["range"], target["range"]), 1.0),
+            "speed": (ratio(f["speed"], target["speed"]), 0.5),
+            "dtype": (0.0 if f["dtype"] == target["dtype"] else 1.0, 0.5),
+        }
+        score = sum(v * w for v, w in axes.values()) / sum(w for _, w in axes.values())
+        scored.append((score, n, f, {k: round(v, 2) for k, (v, _) in axes.items()}))
+    scored.sort(key=lambda t: (t[0], t[1]))
+
+    if a.json:
+        print(json.dumps({"target": hit or target,
+                          "matches": [{"object": n, "score": round(sc, 4), "axes": ax,
+                                       "cost": f["cost"], "damage": f["damage"],
+                                       "range": f["range"], "speed": f["speed"],
+                                       "side": f["side"], "role": sorted(f["role"])}
+                                      for sc, n, f, ax in scored[:a.limit]]},
+                         indent=2, default=str))
+        return 0
+
+    what = hit or (f"cost={target['cost']:.0f} role={','.join(sorted(target['role'])) or '-'}")
+    print(f"  nearest to {what}   ({len(scored)} candidates)")
+    print(f"  {'object':32s} {'score':>6} {'cost':>6} {'dmg':>6} {'rng':>6} {'spd':>5}  side")
+    for sc, n, f, ax in scored[:a.limit]:
+        print(f"  {n:32s} {sc:6.3f} {f['cost']:6.0f} {f['damage']:6.0f} {f['range']:6.0f} "
+              f"{f['speed']:5.0f}  {f['side']}")
+    if scored:
+        sc, n, f, ax = scored[0]
+        print(f"  why {n}: " + "  ".join(f"{k}={v}" for k, v in sorted(ax.items())))
+        print(f"  next: zhasset dossier {n}   # everything it is made of")
+    return 0
+
+
 def cmd_show(a):
     cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
     q = a.thing
@@ -2396,6 +2550,19 @@ def main():
     tt.add_argument("faction", nargs="?")
     tt.add_argument("--json", action="store_true")
     tt.set_defaults(fn=cmd_techtree)
+
+    ne = sub.add_parser("nearest", help="closest existing object to clone (role first, then stats)")
+    ne.add_argument("--like", help="an existing object to find neighbours of")
+    ne.add_argument("--role", help="comma-separated KindOf, e.g. VEHICLE,CAN_ATTACK")
+    ne.add_argument("--cost", default=0); ne.add_argument("--damage", default=0)
+    ne.add_argument("--range", default=0); ne.add_argument("--speed", default=0)
+    ne.add_argument("--side"); ne.add_argument("--kindof")
+    ne.add_argument("--structures", action="store_true", help="compare structures, not units")
+    ne.add_argument("--limit", type=int, default=8)
+    ne.add_argument("--include-cine", action="store_true",
+                    help="include CINE_ cutscene clones (excluded by default)")
+    ne.add_argument("--json", action="store_true")
+    ne.set_defaults(fn=cmd_nearest)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")

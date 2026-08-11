@@ -837,6 +837,24 @@ their output and is gitignored — ship the extractor, never the extract.
   from different roots of the same structure. Measured: 5 ranks at 0/800/1500/2500/5000 grant
   7 purchase points a game against 14-24 reachable sciences per faction.*
 
+- **`nearest --like <object>`** / `nearest --role … --cost …` — the clone entry point, and the
+  first step of the authoring loop: pick the nearest existing thing, take everything it is made
+  of, change some, emit it.
+  **Substitutability is ROLE, not cost and not stats.** A 900-cost tank and a 900-cost jet share
+  a number and nothing else, while a Crusader and a Battlemaster are the same thing under
+  different flags. So role is a Jaccard overlap on `KindOf` weighted 3x against everything else,
+  with the entries that say nothing about role removed — `PRELOAD`, `SCORE`, `SELECTABLE`,
+  `CAN_CAST_REFLECTIONS` are on almost everything and leaving them in inflates every object's
+  similarity to every other. Numeric axes compare as RATIOS, not differences: 100 vs 200 damage
+  is the same distance as 1000 vs 2000.
+  *Distances are reported PER AXIS, because an agent picking a template needs to know WHY —
+  "same role, 18% cheaper, identical range" is actionable and "score 0.026" is not.*
+  *`CINE_` cutscene clones are excluded by default: they are byte-identical copies, they rank
+  first every time, and cloning a clone inherits nothing the original lacks.*
+  Sanity: `--like AmericaTankCrusader` returns Paladin (its own upgrade) then Battlemaster
+  (China's equivalent); a spec for a cheap fast anti-infantry China vehicle returns the Gattling
+  Tank, which is precisely what that unit is.
+
 ## Roadmap: the ASSET MODEL
 
 The sim roadmap above is finished bar the lockstep layer. What is left is art, and it has its
