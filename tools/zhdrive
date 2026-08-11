@@ -172,6 +172,178 @@ def cmd_log(a):
     return 0
 
 
+# --- the game's OWN coordinate space -------------------------------------------------------
+# Hardcoding screen coordinates is what made the first hand-driven run fragile: the window
+# moves, the display changes, and every target silently points at the wrong thing. The window
+# content is exactly 800x600 — the same space ControlBarScheme authors in
+# (ScreenCreationRes X:800 Y:600) — so a target expressed there is stable no matter where the
+# window sits, and can be read straight off retail's own UI layouts.
+
+GAME_W, GAME_H = 800, 600
+TITLEBAR = 32   # window is 800x632; the extra is the macOS title bar above the content
+
+
+_WIN_CACHE = None
+
+
+def window(timeout=90, refresh=False):
+    """Content-area origin and size of the game window, in logical points.
+
+    RETRIED, not asked once: System Events blocks and then times out while the game is still
+    loading — the window exists but the process is not answering AX queries yet — and a single
+    call is the difference between a driver that works from a warm start and one that dies on
+    a cold one. Cached because every pixel probe needs it and the window rarely moves.
+    """
+    global _WIN_CACHE
+    if _WIN_CACHE and not refresh:
+        return _WIN_CACHE
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            out = subprocess.run(
+                ["osascript", "-e",
+                 'tell application "System Events" to tell process "GeneralsXZH" '
+                 'to get {position, size} of window 1'],
+                capture_output=True, text=True, timeout=8)
+            if out.returncode == 0 and out.stdout.strip():
+                x, y, w, h = (int(v) for v in out.stdout.strip().split(", "))
+                _WIN_CACHE = (x, y + TITLEBAR, w, h - TITLEBAR)
+                return _WIN_CACHE
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(2)
+    sys.exit("game window never answered — is GeneralsXZH running, and Accessibility granted?")
+
+
+def ui_click(gx, gy, settle=1.2):
+    """Click a point in the game's 800x600 UI space."""
+    wx, wy, ww, wh = window()
+    x = round(wx + gx * ww / GAME_W)
+    y = round(wy + gy * wh / GAME_H)
+    subprocess.run([CLICLICK, f"m:{x},{y}"], check=True)
+    time.sleep(0.2)
+    subprocess.run([CLICLICK, f"c:{x},{y}"], check=True)
+    time.sleep(settle)
+    return x, y
+
+
+# Targets in 800x600 game space, measured from a real session rather than guessed.
+UI = {
+    "solo_play": (643, 132),
+    "skirmish":  (642, 293),
+    "play_game": (180, 530),
+    "build_1":   (248, 514),   # first build button in the command bar
+}
+
+
+def pixel(gx, gy):
+    """RGB at a point in the game's 800x600 space.
+
+    The engine logs menu layout pushes but nothing about the intro MOVIE, and the movie
+    swallows input until it is dismissed — so there is no log signal for "the menu is
+    interactive now" and the screen is the only source of truth. Sleeping a guess instead is
+    what made the first scripted run fire all three clicks into the intro.
+
+    PNG needs a decoder; BMP does not. sips converts, and the pixel is three bytes at the
+    header's stated offset.
+    """
+    wx, wy, ww, wh = window()
+    x = round(wx + gx * ww / GAME_W)
+    y = round(wy + gy * wh / GAME_H)
+    subprocess.run(["screencapture", "-x", "-R", f"{x},{y},2,2", "-t", "png", "/tmp/_zhpx.png"],
+                   check=True)
+    subprocess.run(["sips", "-s", "format", "bmp", "/tmp/_zhpx.png", "--out", "/tmp/_zhpx.bmp"],
+                   check=True, capture_output=True)
+    d = open("/tmp/_zhpx.bmp", "rb").read()
+    off = struct.unpack_from("<I", d, 10)[0]
+    return d[off + 2], d[off + 1], d[off]
+
+
+def wait_pixel(gx, gy, test, timeout=60, poke=None, desc=""):
+    """Poll a pixel until `test(rgb)` passes, optionally doing `poke()` each round."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rgb = pixel(gx, gy)
+        if test(rgb):
+            return rgb
+        if poke:
+            poke()
+        time.sleep(1.0)
+    sys.exit(f"  TIMEOUT waiting for {desc or f'pixel {gx},{gy}'} (last rgb={pixel(gx, gy)})")
+
+
+def cmd_pixel(a):
+    print(f"  game({a.x},{a.y}) rgb={pixel(a.x, a.y)}")
+
+
+def cmd_ui(a):
+    require_cliclick()
+    gx, gy = UI[a.target] if a.target in UI else (int(a.target.split(",")[0]),
+                                                  int(a.target.split(",")[1]))
+    print(f"  {a.target} -> game({gx},{gy}) -> screen{ui_click(gx, gy)}")
+
+
+def log_size():
+    return os.path.getsize(LOG) if os.path.exists(LOG) else 0
+
+
+def at_main_menu():
+    """The shell menu's button borders are a saturated cyan that nothing else on screen uses.
+    There is no LOG signal for this: the engine records menu layout pushes, but the intro
+    movie is not a layout and swallows input until dismissed, so MainMenu.wnd is already
+    pushed while the movie still has the keyboard."""
+    r, g, b = pixel(643, 150)
+    return b > 180 and g > 120 and r < 80
+
+
+def cmd_skirmish(a):
+    """Launch and drive all the way into a running match.
+
+    Every step is CONFIRMED before the next one runs. The first scripted version slept fixed
+    intervals and fired all three clicks into the intro movie, reporting "in match (probably)"
+    — which was honest and useless. A click that silently does nothing is the normal failure
+    here, not the exceptional one.
+    """
+    require_cliclick()
+    if subprocess.run(["pgrep", "-x", "GeneralsXZH"], capture_output=True).returncode != 0:
+        print("  launching...")
+        subprocess.Popen(["./run-logged.sh", "-win"], cwd=GAME_DIR,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not wait_for_log(r"TheGameResultsQueue.*END", timeout=180):
+            sys.exit("  boot never completed")
+        print("  booted")
+
+    wait_pixel(643, 150, lambda _: at_main_menu(), timeout=120,
+               poke=lambda: subprocess.run([CLICLICK, "kp:esc"], check=True),
+               desc="the main menu (pressing esc through the intro)")
+    print("  at the main menu")
+
+    for attempt in range(1, 4):
+        ui_click(*UI["solo_play"], settle=2.0)
+        mark = log_size()
+        ui_click(*UI["skirmish"], settle=1.0)
+        if wait_for_log(r"SkirmishGameOptionsMenu\.wnd", timeout=15, since=mark):
+            print(f"  at the skirmish setup screen (attempt {attempt})")
+            break
+        print(f"  attempt {attempt}: clicks did not land, retrying")
+    else:
+        sys.exit("  never reached the skirmish screen")
+
+    ui_click(*UI["play_game"], settle=2.0)
+    # Leaving the shell is the signal a match started: the menu cyan is gone and stays gone.
+    gone = 0
+    deadline = time.time() + 90
+    while time.time() < deadline and gone < 3:
+        gone = gone + 1 if not at_main_menu() else 0
+        time.sleep(1.0)
+    if gone < 3:
+        sys.exit("  still in the shell — the match never started")
+    time.sleep(6)
+    capture("/tmp/zhdrive_match.png")
+    print("  IN MATCH — /tmp/zhdrive_match_s.png")
+    return 0
+
+
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -199,6 +371,17 @@ if __name__ == "__main__":
     g.add_argument("--dirs", action="store_true", help="the additive directory list")
     g.add_argument("--limit", type=int, default=25)
     g.set_defaults(fn=cmd_log)
+
+    u = sub.add_parser("ui", help="click in the game's own 800x600 UI space")
+    u.add_argument("target", help="a named target (%s) or 'x,y'" % ",".join(UI))
+    u.set_defaults(fn=cmd_ui)
+
+    sk = sub.add_parser("skirmish", help="launch and drive all the way into a running match")
+    sk.set_defaults(fn=cmd_skirmish)
+
+    px = sub.add_parser("pixel", help="RGB at a point in the game's 800x600 space")
+    px.add_argument("x", type=int); px.add_argument("y", type=int)
+    px.set_defaults(fn=cmd_pixel)
 
     a = p.parse_args()
     sys.exit(a.fn(a) or 0)

@@ -346,8 +346,20 @@ something in a match.
 - `zhdrive log --errors` — distinct error shapes, deduped by digit-normalising.
 - `zhdrive shot` / `zhdrive wait <regex>` — screenshot, or block until the engine logs a line.
   Waiting on the log beats sleeping a guess: boot time varies threefold with disk cache.
-- `zhdrive click x y` — needs macOS Accessibility granted to the process that RUNS it, which
-  for an agent session is the `claude` binary itself and is version-pinned in its path.
+- `zhdrive skirmish` — launch, skip the intro, drive into a RUNNING MATCH, unattended.
+- `zhdrive ui <target>` / `zhdrive pixel x y` — click or sample in the game's own 800x600
+  space. Targets are expressed there, not in screen coordinates, because that is the space
+  `ControlBarScheme` authors in (`ScreenCreationRes X:800 Y:600`) and it does not move when
+  the window does.
+
+**Every step must be CONFIRMED, never slept through.** The first scripted drive slept fixed
+intervals, fired all three clicks into the intro movie and reported "in match (probably)".
+The rewrite waits on a *signal* per step — a log line where one exists
+(`SkirmishGameOptionsMenu.wnd`), a pixel where none does (the intro movie is not a layout, so
+`MainMenu.wnd` is already pushed while the movie still owns the keyboard) — and retries the
+click pair when it did not land. **It needed that retry on its very first run.**
+*Accessibility is granted to the RESPONSIBLE PROCESS: Terminal.app when Claude Code runs as
+its child, the `claude` binary when it runs as a daemon. Granting the wrong one is silent.*
 
 **Observe needs no permission and answers every LOAD-TIME question**, which is where every
 bug so far has actually lived. Act buys "click build and see" and nothing before it.
