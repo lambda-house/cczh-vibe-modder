@@ -171,6 +171,14 @@ public static class PackStack
     // Adding a property to ContentPackDto without merging it now fails at load, loudly,
     // rather than at some later balance number that is quietly wrong.
 
+    // The guard is per-TYPE, not per-DTO-root, because every hand-written merge in this file
+    // carries the same hazard. ContentPackDto was guarded first because that is where the bug
+    // actually happened; ZhTargetDto and UnitDefaultsDto are merged by object initializers of
+    // exactly the same shape and were, until this, unguarded. Two branches each adding one
+    // field to ZhTargetDto is the likeliest way to lose one: git merges two added lines in an
+    // initializer without complaint, and a dropped line fails SILENTLY — the field reverts to
+    // the compiler's built-in in every layered stack and nothing anywhere says so.
+
     private static readonly string[] MergedProperties =
     {
         nameof(ContentPackDto.Meta),
@@ -192,24 +200,60 @@ public static class PackStack
         nameof(ContentPackDto.Lint),
     };
 
+    /// <summary>Handled by <see cref="MergeZh"/>.</summary>
+    private static readonly string[] MergedZhProperties =
+    {
+        nameof(ZhTargetDto.DamageTypes),
+        nameof(ZhTargetDto.Models),
+        nameof(ZhTargetDto.DrawModules),
+        nameof(ZhTargetDto.Sides),
+        nameof(ZhTargetDto.ArtRig),
+        nameof(ZhTargetDto.Animations),
+        nameof(ZhTargetDto.Turreted),
+        nameof(ZhTargetDto.WorldScale),
+    };
+
+    /// <summary>Handled by <see cref="MergeDefaults"/>.</summary>
+    private static readonly string[] MergedUnitDefaultsProperties =
+    {
+        nameof(UnitDefaultsDto.Cost),
+        nameof(UnitDefaultsDto.BuildTicks),
+        nameof(UnitDefaultsDto.UnitsPerPurchase),
+        nameof(UnitDefaultsDto.Prerequisites),
+    };
+
     /// <summary>
-    /// Every property of <see cref="ContentPackDto"/> must be named by <see cref="Merge"/>.
-    /// Cheap enough to run on every load, which is the point — a test that has to be
+    /// Every settable property of every hand-merged DTO must be named by the merge that owns
+    /// it. Cheap enough to run on every load, which is the point — a test that has to be
     /// remembered is a test that is not run.
     /// </summary>
     public static void AssertMergeIsTotal()
     {
-        var actual = typeof(ContentPackDto)
+        AssertTotalOver(typeof(ContentPackDto), MergedProperties, nameof(Merge));
+        AssertTotalOver(typeof(ZhTargetDto), MergedZhProperties, nameof(MergeZh));
+        AssertTotalOver(typeof(UnitDefaultsDto), MergedUnitDefaultsProperties, nameof(MergeDefaults));
+    }
+
+    /// <summary>
+    /// Only WRITABLE properties count. A computed property — <see cref="ZhTargetDto.Scale"/>,
+    /// which resolves the nullable <c>WorldScale</c> against its root default — is derived from
+    /// merged state rather than being state itself, so demanding it be merged would be asking
+    /// the merge to copy an answer instead of the inputs.
+    /// </summary>
+    private static void AssertTotalOver(Type type, string[] declared, string mergeName)
+    {
+        var actual = type
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanWrite)
             .Select(p => p.Name)
             .ToHashSet(StringComparer.Ordinal);
-        var handled = MergedProperties.ToHashSet(StringComparer.Ordinal);
+        var handled = declared.ToHashSet(StringComparer.Ordinal);
 
         var unmerged = actual.Except(handled).OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var stale = handled.Except(actual).OrderBy(x => x, StringComparer.Ordinal).ToArray();
         if (unmerged.Length == 0 && stale.Length == 0) return;
 
-        var msg = new StringBuilder("PackStack.Merge is not total over ContentPackDto.");
+        var msg = new StringBuilder($"PackStack.{mergeName} is not total over {type.Name}.");
         if (unmerged.Length > 0)
             msg.Append($" Unmerged, so it would be silently dropped from every layered stack: {string.Join(", ", unmerged)}.");
         if (stale.Length > 0)

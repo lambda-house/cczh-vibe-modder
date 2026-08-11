@@ -18,24 +18,27 @@ echo "build: OK"
 
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
-echo
-echo "== gate 1/22: content lint =="
+# Gate numbering is DERIVED, never written down. It used to be literal ("gate 7/22"), which
+# made the denominator appear on all 22 lines: two branches each appending one gate both
+# renumber the whole file and conflict on every one of them. Counting the call sites in this
+# script makes adding a gate a pure append, which is what lets slices land in parallel.
+GATE_TOTAL=$(grep -c '^gate ' "$0")
+GATE_N=0
+gate() { GATE_N=$((GATE_N + 1)); echo; echo "== gate $GATE_N/$GATE_TOTAL: $* =="; }
+
+gate "content lint"
 rts lint
 
-echo
-echo "== gate 2/22: replay determinism =="
+gate "replay determinism"
 rts replay --a crusader --b battlemaster --seed 7
 
-echo
-echo "== gate 3/22: duel smoke =="
+gate "duel smoke"
 rts duel --a crusader --b technical --n 20 --seed 42
 
-echo
-echo "== gate 4/22: econ determinism =="
+gate "econ determinism"
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
-echo
-echo "== gate 5/22: faction layering resolves =="
+gate "faction layering resolves"
 rts faction
 
 echo
@@ -50,8 +53,7 @@ echo
 echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
-echo
-echo "== gate 6/22: layered packs + diff =="
+gate "layered packs + diff"
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -74,8 +76,7 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 [ "$base_again" = "$base_only" ] || { echo "  BASE CONTAMINATED: $base_again != $base_only"; exit 1; }
 echo "  base unaffected by the mod: $base_again"
 
-echo
-echo "== gate 7/22: the total resolution order =="
+gate "the total resolution order"
 # Three mechanisms compose content and they run in ONE order, each exactly once:
 #   1. LAYER    packs fold in ordinal order; per-key last-wins; null removes
 #   2. DEFAULT  the composed `defaults` block fills what a unit left unstated
@@ -90,27 +91,42 @@ ORD=$(mktemp -d)
 # compiler's built-ins. Nothing failed. It is the same shape as CloneForFaction copying 9
 # of 20 fields. So the guard is tested GENERATIVELY — add a property, prove the loader
 # refuses to run, put it back — rather than asserted by reading the code.
+#
+# EVERY hand-written merge is probed, not just the root one. ZhTargetDto and UnitDefaultsDto
+# are merged by object initializers of exactly the same shape, and ZhTargetDto is the one two
+# parallel branches are most likely to both extend — git merges two added initializer lines
+# without complaint, and a dropped one reverts the field silently in every layered stack.
 SCHEMA_BAK="$ORD/Schema.cs.bak"
 cp Content/Schema.cs "$SCHEMA_BAK"
-python3 - <<'PY'
+probe_one() {                    # <anchor> <probe-property> <expected-type-name>
+  cp "$SCHEMA_BAK" Content/Schema.cs
+  ANCHOR="$1" PROBE="$2" python3 - <<'PY'
+import os
 p = 'Content/Schema.cs'; s = open(p).read()
-anchor = "    public ZhTargetDto Zh { get; set; } = new();"
-assert anchor in s, "anchor moved; the totality probe needs updating"
-s = s.replace(anchor, anchor + "\n    public List<string> E2EUnmergedProbe { get; set; } = new();", 1)
+anchor, probe = os.environ['ANCHOR'], os.environ['PROBE']
+assert anchor in s, f"anchor moved; the totality probe needs updating: {anchor}"
+s = s.replace(anchor, anchor + f"\n    public List<string> {probe} {{ get; set; }} = new();", 1)
 open(p, 'w').write(s)
 PY
-probe_build=1
-dotnet build -c Release --nologo -v quiet >/dev/null 2>&1 || probe_build=0
-probe_out=""
-[ "$probe_build" = 1 ] && probe_out=$(rts lint 2>&1 || true)
-cp "$SCHEMA_BAK" Content/Schema.cs
+  probe_build=1
+  dotnet build -c Release --nologo -v quiet >/dev/null 2>&1 || probe_build=0
+  probe_out=""
+  [ "$probe_build" = 1 ] && probe_out=$(rts lint 2>&1 || true)
+  cp "$SCHEMA_BAK" Content/Schema.cs
+  case "$probe_out" in
+    *"not total over $3"*"$2"*)
+      echo "  merge totality enforced over $3: an unmerged property fails the load" ;;
+    *) echo "  TOTALITY GUARD DID NOT FIRE for $3: a new property would be silently dropped"
+       echo "  got: ${probe_out:-<build failed>}"
+       dotnet build -c Release --nologo -v quiet >/dev/null; rm -rf "$ORD"; exit 1 ;;
+  esac
+}
+probe_one "    public ZhTargetDto Zh { get; set; } = new();" E2EUnmergedProbe ContentPackDto
+probe_one "public sealed class ZhTargetDto
+{" E2EZhProbe ZhTargetDto
+probe_one "public sealed class UnitDefaultsDto
+{" E2EDefaultsProbe UnitDefaultsDto
 dotnet build -c Release --nologo -v quiet >/dev/null
-case "$probe_out" in
-  *"not total over ContentPackDto"*E2EUnmergedProbe*)
-    echo "  merge totality is enforced: an unmerged DTO property fails the load" ;;
-  *) echo "  TOTALITY GUARD DID NOT FIRE: a new DTO property would be silently dropped"
-     echo "  got: ${probe_out:-<build failed>}"; rm -rf "$ORD"; exit 1 ;;
-esac
 
 # --- 2/3. Absent is not the same as DEFAULT. -----------------------------------------
 # `defaults` and `lint` are whole blocks with compiler-supplied fallbacks, so a layer that
@@ -240,8 +256,7 @@ drop_changes=$(rts diff --head-mod "$ORD/drop.json" --json \
        rts diff --head-mod "$ORD/drop.json"; rm -rf "$ORD"; exit 1; }
 echo "  a consistent removal lints, and diffs as exactly 3 changes with no index phantoms"
 rm -rf "$ORD"
-echo
-echo "== gate 8/22: structures are economic targets =="
+gate "structures are economic targets"
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -263,8 +278,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 [ "$fac" = "3" ] || { echo "  PRODUCTION BLOCKED WITH A FACTORY PRESENT: winsA = $fac"; exit 1; }
 echo "  factory present => units build and win (A 3/3)"
 
-echo
-echo "== gate 9/22: flags and conditional variants =="
+gate "flags and conditional variants"
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -293,8 +307,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 [ "$WITHOUT" = "0" ] || { echo "  ABLATION FAILED: variant removed but winsA=$WITHOUT (expected 0)"; exit 1; }
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
-echo
-echo "== gate 10/22: event rules {on, when, do} =="
+gate "event rules {on, when, do}"
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -335,8 +348,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 [ "$stall" = "1" ] || { echo "  STALL DIAGNOSTIC MISSING"; exit 1; }
 echo "  stalled queues are reported, not silent"
 
-echo
-echo "== gate 11/22: factions are startable, not just rosters =="
+gate "factions are startable, not just rosters"
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -355,8 +367,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 [ "$why" = "1" ] || { echo "  SKIRMISH STALL NOT REPORTED"; exit 1; }
 echo "  the loser's stall is reported, not silent"
 
-echo
-echo "== gate 12/22: compile to a Zero Hour mod =="
+gate "compile to a Zero Hour mod"
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -382,8 +393,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
   || { echo "  INVENTED ENUM VALUE regressed into the emitter"; exit 1; }
 echo "  emitted enum values are ones retail actually uses"
 
-echo
-echo "== gate 13/22: target-zh lint — caps, round-trip, divergence =="
+gate "target-zh lint — caps, round-trip, divergence"
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -459,8 +469,7 @@ tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first co
 [ "$tv" = "1" ] || { echo "  ONE-BIT LIMIT NOT REPORTED: extra variants silently never fire"; exit 1; }
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
 
-echo
-echo "== gate 14/22: faction-scoped reference resolution =="
+gate "faction-scoped reference resolution"
 FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
 
 # A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
@@ -527,8 +536,7 @@ sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' require
 [ "$sc" = "1" ] || { echo "  SHARED-REFERRER DEFECT NOT REPORTED: the retail bug class ships silently"; exit 1; }
 echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
 
-echo
-echo "== gate 15/22: garrison + capture =="
+gate "garrison + capture"
 # GARRISONABLE is the only terrain-shaped combat modifier in all of Zero Hour and it needs
 # no geometry at all. Occupants cannot be targeted; damage reaches them only as spill from a
 # ClearsGarrison weapon hitting the HOST — 17 of retail's 363 weapons, 4.7% of the arsenal.
@@ -575,8 +583,7 @@ grep -q "AutoDepositUpdate" "$GOUT/Data/INI/Object/garrison.ini" \
   || { echo "  depositAmount did not become an AutoDepositUpdate"; exit 1; }
 echo "  compiles to GarrisonContain + AutoDepositUpdate + AllowAttackGarrisonedBldgs"
 
-echo
-echo "== gate 16/22: sciences — a second currency earned by fighting =="
+gate "sciences — a second currency earned by fighting"
 # Skill points come from KILLS and from nothing else; no economy converts into them. ZH's
 # whole ladder is five Rank.ini blocks: 0/800/1500/2500/5000 needed, 1/1/1/1/3 granted, so
 # seven points for a game against 13-20 purchasable sciences per faction. Every purchasable
@@ -634,8 +641,7 @@ rl=$(rts lint --target zh --mod content/mods/sciences.json | grep -c "rank ladde
 [ "$rl" = "1" ] || { echo "  RANK LADDER DIVERGENCE NOT REPORTED"; exit 1; }
 echo "  Science blocks compile additively; the numbered Rank ladder is reported, not overwritten"
 
-echo
-echo "== gate 17/22: spatial index is a PURE accelerator =="
+gate "spatial index is a PURE accelerator"
 # Every radius query used to be a full scan, so tick cost was O(n^2) — and this product's
 # value is BATCH measurement, where a matrix is pairs x runs x ticks. The grid must change
 # the COST and nothing else, so the gate is equivalence, not speed: same seed, same content,
@@ -674,8 +680,7 @@ if g * 2.0 > b:
 print(f'  ~2000 units: {g:.2f}s with the grid vs {b:.2f}s without ({b/g:.1f}x)')
 "
 
-echo
-echo "== gate 18/22: passability — terrain that movement must respect =="
+gate "passability — terrain that movement must respect"
 # Chokepoints, flanking and water are EMERGENT from a passability grid; none of them is a
 # content type. The gate is therefore mostly about consequences — does the same army, on the
 # same seed, measure differently because of the shape of the ground — plus the two structural
@@ -842,8 +847,7 @@ case "$zh_lint" in
 esac
 echo "  Surfaces cross over verbatim; the map cannot, and lint reports it as divergence"
 rm -rf "$PAS"
-echo
-echo "== gate 19/22: overrides compile to map.ini, and only there =="
+gate "overrides compile to map.ini, and only there"
 # Modifying a unit that ALREADY EXISTS in the target game is a different problem from
 # authoring one, and the rules were each bought with a crash. The author states intent; the
 # compiler picks the file and the mechanism. This gate asserts it keeps picking correctly.
@@ -905,8 +909,7 @@ rts lint --mod "$OVO/theirs.json" >/dev/null 2>&1 \
   && { echo "  LINT ACCEPTED A TARGET-GAME WEAPON: that compiles to an inert gun"; exit 1; }
 echo "  naming the target's own weapon is refused at lint, not discovered in a match"
 
-echo
-echo "== gate 20/22: an emitted object is PLAYABLE, not merely parseable =="
+gate "an emitted object is PLAYABLE, not merely parseable"
 # Every check here corresponds to a silent in-game failure found by playing the compiled
 # output: the file parsed, the engine booted 42/42, and something just never happened.
 # A field-diff against AmericaWarFactory and AmericaTankCrusader is what surfaced them.
@@ -1034,8 +1037,7 @@ for f in Weapon Armor Locomotor Object CommandButton CommandSet PlayerTemplate; 
 done
 echo "  reversing every keyed table in the pack emits byte-identical output"
 
-echo
-echo "== gate 21/22: W3D round-trip and authoring =="
+gate "W3D round-trip and authoring"
 # Adopting art needs a retail install and caps what a standalone conversion can be. The
 # question is whether a model can be understood well enough to REMAKE, and the test is
 # byte-identity: the high bit of a chunk's size marks a container, so sizes must be recomputed
@@ -1260,8 +1262,7 @@ else
   echo "  (skipped: no local retail install at $W3DBIG)"
 fi
 
-echo
-echo "== gate 22/22: MCP server — the agent-facing seam =="
+gate "MCP server — the agent-facing seam"
 # The whole project points at this: an agent authors a pack, is told exactly what is wrong,
 # measures it, and compiles it, with no human in the loop. JSON-RPC 2.0 over newline-delimited
 # stdio and ZERO dependencies, so the root NuGet.config's <clear/> stays untouched.

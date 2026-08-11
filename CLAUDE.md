@@ -282,6 +282,10 @@ are emitted by `rts compile`, not hand-written.
 - Run: `dotnet bin/Release/net8.0/rts.dll <verb>` — verbs: `lint`, `duel`, `matrix`,
   `econ`, `faction`, `replay`
 - **`./e2e.sh` runs the whole gate below plus the demos and the shell check.** Prefer it.
+  **Add a gate by APPENDING a `gate "title"` call — never write the number.** The count is
+  derived from the call sites, so two branches can each add one without touching each other's
+  lines; the old literal `gate N/22` put the denominator on all 22 lines and made every
+  parallel slice conflict across the whole file.
 - **After ANY change under Core/, Content/, or Runtime/, run all four and treat failure as a broken build:**
   1. `rts lint`
   2. `rts replay --a crusader --b battlemaster --seed 7` → must print `DETERMINISM OK`
@@ -354,12 +358,18 @@ are emitted by `rts compile`, not hand-written.
   duplicate-key error with no way to say "inherit everything except this fork". **remove
   before modify** makes the contradictory pair a deterministic error rather than a patch that
   is computed, allocated and then silently discarded.
-- **The pack merge must be TOTAL over `ContentPackDto`, and it is checked by reflection on
-  every load.** *This was a live bug of exactly the `CloneForFaction` shape:* `defaults` was
-  missing from the merge's object initializer, so every multi-layer stack silently reverted to
-  the compiler's built-ins. Nothing failed; the numbers were just wrong. `MergedProperties`
-  now declares what is handled and `AssertMergeIsTotal` refuses to load if the type has grown
-  past it. e2e proves the guard bites by adding a property and asserting the load fails.
+- **EVERY hand-written merge must be TOTAL over its DTO, and all of them are checked by
+  reflection on every load.** *This was a live bug of exactly the `CloneForFaction` shape:*
+  `defaults` was missing from the merge's object initializer, so every multi-layer stack
+  silently reverted to the compiler's built-ins. Nothing failed; the numbers were just wrong.
+  `AssertMergeIsTotal` now covers `ContentPackDto`, `ZhTargetDto` and `UnitDefaultsDto` —
+  all three are merged by object initializers of the same shape, and guarding only the root
+  left the other two exposed. Only WRITABLE properties count: a computed one (`ZhTargetDto.Scale`)
+  is derived from merged state, not state. e2e probes each type generatively — add a property,
+  assert the load is refused, put it back.
+  *The hazard this actually buys off is PARALLEL WORK.* Two branches each adding one field to
+  `ZhTargetDto` is the likeliest way to lose one: git merges two added initializer lines
+  without complaint, and a dropped line reverts that field in every layered stack, silently.
 - **In a layered block, ABSENT is not the same as DEFAULT.** A non-nullable field with a C#
   initializer cannot tell "this layer omitted it" from "this layer set it to the default", so
   a mod saying nothing would overwrite the base pack's value with the compiler's. `defaults`,
