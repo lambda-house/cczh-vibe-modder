@@ -1338,6 +1338,8 @@ def cmd_tga(a):
     while a grid also proves the UV layout the mesh writer generates is CORRECT, because wrong
     UVs show up as smeared or repeated cells rather than squares.
     """
+    if a.sheet:
+        return tga_icon_sheet(a)
     w = h = a.size
     cell = max(1, w // a.cells)
     px = bytearray()
@@ -1366,6 +1368,54 @@ def cmd_tga(a):
     print(f"authored {a.out}  {18 + len(px):,} bytes")
     print(f"  {w}x{h} 24-bit uncompressed, {a.cells}x{a.cells} grid, rgb{tuple(a.rgb)}, "
           f"orange border marking the UV extent")
+    return 0
+
+
+def tga_write(path, w, h, rows):
+    """rows[y][x] = (r,g,b), y ascending from the BOTTOM — TGA's own origin."""
+    px = bytearray()
+    for y in range(h):
+        for x in range(w):
+            r, g, b = rows[y][x]
+            px += bytes((b, g, r))
+    hdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, w, h, 24, 0)
+    open(path, "wb").write(hdr + bytes(px))
+    return 18 + len(px)
+
+
+def tga_icon_sheet(a):
+    """Author a CONTROL BAR icon sheet: one texture, a grid of visually distinct cells, each
+    addressed by a MappedImage's Coords rectangle.
+
+    This is how retail does it and the reason is bandwidth, not taste: SAUserInterface512.tga
+    is one 512x512 page holding hundreds of button images, and every MappedImage is a
+    rectangle into it. Emitting one .tga per icon would work and would also mean a texture
+    bind per button.
+
+    Cells are given distinct hues by index so a wrong Coords rectangle is VISIBLE rather than
+    merely wrong — two buttons showing the same colour means two entries point at one cell.
+    Each carries a darker inset border, which is what makes an off-by-one rectangle legible as
+    a sliver of the neighbour rather than as nothing at all.
+    """
+    n, cell = a.cells, a.size // a.cells
+    w = h = cell * n
+    rows = [[(18, 20, 26)] * w for _ in range(h)]
+    for idx in range(n * n):
+        cx, cy = idx % n, idx // n
+        # Golden-ratio hue stepping: adjacent indices are far apart in hue, so neighbouring
+        # cells never read as the same colour however many there are.
+        hue = (idx * 0.6180339887) % 1.0
+        i = int(hue * 6); f = hue * 6 - i
+        v, p, q, t = 235, 60, int(235 - 175 * f), int(60 + 175 * f)
+        rgb = [(v,t,p),(q,v,p),(p,v,t),(p,q,v),(t,p,v),(v,p,q)][i % 6]
+        dark = tuple(int(c * 0.35) for c in rgb)
+        for y in range(cell):
+            for x in range(cell):
+                edge = x < 2 or y < 2 or x >= cell - 2 or y >= cell - 2
+                rows[cy * cell + y][cx * cell + x] = dark if edge else rgb
+    size = tga_write(a.out, w, h, rows)
+    print(f"authored {a.out}  {size:,} bytes")
+    print(f"  {w}x{h} 24-bit uncompressed icon sheet, {n}x{n} = {n*n} cells of {cell}x{cell}")
     return 0
 
 
@@ -1765,6 +1815,8 @@ def main():
     tg.add_argument("--out", required=True); tg.add_argument("--size", type=int, default=128)
     tg.add_argument("--cells", type=int, default=8)
     tg.add_argument("--rgb", type=int, nargs=3, default=[40, 170, 220])
+    tg.add_argument("--sheet", action="store_true",
+                    help="author a control-bar ICON SHEET: --cells x --cells distinct cells")
     tg.set_defaults(fn=cmd_tga)
 
     mp = sub.add_parser("map", help="read, scan or verify Zero Hour .map terrain files")

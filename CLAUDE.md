@@ -212,6 +212,27 @@ one there (rule 3), and touch weapons only alongside an object override (rule 4)
    because span is what a measured battle length depends on; lint reports the ratio when a
    feature could be narrower than one of their cells.*
 
+15. **Content icons are AUTHORED; HUD furniture is borrowed on purpose.** A compiled pack
+   used to point at retail button art for every object, button and upgrade
+   (`SelectPortrait = SACWeaponsfact_L`), so a pack whose mesh, texture, skeleton and
+   animation were all authored still could not be LOOKED at without EA's UI.
+   `Data/INI/MappedImages/HandCreated` is a directory scan EA's own source admits to
+   (`Image.cpp:256`), so new names there are additive with no probe needed. `rts compile` now
+   writes one icon sheet plus its `MappedImage` blocks.
+   **Measured: a pack on wholly authored art borrows 8 retail names, and all 8 are the
+   `zh.sides` HUD** (bar backdrop, medallions, gen bar, exp bar). That line is deliberate: a
+   per-unit portrait is content, an 800-pixel command bar is EA's UI design and a pack has no
+   reason to reinvent it to prove a unit works. Adopting a mesh adds its own name plus its
+   death FX — the price of adoption, not an unfinished edge.
+   *The compiler now writes ART, which it never did before. A `MappedImage` whose texture is
+   absent renders as a blank tile with no error, so both halves are emitted or neither.*
+16. **`FXList` IS additively loadable on this build; `ParticleSystem` is NOT.** Settled from
+   GeneralsX's source rather than by probe: it passes `"Data\INI\FXList"` as a dirpath where
+   EA passes none — the same divergence as `Science` — while `TheParticleSystemManager` gets
+   `nullptr` and particles live in a monolithic `Data/INI/ParticleSystem.ini` that the in-game
+   editor rewrites in place. So an authored FXList composing RETAIL particle systems is
+   reachable; an authored particle system is not, without clobbering their file.
+
 **VALIDATED END TO END, IN A REAL MATCH.** A faction authored here is selectable in the
 skirmish dropdown, has a working command bar, builds a unit authored here, and that unit
 rolls out of the factory and is selectable and commandable. Separately, a

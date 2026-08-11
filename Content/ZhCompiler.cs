@@ -32,7 +32,7 @@ public static class ZhCompiler
         public List<string> Warnings = new();
         public List<string> Errors = new();
         public int Objects, Weapons, Armors, Locomotors, Buttons, Sets, Templates;
-        public int MapCells;
+        public int MapCells, Icons;
     }
 
     /// <summary>Footprint radius for a structure. Shared so the production exit's
@@ -82,6 +82,15 @@ public static class ZhCompiler
         // content — the same reason ZH prefixes its own generals, except ours is one line
         // of code rather than 202,322 lines of duplication.
         string P(string id) => pack + "_" + Sanitize(id);
+
+        // ---- Icons: authored, not borrowed ----------------------------------------------
+        // Built up front because objects, command buttons and upgrades all address the same
+        // sheet, and the sheet's layout is fixed by claim order. Content icons are OURS; the
+        // HUD furniture below (bar backdrop, medallions, watermark) stays borrowed through
+        // zh.sides, which is a deliberate line rather than an unfinished edge: a per-unit
+        // portrait is content, an 800-pixel command bar is a piece of EA's UI design that a
+        // pack has no reason to reinvent to prove a unit works.
+        var icons = ZhIcons.Begin(pack + "_icons");
 
         var dmg = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var dt in db.DamageTypes)
@@ -207,7 +216,7 @@ public static class ZhCompiler
                 sb.AppendLine($"  DisplayName = UPGRADE:{P(flagName)}");
                 sb.AppendLine($"  BuildTime = {F((tech?.ResearchTicks ?? 300) / (double)ContentDb.TicksPerSecond)}");
                 sb.AppendLine($"  BuildCost = {tech?.Cost ?? 1000}");
-                sb.AppendLine("  ButtonImage = SSAdvancedTraining");
+                sb.AppendLine($"  ButtonImage = {icons.Claim(up + "_Icon")}");
                 sb.AppendLine("End").AppendLine();
             }
             Write(r, Path.Combine(ini, "Upgrade", pack + ".ini"), sb);
@@ -303,8 +312,8 @@ public static class ZhCompiler
             // Portrait and button art. Without SelectPortrait the selected object shows an
             // empty tile in the control bar — cosmetic, but it reads as "broken", and both
             // are just names of images the player already has installed.
-            sb.AppendLine($"  SelectPortrait = {(u.IsStructure ? "SACWeaponsfact_L" : "SACLeopard_L")}");
-            sb.AppendLine($"  ButtonImage = {(u.IsStructure ? "SACWeaponsfact" : "SACLeopard")}");
+            sb.AppendLine($"  SelectPortrait = {icons.Claim(P(u.Id) + "_L")}");
+            sb.AppendLine($"  ButtonImage = {icons.Claim(P(u.Id))}");
             sb.AppendLine($"  EditorSorting = {(u.IsStructure ? "STRUCTURE" : "VEHICLE")}");
             sb.AppendLine($"  BuildCost = {u.Cost}");
             sb.AppendLine($"  BuildTime = {F(u.BuildTicks / (double)ContentDb.TicksPerSecond)}");
@@ -671,7 +680,7 @@ public static class ZhCompiler
             sb.AppendLine($"  Command = {(u.IsStructure ? "DOZER_CONSTRUCT" : "UNIT_BUILD")}");
             sb.AppendLine($"  Object = {P(u.Id)}");
             sb.AppendLine($"  TextLabel = CONTROLBAR:{P(u.Id)}");
-            sb.AppendLine("  ButtonImage = SACLeopard");
+            sb.AppendLine($"  ButtonImage = {icons.Claim(P(u.Id))}");
             sb.AppendLine("  ButtonBorderType = BUILD");
             sb.AppendLine("End").AppendLine();
             r.Buttons++;
@@ -684,7 +693,7 @@ public static class ZhCompiler
             sb.AppendLine("  Command = PLAYER_UPGRADE");
             sb.AppendLine($"  Upgrade = {up}");
             sb.AppendLine($"  TextLabel = CONTROLBAR:{up}");
-            sb.AppendLine("  ButtonImage = SSAdvancedTraining");
+            sb.AppendLine($"  ButtonImage = {icons.Claim(up + "_Icon")}");
             sb.AppendLine("  ButtonBorderType = UPGRADE");
             sb.AppendLine("End").AppendLine();
             r.Buttons++;
@@ -931,6 +940,23 @@ public static class ZhCompiler
                            $"map gets this for free. Data/INI files install as usual.");
         }
 
+        // ---- Icon sheet: written LAST, because claims accrue throughout ---------------------
+        // Both halves are emitted or neither: a MappedImage whose texture is absent renders as
+        // a blank tile with no error, which is the failure this whole slice exists to remove.
+        if (icons.Images.Count > 0)
+        {
+            var im = new StringBuilder();
+            Banner(im, db, "MappedImage");
+            ZhIcons.WriteIni(im, icons);
+            Write(r, Path.Combine(ini, "MappedImages", "HandCreated", pack + ".ini"), im);
+
+            string tgaPath = Path.Combine(outRoot, "Art", "Textures", icons.TextureName + ".tga");
+            Directory.CreateDirectory(Path.GetDirectoryName(tgaPath)!);
+            File.WriteAllBytes(tgaPath, icons.Tga());
+            r.Files.Add(tgaPath);
+            r.Icons = icons.Images.Count;
+        }
+
         // ---- The map ----------------------------------------------------------------------
         // Emitted only when the pack authored one, on the same opt-in-by-content rule as every
         // feature since slice 5: a pack with no map plays on whatever the player picks, exactly
@@ -992,11 +1018,26 @@ public static class ZhCompiler
 
         if (withStrings)
         {
+            // A .str is TOTAL — it replaces the whole table, so a partial one is worse than
+            // none: every label the pack does not state becomes MISSING. That is why this is
+            // opt-in, and why what it writes has to cover every label the pack CREATES.
             var st = new StringBuilder();
+            void Label(string tag, string text) =>
+                st.AppendLine(tag).AppendLine($"\"{text}\"").AppendLine("END").AppendLine();
+
             foreach (var u in db.Units)
-                st.AppendLine($"CONTROLBAR:{P(u.Id)}").AppendLine($"\"{u.Id}\"").AppendLine("END").AppendLine();
+            {
+                Label($"CONTROLBAR:{P(u.Id)}", Title(u.Id));
+                // The tooltip and the description are separate labels; without them the
+                // button has a name and hovering it says MISSING.
+                Label($"CONTROLBAR:ToolTip{P(u.Id)}", Title(u.Id));
+                Label($"OBJECT:{P(u.Id)}", Title(u.Id));
+            }
+            foreach (var up in upgradeFor.Values.Distinct(StringComparer.Ordinal)
+                                         .OrderBy(x => x, StringComparer.Ordinal))
+                Label($"UPGRADE:{up.Substring("Upgrade_".Length)}", Title(up.Substring("Upgrade_".Length)));
             foreach (var fid in db.FactionOrder)
-                st.AppendLine($"INI:Faction{Sanitize(fid)}").AppendLine($"\"{fid}\"").AppendLine("END").AppendLine();
+                Label($"INI:Faction{Sanitize(fid)}", Title(fid));
             Write(r, Path.Combine(outRoot, "Data", "Generals.str"), st);
             r.Warnings.Add("Generals.str SHADOWS all 6,422 retail strings — every other label becomes MISSING. " +
                            "Only correct for a full conversion.");
@@ -1065,6 +1106,15 @@ public static class ZhCompiler
               "360 Y:438", "439 Y:457", "260 Y:470", "538 Y:476",
               "SAExpBar", "USLevelUP", "SAEmptyFrame", "408", "191", "InGameUIAmericaBase"),
     };
+
+    /// <summary>An id turned into something a player should see: "hellfire_works" -> "Hellfire
+    /// Works". Not cosmetic polish — a .str replaces the WHOLE table, so these strings are the
+    /// only names in the game and "hellfire_works" on a button is a shipped typo.</summary>
+    private static string Title(string id)
+    {
+        var parts = id.Split('_', StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(' ', parts.Select(p => char.ToUpperInvariant(p[0]) + p.Substring(1)));
+    }
 
     private static string Sanitize(string s)
     {

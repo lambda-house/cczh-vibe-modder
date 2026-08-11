@@ -1431,6 +1431,137 @@ beside=$(find "$MAPD/ovr/Maps" -name map.ini | head -1)
 echo "  overrides land beside the .map, which is the only place they are read"
 rm -rf "$MAPD"; trap - EXIT
 
+gate "authored icons and labels — a pack that borrows no content art"
+# A compiled pack used to point at retail's button art for every object, every command button
+# and every upgrade. It worked, it is what every mod does, and it meant a pack whose mesh,
+# texture, skeleton and animation were ALL authored still could not be looked at without EA's
+# UI. This gate holds the line at: content icons are ours, HUD furniture is borrowed on
+# purpose through zh.sides.
+ICO=$(mktemp -d); trap 'rm -rf "$ICO"' EXIT
+rts compile --target zh --out "$ICO/p" --mod content/mods/demo-attach.json --with-strings >/dev/null
+
+# The load path is a directory scan EA's own source admits to (Image.cpp:256), so the file
+# goes in HandCreated/. Emitting MappedImages.ini instead would replace retail's whole table.
+[ -f "$ICO/p/Data/INI/MappedImages/HandCreated/demo.ini" ] \
+  || { echo "  ICONS NOT EMITTED INTO THE ADDITIVE HandCreated SCAN"; exit 1; }
+[ ! -f "$ICO/p/Data/INI/MappedImages.ini" ] \
+  || { echo "  CLOBBERS RETAIL: emitted MappedImages.ini"; exit 1; }
+
+python3 - "$ICO/p" <<'PYICO'
+import glob, os, re, struct, sys
+root = sys.argv[1]
+
+def lines(p):
+    return open(p, encoding="latin-1").read().replace("\r", "").splitlines()
+
+# --- every declared MappedImage, and the sheet it addresses --------------------------------
+declared, coords, texture = set(), {}, None
+cur = None
+for ln in lines(f"{root}/Data/INI/MappedImages/HandCreated/demo.ini"):
+    t = ln.strip()
+    if t.startswith("MappedImage "):
+        cur = t.split()[1]; declared.add(cur)
+    elif t.startswith("Texture ="):
+        texture = t.split("=")[1].strip()
+    elif t.startswith("Coords") and cur:
+        c = dict(kv.split(":") for kv in t.split("=", 1)[1].split())
+        coords[cur] = tuple(int(c[k]) for k in ("Left", "Top", "Right", "Bottom"))
+
+# --- the texture must EXIST and be a real TGA ----------------------------------------------
+# A MappedImage whose texture is absent renders as a blank tile with no error anywhere, which
+# is the exact failure this slice exists to remove. Emitting INI without art would "pass" any
+# check that only reads INI.
+tga = f"{root}/Art/Textures/{texture}"
+if not os.path.exists(tga):
+    print(f"  ICON SHEET NOT EMITTED: {texture} referenced by {len(declared)} images"); sys.exit(1)
+d = open(tga, "rb").read()
+w, h = struct.unpack_from("<HH", d, 12)
+if d[2] != 2 or d[16] != 24 or len(d) != 18 + w * h * 3:
+    print(f"  MALFORMED TGA: type={d[2]} bpp={d[16]} {w}x{h} but {len(d)} bytes"); sys.exit(1)
+
+# --- every icon a unit or button names must be declared ------------------------------------
+used = set()
+for f in glob.glob(f"{root}/Data/INI/*/*.ini"):
+    if "MappedImages" in f: continue
+    for ln in lines(f):
+        m = re.match(r"\s*(SelectPortrait|ButtonImage)\s*=\s*(\S+)", ln)
+        if m: used.add(m.group(2))
+ours = {u for u in used if u.startswith("demo_") or u.startswith("Upgrade_")}
+missing = sorted(ours - declared)
+if missing:
+    print(f"  DANGLING ICONS, which render as blank tiles: {missing}"); sys.exit(1)
+
+# --- no two images may address the same cell, and none may fall off the sheet --------------
+seen = {}
+for name, (l, t, r, b) in coords.items():
+    if r > w or b > h or l < 0 or t < 0:
+        print(f"  {name} Coords {l,t,r,b} falls outside the {w}x{h} sheet"); sys.exit(1)
+    if (l, t) in seen:
+        print(f"  {name} and {seen[(l,t)]} address the SAME cell"); sys.exit(1)
+    seen[(l, t)] = name
+
+# Distinct fill colours are the diagnostic, not decoration: two buttons rendering the same
+# colour is how a duplicated Coords rectangle looks in game.
+def px(x, y):
+    o = 18 + ((h - 1 - y) * w + x) * 3
+    return d[o:o+3]
+fills = {px((l + r) // 2, (t + b) // 2) for (l, t, r, b) in coords.values()}
+if len(fills) != len(coords):
+    print(f"  {len(coords)} icons share only {len(fills)} distinct colours"); sys.exit(1)
+print(f"  {len(declared)} icons authored into one {w}x{h} sheet, all distinct, none dangling")
+
+# --- strings: a .str is TOTAL, so a partial one is worse than none -------------------------
+st = "\n".join(lines(f"{root}/Data/Generals.str"))
+tags = set(re.findall(r"^([A-Z]+:\S+)$", st, re.M))
+# Labels are keyed on the OBJECT, not on the portrait image. Deriving them from icon names
+# instead asks for CONTROLBAR:<unit>_L, which is a label that should not and does not exist.
+objs = {ln.split()[1] for f in glob.glob(f"{root}/Data/INI/Object/*.ini")
+        for ln in lines(f) if ln.startswith("Object ")}
+want = {f"CONTROLBAR:{o}" for o in objs} | {f"OBJECT:{o}" for o in objs}
+gap = sorted(want - tags)
+if gap:
+    print(f"  .str REPLACES the whole table and omits {len(gap)}: {gap[:3]}"); sys.exit(1)
+if any('"' + o + '"' in st for o in objs):
+    print("  labels are raw ids: a .str is the only names in the game, so ids are typos"); sys.exit(1)
+print(f"  {len(tags)} labels cover every emitted name, titled rather than raw ids")
+PYICO
+
+# --- the claim, measured: a pack on wholly AUTHORED art borrows no content asset ------------
+# The residual must be exactly the HUD furniture zh.sides deliberately inherits. This is the
+# assertion that would notice a new hardcoded retail name appearing anywhere in the compiler.
+python3 - "$ICO" <<'PYAUTH'
+import json, re, sys
+d = json.loads(re.sub(r'^\s*//.*$', '', open('content/mods/demo-attach.json').read(), flags=re.M))
+base = json.loads(re.sub(r'^\s*//.*$', '', open('content/game.json').read(), flags=re.M))
+d['meta']['name'] = 'allauthored'
+d['zh']['models'] = {u: 'RTSBOX' for u in base['units']}
+d['zh']['models']['hellhound'] = 'RTSBOX'
+d['zh']['models']['hellfire_works'] = 'RTSMAST'
+d['zh']['animations'] = {'hellfire_works': 'RTSMAST_SKL.RTSSPIN:LOOP'}
+open(f'{sys.argv[1]}/authored.json', 'w').write(json.dumps(d))
+PYAUTH
+rts compile --target zh --out "$ICO/auth" --mod "$ICO/authored.json" --with-strings >/dev/null
+
+residual=$(cat "$ICO/auth"/Data/INI/*/*.ini "$ICO/auth"/Data/INI/*/*/*.ini 2>/dev/null | tr -d '\r' |
+  awk '{ f=$1
+         if (f=="SelectPortrait"||f=="ButtonImage"||f=="QueueButtonImage"||f=="RightHUDImage"||
+             f=="GenBarButtonIn"||f=="GenBarButtonOn"||f=="ExpBarForegroundImage"||f=="GenArrow"||
+             f=="CommandMarkerImage"||f=="ImageName"||f=="Model"||f=="Texture"||f=="FX"||f=="OCL")
+           print $NF }' |
+  grep -vE '^allauthored_|^RTS|^ModelDraw$|^[0-9]' | sort -u | tr '\n' ' ')
+# Line-oriented, not a field regex: FX lines read "FX = INITIAL <name>", so the asset is the
+# LAST token. A regex counter reported INITIAL and missed every death effect — wrong in the
+# direction that flatters us.
+expect="InGameUIAmericaBase SABarButtonGen2IN SABarButtonGen2ON SAEmptyFrame SAExpBar SALogo SCBigButton USLevelUP "
+if [ "$residual" != "$expect" ]; then
+  echo "  RESIDUAL RETAIL ART CHANGED"
+  echo "    expected (the zh.sides HUD borrow): $expect"
+  echo "    got:                                $residual"
+  exit 1
+fi
+echo "  a pack on wholly authored art borrows 8 names, all of them the zh.sides HUD"
+rm -rf "$ICO"; trap - EXIT
+
 echo
 echo "== regression: pinned replay hashes =="
 # Re-pinned twice, both deliberate, both recorded:
