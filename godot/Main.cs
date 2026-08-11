@@ -212,6 +212,7 @@ public partial class Main : Node2D
 
     public override void _Draw()
     {
+        DrawTerrain();
         DrawSpawnLines();
 
         var prev = _host.Previous;
@@ -256,6 +257,51 @@ public partial class Main : Node2D
         for (int i = 0; i < cur.UnitCount; i++)
             DrawUnit(cur.Units[i], _screenPos[i]);
     }
+
+    /// <summary>
+    /// The passability map, under everything else. Content, not snapshot state — it cannot
+    /// change during a match, so reading it from the ContentDb the shell already holds is not
+    /// a hole in the "presentation reads Snapshot and nothing else" rule; there is no mutable
+    /// sim state here to leak. Nothing is drawn at all when the pack declares no map.
+    ///
+    /// Runs of identical cells are merged along each row into one rectangle. A 48x48 map is
+    /// 2,304 draw calls a frame otherwise, for a picture that is mostly two colours.
+    /// </summary>
+    private void DrawTerrain()
+    {
+        var map = _content.Map;
+        if (map is null) return;
+
+        float cell = (float)map.CellSize.ToDoubleForDisplay();
+        for (int cy = 0; cy < map.Height; cy++)
+        {
+            int cx = 0;
+            while (cx < map.Width)
+            {
+                var surf = map.At(cy * map.Width + cx);
+                int run = 1;
+                while (cx + run < map.Width && map.At(cy * map.Width + cx + run) == surf) run++;
+                if (surf != Surface.Clear)
+                {
+                    map.CellCentre(cy * map.Width + cx, out var wx, out var wy);
+                    var tl = ToScreen(wx.ToDoubleForDisplay() - cell / 2,
+                                      wy.ToDoubleForDisplay() - cell / 2);
+                    var br = ToScreen(wx.ToDoubleForDisplay() - cell / 2 + cell * run,
+                                      wy.ToDoubleForDisplay() + cell / 2);
+                    DrawRect(new Rect2(tl, br - tl), TerrainFill(surf));
+                }
+                cx += run;
+            }
+        }
+    }
+
+    private static Color TerrainFill(Surface s) => s switch
+    {
+        Surface.Water => new Color(0.20f, 0.38f, 0.62f, 0.55f),
+        Surface.Cliff => new Color(0.42f, 0.36f, 0.30f, 0.60f),
+        Surface.Rubble => new Color(0.45f, 0.42f, 0.38f, 0.45f),
+        _ => new Color(0.30f, 0.30f, 0.34f, 0.85f),      // impassable
+    };
 
     private void DrawSpawnLines()
     {

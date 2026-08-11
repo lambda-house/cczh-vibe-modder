@@ -127,6 +127,26 @@ public sealed class World
     public readonly Fix64[] ResolvedStats = new Fix64[MaxUnits * StatResolver.StatCount];
     public int UnitCount;
     public readonly TeamState[] Teams;
+
+    /// <summary>
+    /// Waypoints a unit may hold before it must ask again. A cap, not a limit on route
+    /// length: a longer route is walked in instalments, which also means a unit notices
+    /// the world moved while it was walking instead of following a stale plan to the end.
+    /// </summary>
+    public const int PathCapacity = 24;
+    /// <summary>Ticks a unit must wait before recomputing a route. Chasing a moving target
+    /// changes the goal cell most ticks, and one A* per unit per tick is a search per unit
+    /// per tick — this is the difference between a feature and a stall.</summary>
+    public const int RepathInterval = 8;
+
+    // Path state. Allocated ONLY when the pack has impassable terrain, because 4,096 units
+    // times 24 waypoints is 400KB that a pack with no map would never read.
+    public readonly int[] PathCells;
+    public readonly int[] PathLen;
+    public readonly int[] PathCursor;
+    /// <summary>Goal cell the current route was computed for, or -1 for no route.</summary>
+    public readonly int[] PathGoalCell;
+    public readonly int[] RepathCooldown;
     public readonly Fix64 CheapestUnitCost;
 
     public World(ContentDb content)
@@ -138,6 +158,13 @@ public sealed class World
         Fix64 cheapest = Fix64.MaxValue;
         foreach (var u in content.Units) cheapest = Fix64.Min(cheapest, Fix64.FromInt(u.Cost));
         CheapestUnitCost = cheapest;
+
+        int paths = content.HasPassability ? MaxUnits : 0;
+        PathCells = new int[paths * PathCapacity];
+        PathLen = new int[paths];
+        PathCursor = new int[paths];
+        PathGoalCell = new int[paths];
+        RepathCooldown = new int[paths];
     }
 
     public int Spawn(int protoIdx, int team, Fix64 x, Fix64 y)
@@ -159,6 +186,15 @@ public sealed class World
         u.GarrisonHost = -1;
         u.CaptureBy = -1;
         u.DepositCountdown = proto.DepositTicks;   // a fresh building pays after one full period
+        if (PathLen.Length > 0)
+        {
+            // Slots are reused as the array fills; a fresh body must not inherit the route of
+            // whoever held the index before it.
+            PathLen[idx] = 0;
+            PathCursor[idx] = 0;
+            PathGoalCell[idx] = -1;
+            RepathCooldown[idx] = 0;
+        }
         SelectLoadout(idx);        // before RecomputeStats: the variant can change stats
         RecomputeStats(idx);
         u.Hp = Resolved(idx, Stat.MaxHp);
@@ -493,6 +529,20 @@ public sealed class World
                 h.AddInt32(u.CaptureProgress);
                 h.AddInt32(u.CaptureBy);
                 h.AddInt32(u.DepositCountdown);
+            }
+            // A route is sim state, not a cache: WHEN it was computed decides which way the
+            // unit walks around an obstacle, so two runs that plan at different moments
+            // diverge. Only the live tail is folded — the waypoints already consumed cannot
+            // affect anything again — and the whole block is gated on the pack actually
+            // having terrain to path around, exactly like the flag and garrison fields.
+            if (Content.HasPassability)
+            {
+                h.AddInt32(PathGoalCell[i]);
+                h.AddInt32(PathCursor[i]);
+                h.AddInt32(PathLen[i]);
+                for (int w = PathCursor[i]; w < PathLen[i]; w++)
+                    h.AddInt32(PathCells[i * PathCapacity + w]);
+                h.AddInt32(RepathCooldown[i]);
             }
         }
 

@@ -270,6 +270,20 @@ public static class Program
         Console.WriteLine($"pack '{db.PackName}'  contentHash={db.ContentHash:x16}");
         Console.WriteLine($"units={db.Units.Length} weapons={db.Weapons.Length} damageTypes={db.DamageTypes.Length} armorClasses={db.ArmorClasses.Length} techNodes={db.TechNodes.Count}");
         Console.WriteLine($"features: structures={db.HasFactories} power={db.HasPower} flags={db.HasFlags}({db.Flags.Count}) rules={db.HasRules}({db.Units.Sum(u => u.Rules.Length)})");
+        if (db.Map is { } m)
+        {
+            // Report the BLOCKED share, not just the size. A map every unit can cross is a
+            // no-op that moves no hash, and saying so here is the difference between "terrain
+            // loaded" and "terrain does anything" — the distinction a screenshot would
+            // otherwise have to make.
+            int blocked = 0;
+            for (int c = 0; c < m.CellCount; c++)
+                if (m.At(c) != Runtime.Surface.Clear) blocked++;
+            Console.WriteLine($"map: {m.Width}x{m.Height} cells of {m.CellSize.ToDoubleForDisplay():0.###} " +
+                              $"({m.Width * m.CellSize.ToDoubleForDisplay():0.#} world units square), " +
+                              $"{blocked} non-clear ({100.0 * blocked / m.CellCount:0.#}%), " +
+                              $"pathing={db.HasPassability}");
+        }
         foreach (var w in warnings) Console.WriteLine($"warn:  {w}");
         foreach (var e in errors) Console.WriteLine($"ERROR: {e}");
         // --target zh asks a different question: not "is this pack coherent" but "will it

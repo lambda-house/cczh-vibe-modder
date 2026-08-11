@@ -134,6 +134,10 @@ public sealed class UnitProto
     public int BuildTicks;
     /// <summary>Bodies produced per purchase. See <see cref="UnitDto.UnitsPerPurchase"/>.</summary>
     public int UnitsPerPurchase = 1;
+    /// <summary>Terrain this unit crosses. ZH's Locomotor.Surfaces; ground alone by default.
+    /// A mask that includes Air bypasses the grid entirely rather than needing flyable
+    /// cells — their model, and the reason an air unit needs no terrain authored for it.</summary>
+    public Runtime.SurfaceMask Surfaces = Runtime.SurfaceMask.Ground;
     /// <summary>Every declared KindOf name, ordinal-sorted. Open set; lint closes it.</summary>
     public string[] KindOf = Array.Empty<string>();
     /// <summary>Dense mask over <see cref="Runtime.KindOf.Known"/> for the roles the sim tests.</summary>
@@ -272,6 +276,22 @@ public sealed class ContentDb
     public bool HasSciences;
     /// <summary>Any activated power. Gates per-team recharge state into the hash.</summary>
     public bool HasPowers;
+
+    /// <summary>
+    /// Authored terrain, or null when the pack declares no map. CONTENT, not sim state: it
+    /// never changes during a match, so it folds into <c>contentHash</c> and never into the
+    /// state hash.
+    /// </summary>
+    public Runtime.PassabilityGrid? Map;
+
+    /// <summary>
+    /// True once the map contains a cell some unit cannot cross. Gates pathing and the path
+    /// fields in the state hash, on the same opt-in-by-content discipline as every feature
+    /// before it: a pack with no map moves in a straight line and hashes exactly as it did
+    /// before this slice existed. An all-clear map is not a feature, it is a no-op, and it
+    /// would be dishonest for it to move a pinned replay.
+    /// </summary>
+    public bool HasPassability;
 
     public RankDef[] Ranks = Array.Empty<RankDef>();
     public ScienceDef[] Sciences = Array.Empty<ScienceDef>();
@@ -691,6 +711,27 @@ public sealed class ContentDb
                 proto.Variants = vs.ToArray();
             }
 
+            // Surfaces: ground alone unless declared, which is what 1,741 of retail's
+            // locomotors say. An unknown name is an error, not a silently ignored word — the
+            // enum is closed on their side too, and a typo that means "cannot move" is the
+            // hardest kind of bug to see from a state hash.
+            if (c.Mobile.Surfaces is { Count: > 0 } surf)
+            {
+                var mask = Runtime.SurfaceMask.None;
+                foreach (var name in surf.OrderBy(x => x, StringComparer.Ordinal))
+                {
+                    if (Enum.TryParse<Runtime.SurfaceMask>(name, ignoreCase: true, out var bit)
+                        && bit != Runtime.SurfaceMask.None)
+                        mask |= bit;
+                    else
+                        errors.Add($"unit '{id}': unknown surface '{name}' " +
+                                   "(expected ground|water|cliff|air|rubble)");
+                }
+                proto.Surfaces = mask;
+                if (mask == Runtime.SurfaceMask.None)
+                    errors.Add($"unit '{id}': surfaces resolved to nothing; it could never move");
+            }
+
             proto.EnergyProduction = u.EnergyProduction ?? 0;
             proto.MaxSimultaneousOfType = u.MaxSimultaneousOfType ?? 0;
             proto.GarrisonCapacity = Math.Max(0, u.GarrisonCapacity ?? 0);
@@ -848,6 +889,17 @@ public sealed class ContentDb
         // capturable building hashes exactly as it did before this slice existed.
         db.HasGarrison = db.Units.Any(u => u.GarrisonCapacity > 0);
         db.HasCapture = db.Units.Any(u => u.CaptureTicks > 0 || u.DepositAmount > 0);
+        db.Map = CompileMap(dto.Map, errors, warnings);
+        // Opt-in by CONSEQUENCE, not by presence. A map every unit can cross everywhere
+        // changes no movement, so it must change no hash — otherwise "I added terrain and
+        // all my replays broke" would be true even when the terrain does nothing.
+        db.HasPassability = db.Map is not null && db.Units.Any(u =>
+        {
+            if ((u.Surfaces & Runtime.SurfaceMask.Air) != 0) return false;
+            for (int c = 0; c < db.Map.CellCount; c++)
+                if ((Runtime.PassabilityGrid.Required(db.Map.At(c)) & u.Surfaces) == 0) return true;
+            return (Runtime.PassabilityGrid.Required(db.Map.Outside) & u.Surfaces) == 0;
+        });
 
         // --- Second currency: ranks, sciences, powers ---------------------------------
         // Skill points are earned by KILLING, never by economy — that is the whole point of
@@ -1043,6 +1095,84 @@ public sealed class ContentDb
         }
 
         return db;
+    }
+
+    /// <summary>
+    /// Turn drawn rows into a grid. Every failure here is an ERROR rather than a best guess:
+    /// a map is geometry, and a mis-sized row or an unlisted character silently shifts every
+    /// cell after it — the map still loads, the walls are simply in the wrong place, and
+    /// nothing but a screenshot would ever tell you.
+    /// </summary>
+    private static Runtime.PassabilityGrid? CompileMap(MapDto? m, List<string> errors, List<string> warnings)
+    {
+        if (m is null) return null;
+        if (m.Rows.Count == 0) { errors.Add("map: no rows"); return null; }
+
+        // Power of two, so world -> cell is a shift. Checked on the RAW, because the check
+        // has to hold for the value the sim will actually use, not for the double it was
+        // typed as: 0.1 is a fine-looking number that is not representable and would leave
+        // the grid and the movement code disagreeing about which cell a unit is in.
+        long cellRaw = Fix64.FromDoubleAtLoadBoundary(m.CellSize).Raw;
+        if (cellRaw <= 0 || (cellRaw & (cellRaw - 1)) != 0)
+        {
+            errors.Add($"map: cellSize {m.CellSize} is not a power of two " +
+                       "(world -> cell must be an exact shift; try 0.25, 0.5, 1, 2, 4)");
+            return null;
+        }
+        int shift = System.Numerics.BitOperations.TrailingZeroCount((ulong)cellRaw);
+        if (shift < 1)
+        {
+            errors.Add($"map: cellSize {m.CellSize} is below the smallest representable cell");
+            return null;
+        }
+
+        var legend = new Dictionary<char, Runtime.Surface>();
+        foreach (var (k, v) in m.Legend.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            if (k.Length != 1) { errors.Add($"map: legend key '{k}' must be a single character"); continue; }
+            if (!Enum.TryParse<Runtime.Surface>(v, ignoreCase: true, out var surf))
+            { errors.Add($"map: legend '{k}' names unknown surface '{v}' " +
+                         "(expected clear|water|cliff|rubble|impassable)"); continue; }
+            legend[k[0]] = surf;
+        }
+
+        if (!Enum.TryParse<Runtime.Surface>(m.Outside, ignoreCase: true, out var outside))
+        {
+            errors.Add($"map: outside names unknown surface '{m.Outside}'");
+            outside = Runtime.Surface.Clear;
+        }
+
+        int width = m.Rows[0].Length, height = m.Rows.Count;
+        if (width == 0) { errors.Add("map: row 0 is empty"); return null; }
+
+        var cells = new byte[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            var row = m.Rows[y];
+            if (row.Length != width)
+            {
+                errors.Add($"map: row {y} is {row.Length} cells, row 0 is {width}; " +
+                           "a ragged map shifts every cell after the short row");
+                return null;
+            }
+            for (int x = 0; x < width; x++)
+            {
+                if (!legend.TryGetValue(row[x], out var surf))
+                {
+                    errors.Add($"map: row {y} column {x} uses '{row[x]}', which the legend does not define");
+                    return null;
+                }
+                cells[y * width + x] = (byte)surf;
+            }
+        }
+
+        var unused = legend.Keys.Where(c => !m.Rows.Any(r => r.Contains(c)))
+                                .OrderBy(c => c).ToArray();
+        if (unused.Length > 0)
+            warnings.Add($"map: legend defines {string.Join(", ", unused.Select(c => $"'{c}'"))} " +
+                         "but the map never uses them");
+
+        return new Runtime.PassabilityGrid(width, height, shift, outside, cells);
     }
 
     /// <summary>

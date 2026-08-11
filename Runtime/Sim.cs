@@ -60,6 +60,13 @@ public sealed class Sim
     private int[] _candidates = new int[256];
 
     /// <summary>
+    /// Terrain pathfinder, or null when the pack declares no impassable terrain. Its scratch
+    /// arrays are sized to the map, so it is owned per-Sim rather than shared — two sims in
+    /// one process (the harness runs many) must not write each other's search.
+    /// </summary>
+    private readonly PathFinder? _path;
+
+    /// <summary>
     /// Off = every radius query is the original full scan. Exists ONLY so equivalence is
     /// testable; both paths must produce bit-identical state, and e2e asserts it.
     /// </summary>
@@ -93,6 +100,10 @@ public sealed class Sim
             .ToList();
         _rngCombat = new Pcg32(seed, streamId: 1);
         _rngSpawn = new Pcg32(seed, streamId: 2);
+        // Pathing draws no randomness at all and therefore claims no stream id. A route is a
+        // pure function of (start, goal, grid, mask) with a total order on the open set —
+        // if it needed a coin flip it would not be reproducible.
+        _path = content.HasPassability && content.Map is not null ? new PathFinder(content.Map) : null;
         // Future streams (crates, AI jitter, weather) get their own ids so adding
         // one never shifts another system's draw sequence. Stream 2 is death-rule
         // spawn placement: it must not share with combat, or adding a wreck would
@@ -605,8 +616,7 @@ public sealed class Sim
 
     /// <summary>
     /// Close to weapon range on the current target, otherwise advance to rally.
-    /// No collision or steering in the skeleton — units pass through each other.
-    /// Flow-field / RVO pathing is a presentation-era feature slotted here later.
+    /// No collision or steering — units pass through each other; only TERRAIN stops them.
     /// </summary>
     private void MovementSystem()
     {
@@ -617,6 +627,8 @@ public sealed class Sim
             // An occupant holds the building's position and does not chase. Letting it walk
             // out to close range would quietly undo the immunity it just gained.
             if (u.GarrisonHost >= 0) continue;
+            if (World.RepathCooldown.Length > 0 && World.RepathCooldown[i] > 0)
+                World.RepathCooldown[i]--;
             Fix64 speed = World.Resolved(i, Stat.Speed);
 
             if (u.TargetIdx >= 0)
@@ -624,30 +636,170 @@ public sealed class Sim
                 ref readonly var t = ref World.Units[u.TargetIdx];
                 Fix64 range = World.Resolved(i, Stat.Range);
                 if (DistSq(in u, in t) > range * range)
-                    StepToward(ref u, t.X, t.Y, speed);
+                    Advance(i, ref u, t.X, t.Y, speed);
             }
             else if (u.HasRally)
             {
                 Fix64 dx = u.RallyX - u.X, dy = u.RallyY - u.Y;
                 Fix64 dsq = dx * dx + dy * dy;
                 if (dsq <= Fix64.Half * Fix64.Half) u.HasRally = false;
-                else StepToward(ref u, u.RallyX, u.RallyY, speed);
+                else Advance(i, ref u, u.RallyX, u.RallyY, speed);
             }
         }
     }
 
-    private static void StepToward(ref UnitState u, Fix64 tx, Fix64 ty, Fix64 speed)
+    /// <summary>
+    /// One step toward a world goal, around terrain if terrain is in the way.
+    ///
+    /// <para>The three cases are ordered by how much they cost, and the cheapest one is also
+    /// what makes the whole feature opt-in: with no impassable terrain the direct line is
+    /// always clear, so this is the same straight step the sim took before pathing existed
+    /// and every pinned hash is untouched. It is not a fast path bolted onto a pathfinder —
+    /// it is the pathfinder declining to run when there is nothing to path around.</para>
+    /// </summary>
+    private void Advance(int i, ref UnitState u, Fix64 gx, Fix64 gy, Fix64 speed)
+    {
+        var mask = World.Content.Units[u.ProtoIdx].Surfaces;
+        var grid = World.Content.Map;
+        if (grid is null || !World.Content.HasPassability)
+        {
+            StepToward(ref u, gx, gy, speed, mask);
+            return;
+        }
+
+        // Air does not consult the grid at all. That is their model, not a shortcut: an
+        // AIR locomotor is exempt rather than universally permitted, so a map needs no
+        // flyable cells authored into it for aircraft to work.
+        if ((mask & SurfaceMask.Air) != 0 || grid.LineWalkable(u.X, u.Y, gx, gy, mask))
+        {
+            InvalidatePath(i);
+            StepToward(ref u, gx, gy, speed, mask, lineKnownClear: true);
+            return;
+        }
+
+        int goalCell = CellOf(grid, gx, gy);
+        if (World.PathGoalCell[i] != goalCell || World.PathCursor[i] >= World.PathLen[i])
+        {
+            // A route is only recomputed on a cadence. Chasing a moving body changes the
+            // goal cell on most ticks, and one search per unit per tick is what turns a
+            // 2,000-unit battle from seconds into minutes. Between recomputes the unit walks
+            // the plan it has, which is also what a real one would do.
+            if (World.RepathCooldown[i] > 0 && World.PathCursor[i] < World.PathLen[i])
+            {
+                FollowPath(i, ref u, gx, gy, speed, mask);
+                return;
+            }
+            Repath(i, ref u, grid, mask, gx, gy, goalCell);
+        }
+        FollowPath(i, ref u, gx, gy, speed, mask);
+    }
+
+    private static int CellOf(PassabilityGrid g, Fix64 x, Fix64 y)
+    {
+        int cx = g.CellX(x), cy = g.CellY(y);
+        return g.InBounds(cx, cy) ? cy * g.Width + cx : -1;
+    }
+
+    private void InvalidatePath(int i)
+    {
+        World.PathLen[i] = 0;
+        World.PathCursor[i] = 0;
+        World.PathGoalCell[i] = -1;
+    }
+
+    private void Repath(int i, ref UnitState u, PassabilityGrid grid, SurfaceMask mask,
+                        Fix64 gx, Fix64 gy, int goalCell)
+    {
+        int written = _path!.FindPath(grid.CellX(u.X), grid.CellY(u.Y),
+                                      grid.CellX(gx), grid.CellY(gy), mask,
+                                      World.PathCells, i * World.PathCapacity, World.PathCapacity);
+        World.PathLen[i] = written;
+        World.PathCursor[i] = 0;
+        World.PathGoalCell[i] = written > 0 ? goalCell : -1;
+        World.RepathCooldown[i] = World.RepathInterval;
+    }
+
+    /// <summary>
+    /// Walk the stored route. A unit that has no route still moves — straight at the goal,
+    /// wall or no wall. That is deliberate: an unreachable goal is a CONTENT bug (a walled-in
+    /// spawn, an island with no bridge), and the same rule applies as to the death-rule
+    /// cascade — it degrades one unit's movement, it does not freeze a sweep and it does not
+    /// throw. A unit pressed against a wall is visible; a unit that vanished from the
+    /// simulation's attention is not.
+    /// </summary>
+    private void FollowPath(int i, ref UnitState u, Fix64 gx, Fix64 gy, Fix64 speed, SurfaceMask mask)
+    {
+        if (World.PathCursor[i] >= World.PathLen[i])
+        {
+            StepToward(ref u, gx, gy, speed, mask);
+            return;
+        }
+
+        var grid = World.Content.Map!;
+        grid.CellCentre(World.PathCells[i * World.PathCapacity + World.PathCursor[i]],
+                        out Fix64 wx, out Fix64 wy);
+        Fix64 dx = wx - u.X, dy = wy - u.Y;
+        // Arrive within half a cell rather than exactly: a waypoint is the CENTRE of a cell
+        // the unit only has to enter, and demanding the exact point makes a unit whose speed
+        // overshoots it circle the centre forever.
+        Fix64 arrive = grid.CellSize * Fix64.Half;
+        if (dx * dx + dy * dy <= arrive * arrive)
+        {
+            World.PathCursor[i]++;
+            if (World.PathCursor[i] >= World.PathLen[i])
+            {
+                StepToward(ref u, gx, gy, speed, mask);
+                return;
+            }
+            grid.CellCentre(World.PathCells[i * World.PathCapacity + World.PathCursor[i]],
+                            out wx, out wy);
+        }
+        StepToward(ref u, wx, wy, speed, mask);
+    }
+
+    /// <summary>
+    /// One step of at most <paramref name="speed"/>, refused where terrain refuses it.
+    ///
+    /// <para><b>The refusal is the load-bearing half, not the pathfinder.</b> A route is
+    /// advice; without a check at the step a unit whose search failed — walled-in spawn,
+    /// island with no bridge, cap exhausted — simply walks through the wall, and the whole
+    /// feature is decorative. That was the first version, and a SOLID barrier with no gap in
+    /// it changed the outcome of a battle by nothing at all.</para>
+    ///
+    /// <para>Blocked movement SLIDES rather than stopping: full step, then x alone, then y
+    /// alone, in that fixed order. A unit that halts dead against a wall it is merely brushing
+    /// looks broken and, worse, stops contributing to a battle for reasons no state hash
+    /// explains. Sliding is also what makes the no-route fallback honest — the unit presses
+    /// along the barrier looking for a way round instead of pretending it is not there.</para>
+    /// </summary>
+    /// <param name="lineKnownClear">The caller already proved the whole segment to
+    /// (<paramref name="tx"/>, <paramref name="ty"/>) walkable. A step along it lands on that
+    /// segment, and the cells a sub-segment touches are a subset of the cells the whole one
+    /// does, so re-walking them is pure waste — and it is the COMMON case, since the direct
+    /// line is clear for most units on most ticks even on a map full of walls.</param>
+    private void StepToward(ref UnitState u, Fix64 tx, Fix64 ty, Fix64 speed, SurfaceMask mask,
+                            bool lineKnownClear = false)
     {
         Fix64 dx = tx - u.X, dy = ty - u.Y;
         Fix64 len = Fix64.Sqrt(dx * dx + dy * dy);
-        if (len <= speed)
+        Fix64 nx, ny;
+        if (len <= speed) { nx = tx; ny = ty; }
+        else { nx = u.X + dx * speed / len; ny = u.Y + dy * speed / len; }
+
+        var grid = World.Content.Map;
+        if (lineKnownClear || grid is null || !World.Content.HasPassability
+            || (mask & SurfaceMask.Air) != 0)
         {
-            u.X = tx;
-            u.Y = ty;
+            u.X = nx;
+            u.Y = ny;
             return;
         }
-        u.X += dx * speed / len;
-        u.Y += dy * speed / len;
+
+        if (grid.LineWalkable(u.X, u.Y, nx, ny, mask)) { u.X = nx; u.Y = ny; }
+        else if (grid.LineWalkable(u.X, u.Y, nx, u.Y, mask)) u.X = nx;
+        else if (grid.LineWalkable(u.X, u.Y, u.X, ny, mask)) u.Y = ny;
+        // Wedged into a corner: no move. Deliberately not an error — terrain that traps a
+        // unit is a content bug for lint to find, not a reason to abort a sweep.
     }
 
     /// <summary>

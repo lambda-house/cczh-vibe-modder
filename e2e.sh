@@ -19,23 +19,23 @@ echo "build: OK"
 rts() { dotnet bin/Release/net8.0/rts.dll "$@"; }
 
 echo
-echo "== gate 1/21: content lint =="
+echo "== gate 1/22: content lint =="
 rts lint
 
 echo
-echo "== gate 2/21: replay determinism =="
+echo "== gate 2/22: replay determinism =="
 rts replay --a crusader --b battlemaster --seed 7
 
 echo
-echo "== gate 3/21: duel smoke =="
+echo "== gate 3/22: duel smoke =="
 rts duel --a crusader --b technical --n 20 --seed 42
 
 echo
-echo "== gate 4/21: econ determinism =="
+echo "== gate 4/22: econ determinism =="
 rts econ --a "technical*" --b "war_factory,crusader*" --n 20 --seed 42
 
 echo
-echo "== gate 5/21: faction layering resolves =="
+echo "== gate 5/22: faction layering resolves =="
 rts faction
 
 echo
@@ -51,7 +51,7 @@ echo "== demo: greedy opening punished by rush =="
 rts econ --a "barracks,ranger*4,war_factory,crusader*" --b "technical*" --n 50 --seed 42
 
 echo
-echo "== gate 6/21: layered packs + diff =="
+echo "== gate 6/22: layered packs + diff =="
 # A mod is a patch over a base pack. Three properties are asserted:
 #   1. a stack lints and resolves (the mod does not need to restate the base)
 #   2. `rts diff` names exactly what changed, by category
@@ -75,7 +75,7 @@ base_again=$(rts duel --a crusader --b battlemaster --n 20 --seed 42 --json \
 echo "  base unaffected by the mod: $base_again"
 
 echo
-echo "== gate 7/21: the total resolution order =="
+echo "== gate 7/22: the total resolution order =="
 # Three mechanisms compose content and they run in ONE order, each exactly once:
 #   1. LAYER    packs fold in ordinal order; per-key last-wins; null removes
 #   2. DEFAULT  the composed `defaults` block fills what a unit left unstated
@@ -241,7 +241,7 @@ drop_changes=$(rts diff --head-mod "$ORD/drop.json" --json \
 echo "  a consistent removal lints, and diffs as exactly 3 changes with no index phantoms"
 rm -rf "$ORD"
 echo
-echo "== gate 8/21: structures are economic targets =="
+echo "== gate 8/22: structures are economic targets =="
 # A structure is a unit with speed 0, KindOf role flags and BuildCompletion=PLACED_BY_PLAYER
 # — ZH's model exactly. Three properties:
 #   1. object prerequisites are REVOCABLE: no live factory => no units, however rich you are
@@ -264,7 +264,7 @@ fac=$(rts econ --a "usa_power_plant,usa_factory,crusader*" --b "usa_power_plant,
 echo "  factory present => units build and win (A 3/3)"
 
 echo
-echo "== gate 9/21: flags and conditional variants =="
+echo "== gate 9/22: flags and conditional variants =="
 # ZH's real upgrade mechanism: an upgrade carries NO effect data, it sets one condition bit
 # and a condition-keyed weapon/armor set is selected. Four properties:
 #   1. researching a tech grants a same-named team flag
@@ -294,7 +294,7 @@ WITHOUT=$(rts econ --a "war_factory,strategy_center,crusader*" --b "war_factory,
 echo "  variant decides the game: 9/12 with it, ${WITHOUT}/12 without"
 
 echo
-echo "== gate 10/21: event rules {on, when, do} =="
+echo "== gate 10/22: event rules {on, when, do} =="
 # Our replacement for ZH's ~217 compiled behavior modules. Death first because damage/death
 # response is 30.5% of every module instance in the reference corpus (5,083 of 16,685).
 # Each effect is proven by ABLATION — same pack, rules deleted — because a win rate on its
@@ -336,7 +336,7 @@ stall=$(rts econ --a "salvager*" --b "crusader*" --n 1 --seed 42 --maxsec 60 \
 echo "  stalled queues are reported, not silent"
 
 echo
-echo "== gate 11/21: factions are startable, not just rosters =="
+echo "== gate 11/22: factions are startable, not just rosters =="
 # A faction that declares startingBuilding/startingUnits/startMoney is PLAYABLE — `rts
 # skirmish` starts both sides from their own definitions rather than from a build order
 # someone typed. That is the difference the product goal actually needs.
@@ -356,7 +356,7 @@ why=$(rts skirmish --a usa_base --b usa_rush --n 3 --seed 42 --maxsec 400 \
 echo "  the loser's stall is reported, not silent"
 
 echo
-echo "== gate 12/21: compile to a Zero Hour mod =="
+echo "== gate 12/22: compile to a Zero Hour mod =="
 # The pivot: a measured pack becomes additive Data/INI the real engine loads. Verified
 # end to end once by booting GeneralsXZH — all 7 files parsed, 0 exceptions, 42/42
 # subsystems, 92 Object files loaded (91 retail + ours). This gate keeps it honest.
@@ -383,7 +383,7 @@ grep -q "NO_Z_MOTIVE_FORCE" "$OUT/Data/INI/Locomotor/skeleton_pack.ini" \
 echo "  emitted enum values are ones retail actually uses"
 
 echo
-echo "== gate 13/21: target-zh lint — caps, round-trip, divergence =="
+echo "== gate 13/22: target-zh lint — caps, round-trip, divergence =="
 # Three questions that fail differently: their hard caps (mod will not load), round-trip
 # fidelity (the shipped unit is not the measured one), and semantic divergence (it loads,
 # plays, and behaves differently from the numbers you tuned against).
@@ -460,7 +460,7 @@ tv=$(rts lint --target zh --mod "$UOUT/twovar.json" | grep -c "only the first co
 echo "  their single PLAYER_UPGRADE bit is reported, not silently overrun"
 
 echo
-echo "== gate 14/21: faction-scoped reference resolution =="
+echo "== gate 14/22: faction-scoped reference resolution =="
 FOUT=$(mktemp -d); trap 'rm -rf "$DOUT" "$UOUT" "$FOUT"' EXIT
 
 # A faction patch must produce a COMPLETE clone. This was a live bug: the variant was built
@@ -528,7 +528,7 @@ sc=$(rts lint --mod "$FOUT/clone.json" | grep -c "shared unit 'crusader' require
 echo "  a shared prototype referencing a forked one is named, not silently mis-resolved"
 
 echo
-echo "== gate 15/21: garrison + capture =="
+echo "== gate 15/22: garrison + capture =="
 # GARRISONABLE is the only terrain-shaped combat modifier in all of Zero Hour and it needs
 # no geometry at all. Occupants cannot be targeted; damage reaches them only as spill from a
 # ClearsGarrison weapon hitting the HOST — 17 of retail's 363 weapons, 4.7% of the arsenal.
@@ -576,7 +576,7 @@ grep -q "AutoDepositUpdate" "$GOUT/Data/INI/Object/garrison.ini" \
 echo "  compiles to GarrisonContain + AutoDepositUpdate + AllowAttackGarrisonedBldgs"
 
 echo
-echo "== gate 16/21: sciences — a second currency earned by fighting =="
+echo "== gate 16/22: sciences — a second currency earned by fighting =="
 # Skill points come from KILLS and from nothing else; no economy converts into them. ZH's
 # whole ladder is five Rank.ini blocks: 0/800/1500/2500/5000 needed, 1/1/1/1/3 granted, so
 # seven points for a game against 13-20 purchasable sciences per faction. Every purchasable
@@ -635,7 +635,7 @@ rl=$(rts lint --target zh --mod content/mods/sciences.json | grep -c "rank ladde
 echo "  Science blocks compile additively; the numbered Rank ladder is reported, not overwritten"
 
 echo
-echo "== gate 17/21: spatial index is a PURE accelerator =="
+echo "== gate 17/22: spatial index is a PURE accelerator =="
 # Every radius query used to be a full scan, so tick cost was O(n^2) — and this product's
 # value is BATCH measurement, where a matrix is pairs x runs x ticks. The grid must change
 # the COST and nothing else, so the gate is equivalence, not speed: same seed, same content,
@@ -675,7 +675,175 @@ print(f'  ~2000 units: {g:.2f}s with the grid vs {b:.2f}s without ({b/g:.1f}x)')
 "
 
 echo
-echo "== gate 18/21: overrides compile to map.ini, and only there =="
+echo "== gate 18/22: passability — terrain that movement must respect =="
+# Chokepoints, flanking and water are EMERGENT from a passability grid; none of them is a
+# content type. The gate is therefore mostly about consequences — does the same army, on the
+# same seed, measure differently because of the shape of the ground — plus the two structural
+# claims that are silent when wrong.
+PAS=$(mktemp -d)
+python3 - "$PAS" <<'PY8'
+import sys, json
+d = sys.argv[1]
+
+def pack(name, rows, cell=2.0, outside="clear", legend=None, extra=None):
+    p = {"meta": {"name": name, "version": 1},
+         "map": {"cellSize": cell, "outside": outside,
+                 "legend": legend or {".": "clear", "#": "impassable"}, "rows": rows}}
+    if extra: p.update(extra)
+    json.dump(p, open(f"{d}/{name}.json", "w"))
+
+W = H = 48
+# An inert map: every cell crossable. Must be a no-op, hash for hash.
+pack("flat", ["." * W] * H)
+# A wall 12 world units thick — WIDER than any weapon in the base pack can reach. A thin wall
+# measures as nothing because both sides simply shoot over it: terrain blocks movement, and
+# there is no line-of-sight model. That mistake made an earlier version of this gate pass
+# against a barrier that did nothing.
+def wall(gap):
+    return [''.join('#' if (21 <= x < 27 and y not in gap) else '.' for x in range(W))
+            for y in range(H)]
+pack("solid", wall(range(0, 0)))
+pack("gated", wall(range(5, 9)))          # gate off the spawn axis, so it is a real detour
+
+# Corner cutting, at a cell size coarse enough that the barrier cannot be shot across.
+# Every crossing of a one-cell diagonal is a squeeze between two blocked cells; a pathfinder
+# that allows it walks through a wall with no gap in it.
+N = 8
+pack("pinch", [''.join('#' if x == y else '.' for x in range(N)) for y in range(N)],
+     cell=16.0, outside="impassable")
+open_rows = [list(r) for r in [''.join('#' if x == y else '.' for x in range(N)) for y in range(N)]]
+open_rows[4][4] = '.'
+pack("pinch_open", [''.join(r) for r in open_rows], cell=16.0, outside="impassable")
+
+# Surfaces are a MASK, so the same river is a wall, a road or nothing depending on the unit.
+river = [''.join('~' if 21 <= x < 27 else '.' for x in range(W)) for y in range(H)]
+units = {}
+for nm, surf in [("walker", ["ground"]), ("hover", ["ground", "water"]), ("flyer", ["air"])]:
+    units[nm] = {"faction": "usa", "cost": 900, "buildSeconds": 10,
+                 "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],
+                 "components": {"Health": {"max": 800, "armorClass": "heavy_vehicle"},
+                                "Mobile": {"speed": 5.0, "surfaces": surf},
+                                "WeaponBearer": {"weapon": "crusader_cannon"}}}
+pack("river", river, legend={".": "clear", "~": "water"},
+     extra={"units": units,
+            "zh": {"models": {k: "AVLeopard" for k in units}}})
+
+# Malformed maps. Each of these loads happily if unchecked and puts the walls somewhere the
+# author did not draw them, which no test but a screenshot would ever catch.
+pack("badcell", ["." * 4] * 4, cell=0.3)
+json.dump({"meta": {"name": "ragged", "version": 1},
+           "map": {"cellSize": 2.0, "legend": {".": "clear"}, "rows": ["....", "..."]}},
+          open(f"{d}/ragged.json", "w"))
+json.dump({"meta": {"name": "unlisted", "version": 1},
+           "map": {"cellSize": 2.0, "legend": {".": "clear"}, "rows": ["..X.", "...."]}},
+          open(f"{d}/unlisted.json", "w"))
+PY8
+
+hash_of() { rts duel --a crusader --b battlemaster --n 5 --seed 42 --json "$@" \
+            | sed -n 's/.*"lastFinalHash": "\(.*\)".*/\1/p'; }
+outcome() { rts duel --a "$1" --b "$2" --n 3 --seed 42 --mod "$3" | sed -n '2p'; }
+secs() { rts duel --a crusader --b battlemaster --n 20 --seed 42 "$@" \
+         | sed -n 's/.*battle length: \([0-9.]*\)s.*/\1/p'; }
+
+# --- 1. Opt-in by CONSEQUENCE, not by presence. --------------------------------------
+# A map every unit can cross everywhere changes no movement, so it must change no hash.
+# The alternative — any map at all re-baselines every replay — would make "I drew some
+# terrain and all my pinned measurements broke" true even when the terrain does nothing.
+[ "$(hash_of)" = "$(hash_of --mod "$PAS/flat.json")" ] \
+  || { echo "  AN INERT MAP MOVED A HASH: $(hash_of) -> $(hash_of --mod "$PAS/flat.json")"
+       rm -rf "$PAS"; exit 1; }
+rts lint --mod "$PAS/flat.json" | grep -q "pathing=False" \
+  || { echo "  an all-clear map should not report pathing"; rm -rf "$PAS"; exit 1; }
+echo "  an all-clear map is a no-op: identical final hash, pathing off"
+
+# --- 2. A barrier must actually stop an army. ----------------------------------------
+case "$(outcome crusader battlemaster "$PAS/solid.json")" in
+  *"draws: 3"*) echo "  a solid barrier is solid: the same armies never meet" ;;
+  *) echo "  A SOLID BARRIER DID NOT BLOCK — pathing is advisory, not enforced"
+     outcome crusader battlemaster "$PAS/solid.json"; rm -rf "$PAS"; exit 1 ;;
+esac
+
+# --- 3. A gate in that barrier must change the MEASUREMENT, not just the hash. -------
+open_s=$(secs); gated_s=$(secs --mod "$PAS/gated.json")
+python3 -c "
+import sys
+o, g = float('$open_s'), float('$gated_s')
+if g < o * 1.3:
+    print(f'  A CHOKEPOINT COST NOTHING: {o}s open vs {g}s gated'); sys.exit(1)
+print(f'  a chokepoint is emergent, not authored: {o}s open -> {g}s through one gate')
+"
+
+# --- 4. Corners may not be cut. ------------------------------------------------------
+# Both maps are one-cell diagonals; the second has a single cell removed, which is the only
+# difference between "no way through" and "an orthogonal doorway".
+case "$(outcome crusader battlemaster "$PAS/pinch.json")" in
+  *"draws: 3"*) : ;;
+  *) echo "  CORNER CUTTING: units squeezed diagonally between two blocked cells"
+     rm -rf "$PAS"; exit 1 ;;
+esac
+case "$(outcome crusader battlemaster "$PAS/pinch_open.json")" in
+  *"draws: 0"*) echo "  diagonal squeezes refused, and one removed cell reopens the route" ;;
+  *) echo "  CONTROL FAILED: the barrier blocks even with a real gap in it"
+     rm -rf "$PAS"; exit 1 ;;
+esac
+
+# --- 5. Surfaces are a mask: one river, three answers. --------------------------------
+case "$(outcome walker battlemaster "$PAS/river.json")" in
+  *"draws: 3"*) : ;;
+  *) echo "  WATER DID NOT STOP A GROUND UNIT"; rm -rf "$PAS"; exit 1 ;;
+esac
+for u in hover flyer; do
+  case "$(outcome $u battlemaster "$PAS/river.json")" in
+    *"$u: 3 wins"*) : ;;
+    *) echo "  '$u' FAILED TO CROSS THE RIVER"; outcome $u battlemaster "$PAS/river.json"
+       rm -rf "$PAS"; exit 1 ;;
+  esac
+done
+echo "  one river, three answers: ground stopped, hovercraft crosses, air ignores it"
+
+# --- 6. Terrain must not break determinism or the broad phase. ------------------------
+rts replay --a crusader --b battlemaster --seed 7 --mod "$PAS/gated.json" | grep -q "DETERMINISM OK" \
+  || { echo "  REPLAY DIVERGED WITH TERRAIN"; rm -rf "$PAS"; exit 1; }
+g=$(hash_of --mod "$PAS/gated.json"); b=$(hash_of --mod "$PAS/gated.json" --brute)
+[ "$g" = "$b" ] || { echo "  BROAD PHASE CHANGED AN ANSWER WITH TERRAIN: $g != $b"; rm -rf "$PAS"; exit 1; }
+echo "  replay bit-identical with terrain, and grid == brute ($g)"
+
+# --- 7. A malformed map is an ERROR, never a best guess. ------------------------------
+# Every one of these still "loads" if unchecked, and simply puts the walls somewhere else.
+# Capture before matching: these packs are SUPPOSED to fail, so lint exits non-zero and
+# `set -o pipefail` would kill the run on a passing assertion.
+check_err() {
+  local out; out=$(rts lint --mod "$1" 2>&1 || true)
+  case "$out" in
+    *"$2"*) : ;;
+    *) echo "  MALFORMED MAP ACCEPTED ($1 should report: $2)"; echo "$out" | tail -3
+       rm -rf "$PAS"; exit 1 ;;
+  esac
+}
+check_err "$PAS/badcell.json" "not a power of two"
+check_err "$PAS/ragged.json" "ragged map shifts every cell"
+check_err "$PAS/unlisted.json" "which the legend does not define"
+echo "  non-power-of-two cellSize, ragged rows and unlisted characters are all rejected"
+
+# --- 8. Surfaces cross over to ZH; the map does not, and says so. ---------------------
+rts compile --target zh --out "$PAS/zh" --mod "$PAS/river.json" >/dev/null
+# No end-of-line anchor: emitted INI is CRLF, because that is what their files are, so a
+# "$" here matches nothing and the assertion silently inverts into always-failing.
+hover_loco=$(grep -A1 "^Locomotor river_hoverLoco" "$PAS/zh/Data/INI/Locomotor/river.ini" || true)
+case "$hover_loco" in
+  *"Surfaces = GROUND WATER"*) : ;;
+  *) echo "  HOVERCRAFT DID NOT CROSS OVER: emitted Surfaces is wrong"
+     echo "$hover_loco"; rm -rf "$PAS"; exit 1 ;;
+esac
+zh_lint=$(rts lint --target zh --mod "$PAS/river.json" 2>&1 || true)
+case "$zh_lint" in
+  *"passability map"*"is NOT emitted"*) : ;;
+  *) echo "  THE UNEMITTABLE MAP IS NOT REPORTED AS A DIVERGENCE"; rm -rf "$PAS"; exit 1 ;;
+esac
+echo "  Surfaces cross over verbatim; the map cannot, and lint reports it as divergence"
+rm -rf "$PAS"
+echo
+echo "== gate 19/22: overrides compile to map.ini, and only there =="
 # Modifying a unit that ALREADY EXISTS in the target game is a different problem from
 # authoring one, and the rules were each bought with a crash. The author states intent; the
 # compiler picks the file and the mechanism. This gate asserts it keeps picking correctly.
@@ -738,7 +906,7 @@ rts lint --mod "$OVO/theirs.json" >/dev/null 2>&1 \
 echo "  naming the target's own weapon is refused at lint, not discovered in a match"
 
 echo
-echo "== gate 19/21: an emitted object is PLAYABLE, not merely parseable =="
+echo "== gate 20/22: an emitted object is PLAYABLE, not merely parseable =="
 # Every check here corresponds to a silent in-game failure found by playing the compiled
 # output: the file parsed, the engine booted 42/42, and something just never happened.
 # A field-diff against AmericaWarFactory and AmericaTankCrusader is what surfaced them.
@@ -867,7 +1035,7 @@ done
 echo "  reversing every keyed table in the pack emits byte-identical output"
 
 echo
-echo "== gate 20/21: W3D round-trip and authoring =="
+echo "== gate 21/22: W3D round-trip and authoring =="
 # Adopting art needs a retail install and caps what a standalone conversion can be. The
 # question is whether a model can be understood well enough to REMAKE, and the test is
 # byte-identity: the high bit of a chunk's size marks a container, so sizes must be recomputed
@@ -1093,7 +1261,7 @@ else
 fi
 
 echo
-echo "== gate 21/21: MCP server — the agent-facing seam =="
+echo "== gate 22/22: MCP server — the agent-facing seam =="
 # The whole project points at this: an agent authors a pack, is told exactly what is wrong,
 # measures it, and compiles it, with no human in the loop. JSON-RPC 2.0 over newline-delimited
 # stdio and ZERO dependencies, so the root NuGet.config's <clear/> stays untouched.

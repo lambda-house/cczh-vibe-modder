@@ -57,7 +57,8 @@ namespace RtsSkeleton.Content;
 ///   <item>damageVsArmor merges per (damageType, armorClass) CELL, so a mod can retune one
 ///     matchup without restating the row. A null row removes the row.</item>
 ///   <item>defaults merge per FIELD; zh sub-tables per key; zh.turreted unions.</item>
-///   <item>meta, lint, ranks: whole-block last-wins, but only from a layer that STATES them.
+///   <item>meta, lint, ranks, map: whole-block last-wins, but only from a layer that STATES
+///     them — a map is a shape and merging two of them yields a third nobody drew.
 ///     Absent is not the same as default — see <see cref="DefaultsDto"/>.</item>
 /// </list>
 /// </summary>
@@ -186,6 +187,7 @@ public static class PackStack
         nameof(ContentPackDto.Overrides),
         nameof(ContentPackDto.Units),
         nameof(ContentPackDto.Factions),
+        nameof(ContentPackDto.Map),
         nameof(ContentPackDto.Zh),
         nameof(ContentPackDto.Lint),
     };
@@ -227,6 +229,10 @@ public static class PackStack
             Meta = over.Meta,
             Lint = over.Lint ?? b.Lint,
             Ranks = over.Ranks ?? b.Ranks,
+            // A map is a SHAPE. Merging two of them cell by cell would produce a third
+            // nobody drew, so a layer replaces the map whole or inherits it whole — the same
+            // call as the rank ladder, for the same reason.
+            Map = over.Map ?? b.Map,
             Defaults = MergeDefaults(b.Defaults, over.Defaults),
 
             DamageTypes = UnionOrdered(b.DamageTypes, over.DamageTypes),

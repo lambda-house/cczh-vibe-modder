@@ -222,6 +222,24 @@ public static class ZhLint
         // named, so emitting ours would REPLACE retail's rather than add to it — the one place
         // in this compiler where additive emission is impossible by construction. A pack that
         // retunes the ladder therefore plays on retail's thresholds in game.
+        // Terrain is the one content type that CANNOT cross over, and saying so is the point
+        // of this category. Their maps are a binary .map with a compiled blockmap and a height
+        // field; ours is a drawn grid. A pack measured on a chokepoint here plays on whatever
+        // map the player picks there, so the two numbers are not comparable — which is a
+        // divergence to report, not a bug to fix from content.
+        if (db.Map is { } pm)
+        {
+            int blocked = 0;
+            for (int c = 0; c < pm.CellCount; c++)
+                if (pm.At(c) != Runtime.Surface.Clear) blocked++;
+            if (blocked > 0)
+                r.Divergence.Add($"the {pm.Width}x{pm.Height} passability map ({blocked} non-clear cells) " +
+                                 "is NOT emitted: ZH terrain lives in a binary .map with its own blockmap, " +
+                                 "not in Data/INI. Measurements taken on this map do not transfer — the " +
+                                 "match will be played on whatever map the player picks. Locomotor " +
+                                 "Surfaces DO transfer, so a hovercraft stays a hovercraft.");
+        }
+
         if (db.Ranks.Length > 0)
             r.Divergence.Add($"the {db.Ranks.Length}-rank ladder is NOT emitted. ZH's Rank blocks are numbered, " +
                              $"not named, so writing ours would overwrite retail's 0/800/1500/2500/5000 instead " +

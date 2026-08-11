@@ -38,6 +38,9 @@ public sealed class ContentPackDto
     public Dictionary<string, OverrideDto> Overrides { get; set; } = new();
     public Dictionary<string, UnitDto> Units { get; set; } = new();
     public Dictionary<string, FactionDto> Factions { get; set; } = new();
+    /// <summary>Terrain passability. Null = no map, and the sim moves in a straight line
+    /// exactly as it did before the feature existed. See <see cref="MapDto"/>.</summary>
+    public MapDto? Map { get; set; }
     public ZhTargetDto Zh { get; set; } = new();
     /// <summary>Null = this layer states no lint block, so the base pack's survives.</summary>
     public LintConfigDto? Lint { get; set; }
@@ -440,6 +443,15 @@ public sealed class MobileDto
 {
     /// <summary>World units per second; the loader converts to per-tick fixed-point.</summary>
     public double Speed { get; set; }
+
+    /// <summary>
+    /// Terrain this unit can traverse: any of "ground", "water", "cliff", "air", "rubble".
+    /// ZH's <c>Locomotor.Surfaces</c>, with their bit meanings — GROUND|WATER is a
+    /// hovercraft, and AIR ignores the passability grid entirely rather than needing every
+    /// cell marked flyable. Null defaults to ground alone, which is what 1,741 of retail's
+    /// locomotors declare.
+    /// </summary>
+    public List<string>? Surfaces { get; set; }
 }
 
 public sealed class WeaponBearerDto
@@ -611,6 +623,39 @@ public sealed class ZhTargetDto
     // addition to an existing one. The usual mod workaround — ship a merged CommandSet.ini
     // that shadows retail's — is closed to us on legal grounds, since it means redistributing
     // their content.
+}
+
+/// <summary>
+/// An authored passability map, drawn as rows of characters with a legend.
+///
+/// Drawn, not listed, because the thing being authored is a SHAPE — a chokepoint is two
+/// walls and the gap between them, and no list of rectangles shows you the gap. It also
+/// diffs the way it reads: a one-cell change is a one-character change on one line.
+///
+/// <para>Row 0 is the TOP of the screen and column 0 the left edge, so the text is oriented
+/// the way the shell draws it — which means row 0 is the LOWEST world y, because +y goes
+/// down on a canvas. The grid is centred on the world origin.</para>
+/// </summary>
+public sealed class MapDto
+{
+    /// <summary>
+    /// World units per cell. MUST be a power of two — world -> cell is then an arithmetic
+    /// shift of the Fix64 raw rather than a division, which is exact and total on every
+    /// machine. ZH's cell is 10 of their units, which at our 16:1 scale is 0.625; the
+    /// powers of two either side of that are 0.5 and 1.
+    /// </summary>
+    public double CellSize { get; set; } = 1.0;
+
+    /// <summary>Character -> surface name. Every character used by <see cref="Rows"/> must
+    /// appear here; an unlisted one is an error rather than a silent "clear".</summary>
+    public Dictionary<string, string> Legend { get; set; } = new();
+
+    /// <summary>The map itself, top row first. All rows must be the same length.</summary>
+    public List<string> Rows { get; set; } = new();
+
+    /// <summary>Surface beyond the grid. Clear by default, so a map is a set of obstacles in
+    /// an open plane rather than a box a unit can be spawned outside of and trapped.</summary>
+    public string Outside { get; set; } = "clear";
 }
 
 public sealed class LintConfigDto

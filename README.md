@@ -258,9 +258,16 @@ e2e.sh      build + verification gate + balance demos + shell equivalence check
   net worth 3640/700), because everything above ~50/s piles up unspendable.
   Until production can run in parallel, "spend faster" is not a strategy the
   harness can express, and net worth over-counts money that can never be used.
-- No collision or pathing, so there are no chokepoints and no flanking; both are
-  emergent from a passability grid rather than authored, which is why that slice
-  is next and why it will deliberately re-baseline the pinned hashes.
+- Terrain blocks movement and nothing else: there is no line of sight, so a wall
+  thinner than weapon range measures as nothing at all — both sides walk up to it
+  and shoot over it. Cover, and therefore a chokepoint worth *holding*, needs the
+  LOS slice.
+- No unit-unit collision, which is a different thing from terrain. Units pass
+  through each other, so a chokepoint concentrates fire but never jams and a
+  one-cell gap admits an army as fast as a ten-cell one.
+- Structures do not stamp the passability grid, so razing a building never opens
+  a route. In Zero Hour an obstacle cell is derived from the building standing on
+  it; ours is authored terrain only.
 - Capture is proximity-based and there are only two teams, so a capturable
   building is always somebody's — there is no neutral owner to take it from, and
   attackers stop at weapon range and shell it rather than walk onto it.

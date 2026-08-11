@@ -51,6 +51,24 @@ public static class ZhCompiler
     private static string F(Fix64 v) => v.ToDoubleForDisplay().ToString("0.###", CultureInfo.InvariantCulture);
     private static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// Our surface mask in their spelling. Their parser takes a space-separated list of the
+    /// same five names, so there is no mapping table to get wrong — the enum was copied from
+    /// LocomotorSet.h with their bit values for exactly this reason. Emitted in THEIR bit
+    /// order rather than ours alphabetically, so a diff of two emitted packs reads the way
+    /// their own files do.
+    /// </summary>
+    private static string SurfacesOf(UnitProto u)
+    {
+        var parts = new List<string>();
+        if ((u.Surfaces & Runtime.SurfaceMask.Ground) != 0) parts.Add("GROUND");
+        if ((u.Surfaces & Runtime.SurfaceMask.Water) != 0) parts.Add("WATER");
+        if ((u.Surfaces & Runtime.SurfaceMask.Cliff) != 0) parts.Add("CLIFF");
+        if ((u.Surfaces & Runtime.SurfaceMask.Air) != 0) parts.Add("AIR");
+        if ((u.Surfaces & Runtime.SurfaceMask.Rubble) != 0) parts.Add("RUBBLE");
+        return parts.Count > 0 ? string.Join(" ", parts) : "GROUND";
+    }
+
     public static Result Compile(ContentDb db, ZhTargetDto zh, string outRoot, bool withStrings,
                                  ArtProfiles? art = null)
     {
@@ -136,7 +154,11 @@ public static class ZhCompiler
             double spd = u.BaseStats[(int)Stat.Speed].ToDoubleForDisplay()
                          * ContentDb.TicksPerSecond * zh.Scale;
             sb.AppendLine($"Locomotor {P(u.Id)}Loco");
-            sb.AppendLine("  Surfaces = GROUND");
+            // Content-driven since the passability slice. Their Surfaces is the SAME concept
+            // and the same bit names, so this crosses over verbatim — a hovercraft authored
+            // here is a hovercraft there. Names are upper-cased from our enum, and the enum
+            // was copied from LocomotorSet.h precisely so this mapping needs no table.
+            sb.AppendLine($"  Surfaces = {SurfacesOf(u)}");
             sb.AppendLine($"  Speed = {F(spd)}");
             sb.AppendLine("  TurnRate = 180");
             sb.AppendLine("  Acceleration = 1000");

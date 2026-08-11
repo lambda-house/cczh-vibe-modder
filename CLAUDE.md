@@ -388,6 +388,36 @@ are emitted by `rts compile`, not hand-written.
   load error found only by booting the engine.
 - **Ties break deterministically** (e.g. targeting: `(distSq, unitIdx)`).
   Every new comparison needs a total order.
+- **Terrain is CONTENT; a route is STATE.** The passability grid never changes during a
+  match, so it folds into `contentHash` and never into the state hash. A unit's current
+  route is the opposite: *when* it was planned decides which way it goes round an obstacle,
+  so `PathGoalCell`, the cursor and the live tail of waypoints are all hashed (gated on
+  `HasPassability`). Treating a path as a cache is the mistake that makes two runs diverge
+  only under load, when one of them happens to replan a tick later.
+- **A pathfinder is ADVICE; the step is where passability is ENFORCED.** *This was live for
+  the first hour of the slice:* A* was correct, routes were sensible, and a SOLID wall with
+  no gap in it changed the outcome of a battle by nothing whatsoever — because any unit whose
+  search failed fell back to walking straight, and straight went through the wall. Every
+  position change must be refused by terrain independently of whether anything planned it.
+  Blocked movement SLIDES (full step, then x alone, then y alone, fixed order) so a unit
+  brushing a wall keeps fighting instead of freezing for reasons no state hash explains.
+- **World→cell is a SHIFT, never a division**, so `cellSize` must be a power of two and lint
+  rejects anything else. Checked on the Fix64 *raw*, not the authored double: 0.1 looks like
+  a fine number, is not representable, and would leave the grid and the mover disagreeing
+  about which cell a unit is in. An arithmetic shift right also floors toward negative
+  infinity, which is the rounding a centred grid needs — truncation folds -0 into +0 and puts
+  a seam down the middle of every map.
+- **A diagonal step needs BOTH orthogonal cells**, in the pathfinder and in the line test
+  alike. Without it a unit squeezes through the corner where two blocked cells touch — a wall
+  with no gap that units walk through anyway. The line test is a supercover walk for the same
+  reason; Bresenham slips between diagonal neighbours.
+- **Map rows are oriented to the RENDERER, not to a compass.** Row 0 is the lowest world y
+  because the shell draws +y downward, as every 2D canvas does. The alternative reads as
+  north-up in the JSON and appears vertically mirrored in play — a bug invisible from either
+  the file or the screen alone.
+- **Terrain blocks movement and NOTHING else.** There is no line of sight, so a wall thinner
+  than weapon range measures as exactly zero: both sides walk up to it and shoot over it. Any
+  map authored as a balance test needs walls wider than the longest gun until slice 13 lands.
 - **New randomness gets its own `Pcg32` stream id** (next free integer in
   `Sim`'s constructor). Never share a stream between systems; never reuse an id.
 - **Every new sim-state field must be added to the state hash**
@@ -431,6 +461,8 @@ are emitted by `rts compile`, not hand-written.
   `StatSheet` (modifier algebra: `(base + Σadd) × Πmul`), `Sim` (tick loop,
   production system, hash trace)
   `Snapshot` (immutable read seam for renderers; doubles, never flows back)
+  `Passability` (terrain grid: one byte/cell, surface in the low 3 bits, world→cell by
+  shift) + `PathFinder` (integer 8-way A*, total order on the open set, capped)
 - `Harness/` — duel series, pairwise counter matrix, build-order econ
   scenarios (`RunEconSeries`; specs like `"war_factory,crusader*"`),
   determinism verification
@@ -441,11 +473,17 @@ are emitted by `rts compile`, not hand-written.
 
 ## Known simplifications (intentional; see README for replacement plans)
 
-Flat archetype not ECS; tombstones not generational handles; no
-collision/pathing; cumulative-only modifier stacking; economy is abstract (two team queues,
-income from a finite pool, cost deducted at build start).
+Flat archetype not ECS; tombstones not generational handles; cumulative-only modifier
+stacking; economy is abstract (two team queues, income from a finite pool, cost deducted at
+build start).
+**Unit-unit collision is still absent and is a different thing from terrain**: units pass
+through each other freely, so a chokepoint concentrates fire but never jams, and a
+one-cell gap admits an army as fast as a ten-cell one. **Structures do not stamp the grid
+either**, which is why "raze the wall to open the choke" is not a mechanic here — in ZH an
+obstacle cell is DERIVED from the building standing on it (`CELL_OBSTACLE`, the value our
+surface enum deliberately leaves a hole for).
 *Struck as slices landed: layered packs (1), upgrades (6), structures and economic targets
-(5), powers and the second currency (9). Do not re-add them to this list.*
+(5), powers and the second currency (9), pathing and terrain (12). Do not re-add them.*
 
 **Anti-pattern, never adopt: a presentation-only or partial-field variant type.** ZH's
 `ObjectReskin` is restricted to ten appearance fields and cannot change Side, cost,
@@ -585,11 +623,25 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    reporting WHY a build queue stalled instead of showing a flat draw.
    *stdout is the protocol channel: diagnostics go to stderr, and one stray `Console.WriteLine`
    desyncs the transport.*
-12. **Passability grid** — one byte/cell + 3-bit surface mask, then pathing. (XL)
-   *Must deliberately re-baseline the pinned hashes. Chokepoints/flanking/water are
-   emergent from passability, not authored.*
-13. **Elevation as a boolean LOS gate only**. (M) *Conditional — defer until measurement
-    shows 7 and 11 didn't move the counter matrix enough.*
+12. ~~**Passability grid**~~ — done. One byte/cell with the surface in the low three bits,
+   a drawn `map` block, integer 8-way A*, and locomotor **surface masks** so the same river
+   is a wall to infantry, a road to a hovercraft and nothing at all to aircraft.
+   *Measured: the same two armies on the same seed decide in 17.4s across open ground and
+   27.4s through one gate; a solid barrier turns the match into a timeout draw. Cost is
+   ~1.7x tick time at 2,000 units (2.0s → 3.5s) and nothing at all for a pack with no map.*
+   **It did NOT re-baseline the pinned hashes, and this entry used to say it must.** That was
+   written before opt-in-by-content became the house discipline across five slices. Gating on
+   CONSEQUENCE — a map exists *and* some unit cannot cross some cell — means an inert map is
+   bit-identical to no map, which is both true and much more useful than a re-baseline: every
+   pinned replay and both generative guards survive. Prefer this over re-baselining whenever
+   the feature can be made a genuine no-op.
+13. **Elevation as a boolean LOS gate only**. (M) *No longer conditional — slice 12 supplied
+    the evidence. Terrain blocks MOVEMENT and nothing else, so a wall thinner than weapon
+    range measures as exactly nothing: both sides walk up to it and shoot over it. Two
+    versions of the demo map and one version of its e2e gate were written before that was
+    noticed, and the workaround — make every wall wider than the longest gun — is a
+    restriction on map authoring, not a model. LOS is what makes cover, and cover is what
+    makes a chokepoint worth holding rather than merely worth walking through.*
 
 Both design decisions this roadmap owed an answer to are now ANSWERED:
 **(a)** ~~flag changes re-select loadouts~~ — `LoadoutSystem` runs between

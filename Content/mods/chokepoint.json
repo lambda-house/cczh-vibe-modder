@@ -1,0 +1,88 @@
+{
+  // TERRAIN AS CONTENT. A wall across the world with ONE gate in it, up near the top edge.
+  //
+  //   rts duel --a crusader --b battlemaster --n 20 --seed 42
+  //   rts duel --a crusader --b battlemaster --n 20 --seed 42 --mod content/mods/chokepoint.json
+  //
+  // Not one number about either army changes. They simply have to find the gate, walk to it,
+  // and come back down the far side — and the battle takes several times as long. That is the
+  // whole claim of the slice: a chokepoint is not a content type, it is what two walls and a
+  // gap between them MEAN once movement has to respect them.
+  //
+  // Three things are deliberate in the shape:
+  //   - the wall is 12 world units thick, WIDER than any weapon in the base pack can reach.
+  //     A thin wall changes nothing, because both sides simply shoot over it: there is no
+  //     line-of-sight model here and terrain blocks movement only. A demo that forgot this
+  //     measured identical results and looked like a working feature.
+  //   - the gate is OFF the spawn axis. The harness spawns its column within y +/- 4.5 of the
+  //     origin, so a gate in the middle is no detour at all and, again, measures as nothing.
+  //   - the map is DRAWN. The thing being authored is a shape; no list of rectangles shows you
+  //     the gap, and a one-cell change here is a one-character diff.
+  //
+  // Row 0 is the TOP of the screen and column 0 the left edge — the rows are oriented to the
+  // renderer, not to a compass, because the shell draws +y downward like every 2D canvas and
+  // the alternative looks correct in JSON and vertically mirrored in play. The grid is centred
+  // on the world origin: 48 cells of 2 world units span [-48, +48], so the harness spawn lines
+  // at x = -40 and +40 are well inside it.
+  "meta": { "name": "chokepoint", "version": 1 },
+
+  "map": {
+    // A power of two, so world -> cell is an exact shift and never a division. ZH's own cell
+    // is 10 of their units, which at our 16:1 scale is 0.625 — the powers of two either side
+    // are 0.5 and 1. Two is coarser on purpose: it keeps the drawn map legible at 48
+    // characters a side, and a chokepoint is a feature of tens of world units, not ones.
+    "cellSize": 2.0,
+    "legend": { ".": "clear", "#": "impassable" },
+    "outside": "clear",
+    "rows": [
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######.....................",
+      ".....................######....................."
+    ]
+  }
+}
