@@ -805,6 +805,49 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
     The real fix is placing objects in the emitted `.map` — `ObjectsList` already supports it
     and `ZhMapWriter` writes only waypoints into it today.*
 
+## Roadmap: the ASSET MODEL
+
+The sim roadmap above is finished bar the lockstep layer. What is left is art, and it has its
+own order. The governing line is already measured and does not move: **a pack on wholly
+authored art borrows 8 retail names, and all 8 are the `zh.sides` HUD.** Content is ours; UI
+furniture is borrowed on purpose.
+
+14. **A pack must CARRY its art, and lint must prove every reference resolves.** (S)
+    *`rts compile` emits INI and exactly one texture — the icon sheet. Every `.w3d` a pack
+    names was copied into the install BY HAND, and `zh.models` is only checked for having a
+    mapping, never for the file existing. Name a mesh that is not there and you get an
+    invisible unit with no error anywhere: the `desertA` failure class, which has already
+    reached a real match once. We can read `.big` TOCs and the loose `Art/` tree, so resolving
+    every name a pack emits is cheap and total.*
+15. **Derive art profiles FROM THE MESH.** (M) *"2,928 models are free to adopt" and "none of
+    them has a measured profile" are the same fact — they are free because nothing uses them,
+    and a profile is measured from the objects that do. But the W3D reader now exists:
+    geometry from vertex bounds, bones from the hierarchy, sub-objects from the HLOD. That
+    turns adoption from a guess into a measurement, unblocks the whole free pool, and retires
+    the hardcoded `StructureRadius = 53.0` fallback.*
+16. **Place objects in the emitted `.map`.** (S-M) *`ObjectsList` already carries arbitrary
+    objects with a position and an owner dict; we write only waypoints into it. Unlocks
+    scenario maps, tech buildings and supply docks — and it is what would settle the open LOS
+    question, which needs two hostiles within weapon range across a thin wall.*
+17. **Author an `FXList` and a `ParticleSystem`.** (M) *Both directories are scanned — measured
+    from the boot log, after this file asserted the opposite from source and was wrong. Today
+    an adopted mesh inherits a peer's death FX and a fully AUTHORED one dies silently and
+    invisibly, which is the last place adopted art is structurally required.*
+18. **Audio.** (L) *The largest untouched category: not one line is emitted and every unit is
+    silent. `SoundEffects`, `Speech`, `Voice` and `MiscAudio` are all in the 42 scanned dirs.
+    It is also 0% of the simulation, so it changes no measurement — which is why it is here
+    and not higher. Split it the way icons were split: weapon and death sounds are content and
+    get authored; EVA and UI chrome stay borrowed.*
+19. **Terrain themes.** (M) *A map's SHAPE is ours and its SURFACE is retail's. Authoring a
+    tile sheet plus `Terrain` blocks closes that. Note 12 of retail's own 291 blocks name a
+    texture that ships in no archive — lint should report those too.*
+
+**Deliberately out, on evidence:** a DDS writer (retail is 3,496 `.dds` to 50 `.tga`, but TGA
+ships, is supported and needs no DXT compressor); a `.big` writer (loose files shadow archives
+— that IS the engine's mod mechanism, and no retail-derived pack ever ships from here anyway);
+a modelling suite (units are 220-245 triangles — if primitives stop being enough, a small OBJ
+importer is the cheap answer).
+
 Both design decisions this roadmap owed an answer to are now ANSWERED:
 **(a)** ~~flag changes re-select loadouts~~ — `LoadoutSystem` runs between
 production and cooldowns; see the system-order invariant above.
