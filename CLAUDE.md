@@ -824,12 +824,35 @@ furniture is borrowed on purpose.
     **Absent is not failure.** With no install the index is unusable and the check SKIPS; a
     check that cannot run must never look like a check that failed. Only names are read from
     the archives, never bytes.
-15. **Derive art profiles FROM THE MESH.** (M) *"2,928 models are free to adopt" and "none of
-    them has a measured profile" are the same fact — they are free because nothing uses them,
-    and a profile is measured from the objects that do. But the W3D reader now exists:
-    geometry from vertex bounds, bones from the hierarchy, sub-objects from the HLOD. That
-    turns adoption from a guess into a measurement, unblocks the whole free pool, and retires
-    the hardcoded `StructureRadius = 53.0` fallback.*
+15. ~~**Derive art profiles FROM THE MESH.**~~ — **STRUCK, on measurement. It cannot be done,
+    and `zhasset artvalidate` is the standing proof.** The idea was that the W3D reader could
+    supply geometry from vertex bounds and the rig from the hierarchy, unblocking the 2,928
+    adoptable meshes that have no measured profile. Derived profiles were compared against the
+    536 meshes that DO have one:
+
+    | Derived from the mesh | Median | Within ±20% |
+    |---|---|---|
+    | `majorRadius` | ×1.02 | 61% |
+    | `minorRadius` | ×1.10 | 51% |
+    | `height` | **×1.51** | **26%** |
+
+    **Gameplay geometry is a designer-chosen COLLISION size, not a property of the art.** The
+    silhouette includes barrels, wings and antennae the footprint excludes — AVLeopard's mesh
+    spans 21.9 half-units because of its gun, against a declared `majorRadius` of 15. Unbiased
+    on average and wrong by more than a fifth for a third of meshes, which is precisely the
+    "units created INSIDE the building and never seen" bug, mechanised.
+    *The catastrophic direction is not a clean signal either: 8.9% of retail objects declare a
+    radius under 30% of their own mesh half-span, so "much smaller than the art" cannot even
+    be a warning without firing on retail content.*
+    *Rig names fare better but still fail: the named part is present in the mesh 93% of the
+    time for `turretBone` and `muzzleFlash`, 77% for `launchBone`, 65% for `fireFXBone` — and
+    presence is not IDENTIFICATION. Several bones are candidates and only the INI says which
+    one the weapon fires from.*
+    **Consequence for the plan: the free-art pool cannot be made safe by inference.** There are
+    two safe paths and inventing a third is what this measurement rules out — adopt a mesh
+    retail USES, which has a measured profile, or AUTHOR one, which declares its profile as it
+    is written. "2,928 models are free to adopt" remains true about rendering and stays false
+    about behaviour.
 16. **Place objects in the emitted `.map`.** (S-M) *`ObjectsList` already carries arbitrary
     objects with a position and an owner dict; we write only waypoints into it. Unlocks
     scenario maps, tech buildings and supply docks — and it is what would settle the open LOS

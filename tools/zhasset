@@ -833,6 +833,105 @@ def cmd_map(a):
         return 1 if errs else 0
 
 
+def w3d_index(game):
+    """model stem -> (archive, offset, size) for every .w3d in both archive layers."""
+    idx = {}
+    for arc in all_archives(game):
+        if not os.path.basename(arc).lower().startswith("w3d"):
+            continue
+        for nm, off, size in big_toc(arc):
+            if nm.lower().endswith(".w3d"):
+                idx.setdefault(os.path.basename(nm).lower()[:-4], (arc, off, size))
+    return idx
+
+
+def w3d_shape(entry):
+    """Bounding extents and part names of one archived .w3d, without extracting it.
+
+    MESH_HEADER3's Min/Max are at offsets 76 and 88 — NOT 72 and 84. The struct carries a
+    FutureCounts[1] between PrelitVersion and VertexChannels, and omitting it reads four bytes
+    early and yields a box whose min exceeds its max, which is how the mistake announces
+    itself if you look.
+    """
+    arc, off, size = entry
+    with open(arc, "rb") as f:
+        f.seek(off)
+        d = f.read(size)
+    xs, ys, zs, parts = [], [], [], set()
+    for _, name, ctype, sz, payload in w3d_walk(d):
+        if ctype == 0x1F and payload is not None and len(payload) >= 100:
+            parts.add(payload[8:24].split(b"\0")[0].decode("latin-1").upper())
+            mn = struct.unpack_from("<3f", payload, 76)
+            mx = struct.unpack_from("<3f", payload, 88)
+            xs += [mn[0], mx[0]]; ys += [mn[1], mx[1]]; zs += [mn[2], mx[2]]
+        elif ctype == 0x0102 and payload is not None:                      # PIVOTS
+            for i in range(len(payload) // 60):
+                parts.add(payload[i*60:i*60+16].split(b"\0")[0].decode("latin-1").upper())
+    if not xs:
+        return None
+    return {"halfX": (max(xs) - min(xs)) / 2, "halfY": (max(ys) - min(ys)) / 2,
+            "depth": max(zs) - min(zs), "parts": parts}
+
+
+def cmd_artvalidate(a):
+    """Can an art profile be DERIVED from the mesh instead of measured from its users?
+
+    It would be worth a great deal if it could: 2,928 shipped models are referenced by nothing
+    and are therefore adoptable, and they have no measured profile for exactly the same reason
+    — a profile is measured from the objects that use a mesh, and nothing uses these.
+
+    This answers it by deriving profiles for the meshes that DO have measured ones and
+    comparing. Run it before believing any derivation; the numbers are not encouraging.
+    """
+    prof_path = a.profiles or os.path.join(DEF_OUT, "art-profiles.json")
+    if not os.path.exists(prof_path):
+        return print(f"  no measured profiles at {prof_path} — run `zhasset artprofile` first")
+    prof = json.load(open(prof_path))["models"]
+    idx = w3d_index(a.game)
+    print(f"  {len(idx)} models in the archives, {len(prof)} with measured profiles")
+
+    import statistics as stats
+    geo, rig = [], {k: [0, 0] for k in ("turretBone", "launchBone", "fireFXBone", "muzzleFlash")}
+    for name, p in prof.items():
+        e = idx.get(name.lower())
+        if not e:
+            continue
+        sh = w3d_shape(e)
+        if not sh:
+            continue
+        if p.get("geometry") == "BOX":
+            try:
+                maj, mnr, hgt = (float(p[k]) for k in ("majorRadius", "minorRadius", "height"))
+                if maj > 0 and mnr > 0 and hgt > 0:
+                    geo.append((sh["halfX"] / maj, sh["halfY"] / mnr, sh["depth"] / hgt))
+            except (TypeError, KeyError, ValueError):
+                pass
+        norm = {re.sub(r"\d+$", "", x) for x in sh["parts"]}
+        for k in rig:
+            v = p.get(k)
+            if not v:
+                continue
+            rig[k][1] += 1
+            if v.upper() in sh["parts"] or re.sub(r"\d+$", "", v.upper()) in norm:
+                rig[k][0] += 1
+
+    print(f"\n  GEOMETRY, derived from mesh bounds vs measured ({len(geo)} meshes)")
+    for i, lbl in enumerate(("majorRadius", "minorRadius", "height")):
+        r = sorted(x[i] for x in geo)
+        near = 100 * sum(1 for v in r if 0.8 <= v <= 1.2) / len(r)
+        print(f"    {lbl:12s} median x{stats.median(r):.2f}   within +/-20%: {near:.0f}%")
+    print("    -> gameplay geometry is a DESIGNER-CHOSEN collision size, not a property of the")
+    print("       art. The silhouette includes barrels and wings the footprint excludes.")
+
+    print(f"\n  RIG, is the named part even present in the mesh?")
+    for k, (hit, tot) in rig.items():
+        if tot:
+            print(f"    {k:12s} {hit}/{tot} ({100*hit/tot:.0f}%)")
+    print("    -> and presence is not identification: several bones are candidates and only")
+    print("       the INI says which one the weapon fires from.")
+    return 0
+
+
 def cmd_show(a):
     cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
     q = a.thing
@@ -1829,6 +1928,11 @@ def main():
     mp.add_argument("--expect-separated", action="store_true",
                     help="verify: the two start spots must NOT be mutually reachable")
     mp.set_defaults(fn=cmd_map)
+
+    av = sub.add_parser("artvalidate",
+                        help="can an art profile be DERIVED from the mesh? (measured answer: no)")
+    av.add_argument("--profiles")
+    av.set_defaults(fn=cmd_artvalidate)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")
