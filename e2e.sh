@@ -1416,10 +1416,14 @@ if [ -f "$TERRAIN_INI" ]; then
   # not there, simply fails to open it and returns — the map renders BLACK with no error.
   # 12 of retail's own 291 Terrain blocks dangle exactly like this, "desertA" among them,
   # which is the one the first version of this compiler chose precisely BECAUSE it was real.
-  tex=$(tr -d '\r' < "$TERRAIN_INI" | awk -v t="$tt" '
+  # awk reads the file DIRECTLY and strips CR itself. Piping `tr` into an awk that calls
+  # exit() SIGPIPEs the tr, and `set -o pipefail` turns that into a 141 that kills the run —
+  # the fifth variant of this trap in this file, after grep -q, grep -c, head and find.
+  tex=$(awk -v t="$tt" '
+          {sub(/\r$/, "")}
           $1=="Terrain" && tolower($2)==tolower(t) {f=1; next}
           f && $1=="Texture" {print $3; exit}
-          f && $1=="End" {exit}')
+          f && $1=="End" {exit}' "$TERRAIN_INI")
   [ -n "$tex" ] || { echo "  TerrainType '$tt' declares no Texture"; exit 1; }
   if [ -d "$MAPD/corpus" ] || [ -d "$CORPUS" ]; then
     found=0
@@ -1447,10 +1451,15 @@ if [ -f "$MAPD/ovr/map.ini" ]; then
 fi
 # The stack is named for its TOP layer, so the map directory is the override pack's, not the
 # terrain pack's — find it rather than spelling it.
-beside=$(find "$MAPD/ovr/Maps" -name map.ini | head -1)
+# A glob, not `find | head -1`: under `set -o pipefail` head exits first, find takes SIGPIPE,
+# and the whole script dies with 141 — but only when find is slow enough to still be running,
+# so it passes standalone and fails inside a full run. Fourth pipefail trap in this file.
+beside=""
+for f in "$MAPD/ovr/Maps"/*/map.ini; do
+  [ -f "$f" ] && { beside="$f"; break; }
+done
 [ -n "$beside" ] || { echo "  OVERRIDES NOT PLACED BESIDE THE EMITTED MAP"; exit 1; }
-[ -f "$(dirname "$beside")"/*.map ] 2>/dev/null || \
-  ls "$(dirname "$beside")"/*.map >/dev/null 2>&1 \
+ls "$(dirname "$beside")"/*.map >/dev/null 2>&1 \
   || { echo "  map.ini has no .map beside it, so loadMapINI will never read it"; exit 1; }
 echo "  overrides land beside the .map, which is the only place they are read"
 rm -rf "$MAPD"; trap - EXIT
@@ -1588,6 +1597,37 @@ if [ "$residual" != "$expect" ]; then
 fi
 echo "  a pack on wholly authored art borrows 8 names, all of them the zh.sides HUD"
 rm -rf "$ICO"; trap - EXIT
+
+gate "a compiled pack is PLAYABLE in the retail engine"
+# The 24 gates before this prove a pack COMPILES. None of them prove it plays, and every
+# silent bug in CLAUDE.md's catalogue got through exactly there: InitialHealth 0, a welded
+# turret, a missing ProductionUpdate, a black map, blank command-bar tiles. Each was found by
+# a human noticing something in a match, which made the human the detector.
+#
+# OPT-IN, like the Godot shell check: it needs the retail install, macOS Accessibility, and
+# ~2 minutes of wall clock, so it must never be the reason CI or a fresh clone fails.
+if [ "${ZH_PLAY:-0}" != "1" ]; then
+  echo "  skipped (set ZH_PLAY=1, needs the game + macOS Accessibility)"
+elif [ ! -x "$HOME/GeneralsX/GeneralsZH/GeneralsXZH" ]; then
+  echo "  skipped (no retail install at ~/GeneralsX/GeneralsZH)"
+else
+  PLAY=$(mktemp -d)
+  rts compile --target zh --out "$PLAY" \
+    --mod content/mods/chokepoint.json --mod content/mods/demo-attach.json >/dev/null
+  rsync -a "$PLAY/Data" "$PLAY/Art" "$HOME/GeneralsX/GeneralsZH/"
+  USERMAPS="$HOME/Library/Application Support/GeneralsX/GeneralsZH/Maps"
+  mkdir -p "$USERMAPS" && rsync -a "$PLAY/Maps/" "$USERMAPS/"
+  # The map goes to USER data, not the game dir: MapCache::loadStandardMaps only READS
+  # Maps/MapCache.ini and never scans, so a map in the install is never discovered.
+  rm -rf "$PLAY"
+
+  pkill -x GeneralsXZH 2>/dev/null || true
+  sleep 2
+  ./tools/zhdrive skirmish || { echo "  COULD NOT REACH A MATCH"; exit 1; }
+  ./tools/zhdrive verify-pack || { echo "  PACK IS NOT PLAYABLE"; exit 1; }
+  pkill -x GeneralsXZH 2>/dev/null || true
+  echo "  faction selectable, map loads, icons resolve, build button charges the player"
+fi
 
 echo
 echo "== regression: pinned replay hashes =="

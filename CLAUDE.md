@@ -379,6 +379,15 @@ Four traps, each of which cost a run:
 - **`esc` does not leave the Solo Play submenu**, which has only a BACK button. A retry that
   only presses `esc` waits forever on a screen it cannot leave.
 
+`zhdrive verify-pack` is the payoff, and `e2e.sh` gate 25 runs it behind **`ZH_PLAY=1`**
+(opt-in: it needs the install, Accessibility and ~2 minutes). It asserts what only a running
+match can: the portrait and the build button are SATURATED authored icons rather than the dark
+panel a dangling `MappedImage` renders as, the two address DIFFERENT cells, and clicking build
+CHARGES the player. Proven in both directions — deleting the emitted `MappedImages` file makes
+all three fail, and the portrait reads pure black.
+*The structure is found by COLOUR, never by coordinate: the start position is randomised, so
+the same map put the factory at game (512,139) one run and (297,165) the next.*
+
 **Observe needs no permission and answers every LOAD-TIME question**, which is where every
 bug so far has actually lived. Act buys "click build and see" and nothing before it.
 *Do not use `osascript -e 'tell application "Finder" to get bounds of window of desktop'` to

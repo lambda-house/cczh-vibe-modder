@@ -313,16 +313,27 @@ def column(gx, y0=100, y1=430):
                     "-t", "png", "/tmp/_zhcol.png"], check=True)
     subprocess.run(["sips", "-s", "format", "bmp", "/tmp/_zhcol.png",
                     "--out", "/tmp/_zhcol.bmp"], check=True, capture_output=True)
-    d = open("/tmp/_zhcol.bmp", "rb").read()
+    return _bmp_rows("/tmp/_zhcol.bmp", y0, y1)
+
+
+def _bmp_rows(path, y0, y1):
+    """Decode a BMP strip into [(y, rgb)], RESPECTING the row order.
+
+    A negative height means top-down, and sips writes top-down. Assuming bottom-up mirrors
+    every read vertically — which stayed invisible for a long time because the first consumer
+    only COUNTED cyan runs, and a mirrored column has exactly as many. It surfaced only when a
+    search for the tallest building on screen kept returning a point near the bottom.
+    """
+    d = open(path, "rb").read()
     off = struct.unpack_from("<I", d, 10)[0]
     w, h = struct.unpack_from("<ii", d, 18)
+    top_down = h < 0
     h = abs(h)
     bypp = struct.unpack_from("<H", d, 28)[0] // 8
     stride = ((w * bypp + 3) // 4) * 4
     out = []
     for row in range(h):
-        # BMP rows run bottom-up unless the height is negative; sips writes bottom-up here.
-        o = off + (h - 1 - row) * stride
+        o = off + (row if top_down else h - 1 - row) * stride
         out.append((y0 + (y1 - y0) * row / h, (d[o + 2], d[o + 1], d[o])))
     return out
 
@@ -398,6 +409,159 @@ def at_main_menu():
     pushing a layout, so the shell logs nothing at all.
     """
     return menu_buttons() == MAIN_MENU_BUTTONS
+
+
+def region_grid(gx, gy, gw, gh, cols=64, rows=40):
+    """A coarse grid of pixels over a rectangle of the game view, as [(gx, gy, (r,g,b))].
+
+    One screencapture downscaled by sips, then read as BMP — the same trick as column(), in
+    two dimensions. Sampling this by individual probes would be 2,560 screenshots.
+    """
+    x, y = to_screen(gx, gy)
+    x2, y2 = to_screen(gx + gw, gy + gh)
+    subprocess.run(["screencapture", "-x", "-R", f"{x},{y},{x2 - x},{y2 - y}",
+                    "-t", "png", "/tmp/_zhgrid.png"], check=True)
+    subprocess.run(["sips", "-z", str(rows), str(cols), "/tmp/_zhgrid.png",
+                    "--out", "/tmp/_zhgrid_s.png"], check=True, capture_output=True)
+    subprocess.run(["sips", "-s", "format", "bmp", "/tmp/_zhgrid_s.png",
+                    "--out", "/tmp/_zhgrid.bmp"], check=True, capture_output=True)
+    d = open("/tmp/_zhgrid.bmp", "rb").read()
+    off = struct.unpack_from("<I", d, 10)[0]
+    w, h = struct.unpack_from("<ii", d, 18)
+    top_down = h < 0          # sips writes top-down; see _bmp_rows
+    h = abs(h)
+    bypp = struct.unpack_from("<H", d, 28)[0] // 8
+    stride = ((w * bypp + 3) // 4) * 4
+    out = []
+    for ry in range(h):
+        o0 = off + (ry if top_down else h - 1 - ry) * stride
+        for rx in range(w):
+            o = o0 + rx * bypp
+            out.append((gx + gw * (rx + 0.5) / w, gy + gh * (ry + 0.5) / h,
+                        (d[o + 2], d[o + 1], d[o])))
+    return out
+
+
+def find_structure():
+    """Locate the player's starting building on screen, by COLOUR rather than coordinate.
+
+    The start position is randomised per match — the same map put the factory at game (512,139)
+    one run and (297,165) the next — so any hardcoded coordinate is right about half the time
+    and silently selects empty ground the rest. The authored mesh is strongly blue and the
+    desert terrain is tan, so the building is the bluest thing in the world view by a wide
+    margin. Returns the centroid of the bluest cluster, or None.
+    """
+    # y stops at 350, well clear of the command bar. The bar's own cyan outline is a near
+    # perfect match for the authored mesh's teal — it was the "bluest thing on screen" on the
+    # first attempt, and the search happily selected a point on the HUD.
+    samples = region_grid(40, 60, 720, 290)
+    best = max(samples, key=lambda s: s[2][2] - s[2][0])
+    x, y, c = best
+    if c[2] - c[0] < 40:
+        return None
+    # The PEAK, not a centroid. A weighted centroid was the first attempt and it read 150
+    # game-units low: the unlit map border is dark blue too, and there is far more of it than
+    # there is building, so the mass dragged the answer onto empty ground.
+    return round(x), round(y)
+
+
+def cmd_find(a):
+    where = find_structure()
+    print(f"  structure at game {where}" if where else "  no structure found")
+
+
+def region_digest(gx, gy, gw, gh):
+    """A cheap hash of a rectangle of the UI, in game space.
+
+    For asserting that something CHANGED when the exact value cannot be read. The money
+    readout is rendered text and there is no OCR here, but "the number is different after
+    clicking build" is the assertion that actually matters: it proves the button is live and
+    the order was accepted. Comparing a digest is honest about what it checks — it cannot say
+    the cost was 800, only that a cost was charged.
+    """
+    x, y = to_screen(gx, gy)
+    x2, y2 = to_screen(gx + gw, gy + gh)
+    subprocess.run(["screencapture", "-x", "-R", f"{x},{y},{x2 - x},{y2 - y}",
+                    "-t", "png", "/tmp/_zhreg.png"], check=True)
+    return hash(open("/tmp/_zhreg.png", "rb").read())
+
+
+def saturated(rgb):
+    """An authored icon cell: vivid. A blank tile or an unlit panel is dark and grey, which is
+    exactly what a MappedImage whose texture failed to load renders as — with no error."""
+    r, g, b = rgb
+    return max(rgb) > 150 and (max(rgb) - min(rgb)) > 60
+
+
+# In-match targets, measured with the factory selected at the start position.
+MATCH = {
+    "factory":  (512, 139),   # the player's starting structure, centred by the initial camera
+    "build_1":  (248, 514),
+    "portrait": (630, 505),
+    "money":    (360, 437, 80, 18),
+}
+
+
+def cmd_verify_pack(a):
+    """Assert that a compiled pack is PLAYABLE, not merely parseable.
+
+    Every check here corresponds to a failure that actually shipped and was found by a human
+    noticing something in a match: blank command-bar tiles, a build button that renders and
+    does nothing, a portrait that silently falls back to nothing at all.
+    """
+    require_cliclick()
+    focus_game()
+    fails = []
+
+    # Selecting can miss, and a missed click looks EXACTLY like broken icons — an unlit
+    # portrait either way. Retry the selection before believing the pack is at fault, or the
+    # gate reports a content bug for an input one.
+    portrait = button = (0, 0, 0)
+    for sel in range(1, 4):
+        where = find_structure()
+        if where is None:
+            print("  FAIL: no structure visible — the match did not start as expected")
+            return 1
+        ui_click(*where, settle=2.0)
+        portrait = pixel(*MATCH["portrait"])
+        button = pixel(*MATCH["build_1"])
+        if saturated(portrait) or saturated(button):
+            print(f"  selected the structure at game {where}")
+            break
+        print(f"  selection attempt {sel} found nothing lit, retrying")
+
+    if not saturated(portrait):
+        fails.append(f"SelectPortrait did not resolve: portrait is {portrait}, an unlit panel. "
+                     f"A MappedImage whose texture is missing renders exactly like this.")
+    else:
+        print(f"  portrait is an authored icon {portrait}")
+
+    if not saturated(button):
+        fails.append(f"CommandButton ButtonImage did not resolve: build slot is {button}")
+    else:
+        print(f"  build button is an authored icon {button}")
+
+    if saturated(portrait) and saturated(button):
+        # Distinct hues are the point of the sheet's golden-ratio stepping: two entries
+        # pointing at ONE cell is otherwise invisible.
+        if max(abs(p - q) for p, q in zip(portrait, button)) < 40:
+            fails.append(f"portrait {portrait} and button {button} are the same colour — "
+                         f"two MappedImages are addressing one cell")
+        else:
+            print("  the two icons address different cells")
+
+    before = region_digest(*MATCH["money"])
+    ui_click(*MATCH["build_1"], settle=3.0)
+    after = region_digest(*MATCH["money"])
+    if before == after:
+        fails.append("clicking build charged nothing: the button renders and does nothing, "
+                     "which is what a missing ProductionUpdate looks like")
+    else:
+        print("  clicking build charged the player — production accepted the order")
+
+    for f in fails:
+        print(f"  FAIL: {f}")
+    return 1 if fails else 0
 
 
 def cmd_skirmish(a):
@@ -509,6 +673,12 @@ if __name__ == "__main__":
     px = sub.add_parser("pixel", help="RGB at a point in the game's 800x600 space")
     px.add_argument("x", type=int); px.add_argument("y", type=int)
     px.set_defaults(fn=cmd_pixel)
+
+    fd = sub.add_parser("find", help="locate the player's structure on screen by colour")
+    fd.set_defaults(fn=cmd_find)
+
+    vp = sub.add_parser("verify-pack", help="assert an emitted pack is PLAYABLE, in a match")
+    vp.set_defaults(fn=cmd_verify_pack)
 
     a = p.parse_args()
     sys.exit(a.fn(a) or 0)
