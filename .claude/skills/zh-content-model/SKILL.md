@@ -13,6 +13,27 @@ The authority is the engine's `FieldParse` tables — every INI block type decla
 it enumerates the legal keys plus a parser that implies each type. Extract with
 `tools/zhasset schema` → **253 tables, 2,993 fields**.
 
+The RESOLVED model — the corpus joined rather than enumerated — is:
+
+```
+zhasset catalogue              # 15 factions, 2,102 objects, 363 weapons, 96 sciences, 79 powers
+zhasset techtree [faction]     # tiers, gates, superweapons, the rank ladder
+```
+
+`techtree` joins five files none of which names the graph. **The CommandButton verb is the
+edge**, and there are four that matter: `UNIT_BUILD` (259) makes units, **`DOZER_CONSTRUCT`
+(192) makes STRUCTURES** — a tree built from `UNIT_BUILD` alone stops dead at the dozer —
+**`PURCHASE_SCIENCE` (82) IS the experience tree**, and `OBJECT_UPGRADE` is per-object where
+`PLAYER_UPGRADE` is per-player.
+
+**The build tree and the promotion tree are one graph**: an Object's `Prerequisites` can require
+a Science and a `SPECIAL_POWER` button can require one, so superweapons and the rank ladder are
+reached from different roots of the same structure. Every playable faction resolves to 4 tiers.
+The ladder grants **7 purchase points for an entire game** against 14–24 reachable sciences,
+which is why the tree's shape matters more than its size.
+
+Full shapes in `docs/ZERO-HOUR-MODEL.md`.
+
 ## The content types that matter
 
 | Type | Fields | What it is |

@@ -5,6 +5,9 @@ description: Explain and query the Command & Conquer Generals Zero Hour asset se
 
 # The Zero Hour asset set
 
+**Shapes and joins: `docs/ZERO-HOUR-MODEL.md`.** It is the contract for what these commands
+emit, so rely on it rather than re-deriving the corpus.
+
 Retail ZH on this machine is **35 `.big` archives in two layers**, and the layering trips
 people up: the ZH archives are a **delta over base Generals**, which lives in
 `~/GeneralsX/GeneralsZH/ZH_Generals/`. Counting only the top level undercounts the art by
@@ -34,6 +37,13 @@ zhasset archives names --archive <path> --glob '*.w3d'
 zhasset archives extract --archive <path> --dest <dir> [--glob ...]
 zhasset deps                   # INI -> art resolution, both directions
 zhasset show <name>            # explain one object/weapon/faction/terrain type
+
+zhasset dossier <object>       # ONE OBJECT + its whole asset closure (start here)
+zhasset fx <name>              # an FXList/ParticleSystem/OCL expanded to textures + meshes
+zhasset map read|scan|verify   # the .map terrain format, read and checked
+zhasset w3d <file>             # one model: meshes, motion, textures
+zhasset artprofile             # the contract an adoptable mesh carries
+zhasset artvalidate            # proof that contract CANNOT be derived from the mesh
 ```
 
 Generated output lands in `reference/` and is **gitignored** — see Licence below.

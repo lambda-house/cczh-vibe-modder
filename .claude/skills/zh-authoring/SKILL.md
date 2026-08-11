@@ -12,6 +12,35 @@ nothing.
 Categories: **pure-data** (edit text) · **data+art** (text plus a binary asset) ·
 **needs-cpp** (engine change).
 
+## Start here: the loop
+
+Do not hand-write a unit from a blank file. Clone the nearest existing one — the corpus has
+2,102 objects and one of them is almost always 90% of what you want.
+
+```
+zhasset nearest --like AmericaTankCrusader        # or --role VEHICLE,CAN_ATTACK --cost 900 --side China
+zhasset dossier <the winner>                      # EVERYTHING it is made of, transitively
+zhasset techtree <faction>                        # where it would sit, what would gate it
+  ... edit ...
+rts compile --target zh --out <dir>               # emit Data/INI + the art the pack ships
+```
+
+`nearest` ranks by **role, not cost** — a 900-cost tank and a 900-cost jet share a number and
+nothing else. It reports per-axis distances so you can see *why* something matched.
+
+`dossier` is the one that saves the most time: it resolves every `ModelConditionState`, the
+textures named **inside** each `.w3d`, both hops of the icon lookup, the sounds, and the death
+effects expanded into their particle systems and debris meshes. Full shapes in
+`docs/ZERO-HOUR-MODEL.md`.
+
+**Two things the model will not tell you, because they were measured and found untrue:**
+- **Art profiles cannot be derived from a mesh.** Gameplay geometry is a designer-chosen
+  collision size; derived `height` is within 20% for only 26% of meshes. So adopt a mesh retail
+  **uses** (it has a measured profile) or **author** one (it declares its own). The 2,928
+  unreferenced models are free about rendering and not about behaviour.
+- **Cover does not exist in ZH.** Firing line-of-sight is checked nowhere — confirmed in a match
+  by killing a target through a cliff. Never tune balance against terrain cover.
+
 ## Retune a unit — pure-data, easy
 
 Drop 3–10 lines into `<MapDir>/map.ini`. Zero base modification; retail itself does this
@@ -31,7 +60,8 @@ NUL-terminated string inside the model binary (`W3D_CHUNK_TEXTURE_NAME`); no INI
 overrides it.
 
 Verify: the unit visibly changes with no INI edit. If it doesn't, your filename is wrong —
-dump the `.w3d` strings to find the real one.
+`zhasset dossier <object>` lists the exact texture names read from inside the `.w3d`, per model
+condition state, so there is no need to guess or grep strings.
 
 ⚠️ `housecolor2.tga` is shared by 1,832 models. Repainting it recolours the entire army.
 
