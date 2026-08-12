@@ -25,8 +25,16 @@ public static class ZhLint
         public List<string> CapErrors = new();
         public List<string> RoundTrip = new();
         public List<string> Divergence = new();
+        /// <summary>Retail art a faction depends on. Only ever populated when --no-borrow
+        /// asked; an empty list means "not checked" as often as it means "clean", which is why
+        /// the caller prints the check's own verdict rather than inferring one from here.</summary>
+        public List<string> Borrowed = new();
         public int Checked;
-        public bool Ok => CapErrors.Count == 0;
+        /// <summary>A borrow is a failure only because it was explicitly asked about. The
+        /// default posture of this project is that adopting shipped art is FINE — 2,928 models
+        /// are referenced by nothing and free to use — so this must never fail a pack that did
+        /// not opt in.</summary>
+        public bool Ok => CapErrors.Count == 0 && Borrowed.Count == 0;
     }
 
     /// <summary>KindOf names verified to exist in retail content. Ours may be a subset.</summary>
@@ -39,7 +47,8 @@ public static class ZhLint
         "CAPTURABLE",
     };
 
-    public static Report Check(ContentDb db, ZhTargetDto zh, AssetIndex? assets = null)
+    public static Report Check(ContentDb db, ZhTargetDto zh, AssetIndex? assets = null,
+                               string? noBorrowFaction = null)
     {
         var r = new Report();
 
@@ -91,6 +100,71 @@ public static class ZhLint
                     r.CapErrors.Add($"model '{name}' resolves to no file — not in the {assets.Count} " +
                                     $"assets installed, and not shipped by zh.art. The unit would be " +
                                     $"INVISIBLE in game, with no error from the engine.");
+        }
+
+        // ---- ZERO BORROW ---------------------------------------------------------------
+        // "Does this faction depend on any of EA's art?" Opt-in, and scoped to ONE FACTION on
+        // purpose, because that is what the property turns out to be.
+        //
+        // *This was measured, not assumed:* `rts compile` emits the WHOLE content db, so the
+        // base sim's demo units are in every compiled directory and they DO adopt retail
+        // meshes. A check written against the output directory would therefore fail forever,
+        // for a reason that has nothing to do with the faction being checked. Zero-borrow is a
+        // property of a FACTION, not of a directory.
+        //
+        // What it does NOT cover, deliberately: `zh.sides` maps a faction onto a retail
+        // ControlBarScheme, so the score screen, watermark and medallions are inherited BY
+        // NAME from assets already installed. That borrow is the design — content art is ours,
+        // HUD furniture is theirs — and folding it in here would turn a working decision into
+        // a permanent failure.
+        //
+        // And what it does not MEAN: a pack that passes is clean of EA's assets. It is not
+        // thereby redistributable. The pack is a mod — it loads into their engine, needs their
+        // game installed, and their GPL release grants no trademark or publicity rights.
+        if (!string.IsNullOrWhiteSpace(noBorrowFaction))
+        {
+            if (!db.Factions.TryGetValue(noBorrowFaction!, out var fac))
+            {
+                r.Borrowed.Add($"--no-borrow names faction '{noBorrowFaction}', which this pack " +
+                               $"does not define. Known: " +
+                               string.Join(", ", db.Factions.Keys.OrderBy(k => k, StringComparer.Ordinal)));
+            }
+            else
+            {
+                // Index by leaf name, so a zh.art path and a TEXTURE_NAME can be compared.
+                var carried = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var p in zh.Art)
+                {
+                    var leaf = Path.GetFileName(p);
+                    if (!string.IsNullOrEmpty(leaf)) carried[leaf] = p;
+                }
+                var carriedStems = new HashSet<string>(
+                    carried.Keys.Select(Path.GetFileNameWithoutExtension)
+                                .Where(s => !string.IsNullOrEmpty(s))!,
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (var uid in fac.RosterIds.OrderBy(x => x, StringComparer.Ordinal))
+                {
+                    if (!zh.Models.TryGetValue(uid, out var model) || string.IsNullOrWhiteSpace(model))
+                        continue;                       // already reported by the mapping check
+                    if (!carriedStems.Contains(model))
+                    {
+                        r.Borrowed.Add($"unit '{uid}' uses model '{model}', which this pack does " +
+                                       $"not carry — it resolves into the installed game.");
+                        continue;
+                    }
+                    // THE DEEP ONE. A carried mesh can still name a retail texture, because
+                    // that reference lives inside the .w3d and no INI-level check can see it.
+                    // In game it renders perfectly, right up until EA's file is not there.
+                    var path = carried.First(kv =>
+                        string.Equals(Path.GetFileNameWithoutExtension(kv.Key), model,
+                                      StringComparison.OrdinalIgnoreCase)).Value;
+                    foreach (var tex in W3dRefs.Textures(path))
+                        if (!carried.ContainsKey(tex))
+                            r.Borrowed.Add($"unit '{uid}': its mesh '{model}' names texture " +
+                                           $"'{tex}', which this pack does not carry.");
+                }
+            }
         }
 
         // ---- ROUND-TRIP --------------------------------------------------------------

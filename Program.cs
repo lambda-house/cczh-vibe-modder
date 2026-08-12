@@ -336,19 +336,33 @@ public static class Program
             var assets = AssetIndex.Load(Opt(args, "--game-dir",
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                              "GeneralsX", "GeneralsZH")));
-            var zr = ZhLint.Check(db, ContentDb.LoadZhTarget(contentPath), assets);
+            // --no-borrow names ONE FACTION, because that is what the property is: `compile`
+            // emits the whole content db, so the base sim's units are in every output and they
+            // do adopt retail meshes. Asking the question of a directory can only ever fail.
+            var noBorrow = Opt(args, "--no-borrow", "");
+            var zr = ZhLint.Check(db, ContentDb.LoadZhTarget(contentPath), assets,
+                                  noBorrow.Length == 0 ? null : noBorrow);
             Console.WriteLine();
             Console.WriteLine($"target zh — {zr.Checked} value(s) round-trip checked");
 
             foreach (var e in zr.CapErrors) Console.WriteLine($"CAP:   {e}");
             foreach (var t in zr.RoundTrip) Console.WriteLine($"TRIP:  {t}");
+            foreach (var b in zr.Borrowed) Console.WriteLine($"BORROW: {b}");
             foreach (var d in zr.Divergence) Console.WriteLine($"DIVERGE: {d}");
 
-            if (zr.CapErrors.Count == 0 && zr.RoundTrip.Count == 0 && zr.Divergence.Count == 0)
+            if (noBorrow.Length > 0 && zr.Borrowed.Count == 0)
+                // Stated explicitly, because an empty Borrowed list means "not checked" just
+                // as often as it means "clean", and silence would read as the wrong one. The
+                // second line is the part that matters: passing is not a licence to ship.
+                Console.WriteLine($"  faction '{noBorrow}': every mesh and every texture it " +
+                                  $"names is carried by this pack");
+
+            if (zr.CapErrors.Count == 0 && zr.RoundTrip.Count == 0 && zr.Divergence.Count == 0
+                && zr.Borrowed.Count == 0)
                 Console.WriteLine("  nothing lost in translation");
             else
                 Console.WriteLine($"  {zr.CapErrors.Count} cap · {zr.RoundTrip.Count} round-trip · " +
-                                  $"{zr.Divergence.Count} divergence");
+                                  $"{zr.Borrowed.Count} borrow · {zr.Divergence.Count} divergence");
             if (!zr.Ok) return 1;
         }
 

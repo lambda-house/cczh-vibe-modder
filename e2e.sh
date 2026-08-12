@@ -2845,6 +2845,48 @@ if missing:
     sys.exit(1)
 print(f"  every texture the carried meshes name is shipped beside them")
 PYPAIR
+  # --- 4. ZERO BORROW, enforced by lint rather than by inspection. --------------------
+  # Scoped to a FACTION, because that is what the property is — see the note above about
+  # `compile` emitting the whole db. Three cases, because a check that only ever passes is
+  # indistinguishable from a check that does nothing.
+  rts lint --target zh --no-borrow russian_federation --mod "$RF/rf.json" \
+    | grep -q "every mesh and every texture it names is carried by this pack" \
+    || { echo "  THE AUTHORED FACTION DID NOT PASS --no-borrow"
+         rts lint --target zh --no-borrow russian_federation --mod "$RF/rf.json" | tail -6
+         exit 1; }
+  echo "  --no-borrow passes the authored faction"
+
+  # A faction that adopts retail art must FAIL it. The demo pack does so deliberately — 2,928
+  # shipped models are referenced by nothing and free to use — so this is the case that proves
+  # the check has teeth without implying adoption is wrong.
+  borrow=$(rts lint --target zh --no-borrow hellfire --mod content/mods/demo-attach.json 2>&1 || true)
+  case "$borrow" in
+    *"BORROW: unit 'hellhound' uses model 'AVLeopard'"*) : ;;
+    *) echo "  A FACTION ADOPTING RETAIL ART PASSED --no-borrow"; echo "$borrow" | tail -6
+       exit 1 ;;
+  esac
+  echo "  --no-borrow fails a faction that adopts retail art"
+
+  # THE ONE NO INI-LEVEL CHECK CAN SEE. A mesh's texture reference lives INSIDE the .w3d
+  # (W3D_CHUNK_TEXTURE_NAME), so a pack can carry a mesh it authored, reference nothing but
+  # that mesh from its INI, and still depend on art it does not ship. In game it renders
+  # perfectly until the file is absent, and then the object is untextured with no error.
+  python3 - "$RF/rf.json" "$RF/droptex.json" <<'PYDROP'
+import sys
+# Only the zh.art LINE is removed. The texture is still built, and the mesh still names it
+# inside its own binary — which is precisely the reference this case exists to catch.
+s = open(sys.argv[1]).read()
+kept = [l for l in s.splitlines(True)
+        if "mangal_roof.tga" not in l or not l.strip().startswith('"')]
+open(sys.argv[2], "w").write("".join(kept))
+PYDROP
+  deep=$(rts lint --target zh --no-borrow russian_federation --mod "$RF/droptex.json" 2>&1 || true)
+  case "$deep" in
+    *"names texture 'mangal_roof.tga', which this pack does not carry"*) : ;;
+    *) echo "  A TEXTURE NAMED INSIDE THE .w3d WENT UNCHECKED — the deep reference is invisible"
+       echo "$deep" | tail -6; exit 1 ;;
+  esac
+  echo "  --no-borrow reads INSIDE the mesh: a texture named there must be carried too"
   rm -rf "$RF"; trap - EXIT
 fi
 
