@@ -972,9 +972,19 @@ furniture is borrowed on purpose.
     It is also 0% of the simulation, so it changes no measurement — which is why it is here
     and not higher. Split it the way icons were split: weapon and death sounds are content and
     get authored; EVA and UI chrome stay borrowed.*
-19. **Terrain themes.** (M) *A map's SHAPE is ours and its SURFACE is retail's. Authoring a
-    tile sheet plus `Terrain` blocks closes that. Note 12 of retail's own 291 blocks name a
-    texture that ships in no archive — lint should report those too.*
+19. ~~**Terrain themes.**~~ — done. A pack now authors its own ground by default: a `Terrain`
+    block, a 64x64 tile at `Art/Terrain/`, and the map's texture class pointing at it. **A
+    map's shape was already ours while its surface stayed EA's — that was the last borrowed
+    thing in an emitted map.** Name a retail type in `zh.terrainType` to use theirs instead.
+    *`countTiles` is picky in ways that fail as a BLACK MAP and not as an error: uncompressed
+    true-colour, 24-32 bpp, at least one whole 64x64 tile (`TILE_PIXEL_EXTENT`). Miss any and
+    it returns zero tiles, `readTexClass` returns without opening anything, and nothing is
+    logged. e2e asserts all four against the emitted tile.*
+    *The tile goes to `Art/Terrain/`, not `Art/Textures/` — `TERRAIN_TGA_DIR_PATH` is where the
+    loader looks. `Class` is a closed name table (`TerrainTypes.h`), not a free string.*
+    *A mottled grain rather than a flat colour, for the same reason the first mesh test used a
+    grid: a flat fill proves the file loaded and hides everything about how it is mapped.*
+    Confirmed rendering in a match.
 
 **Deliberately out, on evidence:** a DDS writer (retail is 3,496 `.dds` to 50 `.tga`, but TGA
 ships, is supported and needs no DXT compressor); a `.big` writer (loose files shadow archives

@@ -1029,7 +1029,31 @@ public static class ZhCompiler
                 (Fix64.FromInt(40), Fix64.Zero),
             };
             string mapName = pack + "_map";
-            var m = ZhMapWriter.Write(grid, zh.Scale, zh.Terrain, "MAP:" + mapName, starts,
+
+            // The ground. Empty zh.terrainType means the pack authors its own, which is the
+            // default: a map's shape was already ours while its surface stayed EA's.
+            string terrain = zh.Terrain;
+            if (terrain.Length == 0)
+            {
+                terrain = pack + "_ground";
+                var tb = new StringBuilder();
+                Banner(tb, db, "Terrain");
+                tb.AppendLine($"Terrain {terrain}");
+                tb.AppendLine($"  Texture = {terrain}.tga");
+                // Class is a closed C++ name table (TerrainTypes.h), not a free string.
+                tb.AppendLine("  Class = DESERT_DRY");
+                tb.AppendLine("End").AppendLine();
+                Write(r, Path.Combine(ini, "Terrain", pack + ".ini"), tb);
+
+                // Art/Terrain, not Art/Textures: TERRAIN_TGA_DIR_PATH is where readTexClass
+                // looks, and a tile anywhere else is a black map with no error.
+                string tp = Path.Combine(outRoot, "Art", "Terrain", terrain + ".tga");
+                Directory.CreateDirectory(Path.GetDirectoryName(tp)!);
+                File.WriteAllBytes(tp, ZhMapWriter.TerrainTile());
+                r.Files.Add(tp);
+            }
+
+            var m = ZhMapWriter.Write(grid, zh.Scale, terrain, "MAP:" + mapName, starts,
                                       db.MapObjects);
 
             string mapDir = Path.Combine(outRoot, "Maps", mapName);

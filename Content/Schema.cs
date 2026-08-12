@@ -627,7 +627,10 @@ public sealed class ZhTargetDto
     /// class as the 88 dangling object references in ZERO-HOUR-ANATOMY. Naming a real block is
     /// NOT sufficient; the texture behind it has to exist, and readTexClass fails silently.
     /// </summary>
-    public string Terrain => TerrainType ?? "SandMediumType2";
+    /// Left EMPTY by default, which means the pack authors its OWN ground: a map's shape was
+    /// already ours and its surface was still EA's, and that was the last borrowed thing in an
+    /// emitted map. Name a retail type here to use theirs instead.
+    public string Terrain => TerrainType ?? "";
 
     /// <summary>
     /// Our faction id -> the retail BASE side whose UI chrome it borrows ("USA", "China",

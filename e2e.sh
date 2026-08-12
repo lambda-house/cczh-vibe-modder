@@ -1401,8 +1401,32 @@ echo "  the same two shapes separate and connect under THEIR cliff rule, not our
 # quietest failure in the format: readTexClass simply fails to open the file and returns,
 # and the map draws untextured with no error anywhere.
 tt=$(./tools/zhasset map read "$gated_map" | sed -n "s/.*terrain classes: \['\([^']*\)'\].*/\1/p")
+# A pack authors its OWN ground by default, so the check forks: ours must come with a Terrain
+# block AND a tile that countTiles will accept; a retail name must exist AND its texture must
+# ship. Both halves matter — naming a real block whose texture is absent renders black, which
+# is how desertA reached a match.
+if [ -f "$MAPD/gated/Data/INI/Terrain/e2egate.ini" ]; then
+  tr -d '\r' < "$MAPD/gated/Data/INI/Terrain/e2egate.ini" | grep -q "^Terrain $tt\$" \
+    || { echo "  AUTHORED TERRAIN '$tt' HAS NO Terrain BLOCK"; exit 1; }
+  tile="$MAPD/gated/Art/Terrain/$tt.tga"
+  [ -f "$tile" ] || { echo "  AUTHORED TERRAIN '$tt' SHIPS NO TILE at Art/Terrain/"; exit 1; }
+  python3 - "$tile" <<'PYTILE'
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+w, h = struct.unpack_from("<HH", d, 12)
+kind, bpp = d[2], d[16]
+# countTiles: uncompressed true-colour, 24-32bpp, at least one 64x64 tile. Fail any of these
+# and it returns 0 tiles, readTexClass returns without opening anything, and the map is BLACK
+# with no error from the engine.
+if kind not in (2, 10) or not (24 <= bpp <= 32) or w // 64 < 1 or h // 64 < 1:
+    print(f"  TILE REJECTED BY countTiles: type={kind} bpp={bpp} {w}x{h}"); sys.exit(1)
+if len(d) != 18 + w * h * (bpp // 8):
+    print(f"  TILE IS TRUNCATED: {len(d)} bytes for {w}x{h}x{bpp}"); sys.exit(1)
+print(f"  authored ground: {w}x{h} {bpp}bpp -> {(w//64)*(h//64)} tile(s), countTiles accepts it")
+PYTILE
+fi
 TERRAIN_INI="$HOME/work/oss/zh-retail/Data/INI/Terrain.ini"
-if [ -f "$TERRAIN_INI" ]; then
+if [ ! -f "$MAPD/gated/Data/INI/Terrain/e2egate.ini" ] && [ -f "$TERRAIN_INI" ]; then
   # Two traps in one line, both of which this file has hit before:
   #   tr -d '\r' — retail INI is CRLF, so a "$" anchor matches nothing (gate 18).
   #   grep -c, not -q — under `set -o pipefail`, grep -q exits on the first match, SIGPIPEs

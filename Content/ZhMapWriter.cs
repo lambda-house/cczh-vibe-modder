@@ -61,6 +61,57 @@ public static class ZhMapWriter
     /// </summary>
     public const int Border = 8;
 
+
+    /// <summary>Their <c>TILE_PIXEL_EXTENT</c>: one terrain tile is 64x64 pixels, and
+    /// <c>countTiles</c> derives the tile count by dividing the image by it.</summary>
+    public const int TilePixels = 64;
+
+    /// <summary>
+    /// A terrain tile the map can paint itself with, so a pack's ground is ITS OWN.
+    ///
+    /// <para>Until this, a map's SHAPE was authored and its SURFACE was retail's — the writer
+    /// named a `TerrainType` like `SandMediumType2` and inherited EA's texture. This is the
+    /// last borrowed thing in an emitted map.</para>
+    ///
+    /// <para><c>countTiles</c> is picky in ways that fail as a BLACK MAP rather than an error:
+    /// the image must be uncompressed true-colour (TGA type 2), 24 or 32 bits, and at least
+    /// 64x64 — under that it yields zero tiles and <c>readTexClass</c> simply returns. One tile
+    /// is all the map asks for, since <c>BlendTileData</c> declares <c>numTiles = 1</c>.</para>
+    ///
+    /// <para>The pattern is a mottled grain rather than a flat colour, for the same reason the
+    /// mesh test used a grid: a flat fill proves the file loaded and hides everything about how
+    /// it is mapped. Tiling artefacts are the thing worth being able to see.</para>
+    /// </summary>
+    public static byte[] TerrainTile(int seed = 12345)
+    {
+        int n = TilePixels;
+        var px = new byte[n * n * 3];
+        // A tiny deterministic PRNG rather than System.Random: the emitted bytes must be
+        // identical on every machine, or two people compiling one pack get different packs.
+        uint st = (uint)seed | 1u;
+        uint Next() { st ^= st << 13; st ^= st >> 17; st ^= st << 5; return st; }
+        for (int y = 0; y < n; y++)
+            for (int x = 0; x < n; x++)
+            {
+                int grain = (int)(Next() % 24) - 12;
+                // A faint diagonal weave so rotation and tiling are both visible.
+                int weave = ((x + y) % 16 < 8) ? 5 : -5;
+                int r = Math.Clamp(168 + grain + weave, 0, 255);
+                int g = Math.Clamp(146 + grain + weave, 0, 255);
+                int b = Math.Clamp(104 + grain, 0, 255);
+                int o = ((n - 1 - y) * n + x) * 3;          // TGA rows run bottom-up
+                px[o] = (byte)b; px[o + 1] = (byte)g; px[o + 2] = (byte)r;
+            }
+
+        var tga = new byte[18 + px.Length];
+        tga[2] = 2;                                          // uncompressed true-colour
+        BitConverter.GetBytes((ushort)n).CopyTo(tga, 12);
+        BitConverter.GetBytes((ushort)n).CopyTo(tga, 14);
+        tga[16] = 24;
+        px.CopyTo(tga, 18);
+        return tga;
+    }
+
     public sealed class Result
     {
         public byte[] Bytes = Array.Empty<byte>();
