@@ -2612,5 +2612,135 @@ import json,sys; print(len(json.load(open('$rec'))['parts']))") part names survi
 fi
 
 
+gate "authored textures — tiling, deterministic, and embedded so they can be SEEN"
+# MEASURED, and it decides the design: 61.9% of the 3,790 retail meshes carrying texcoords
+# have UVs OUTSIDE 0..1. The engine wraps, so a texture here is a tiling MATERIAL rather than
+# an unwrapped atlas — which is what the recipes' cube projection produces, and why every
+# pattern has to survive repetition rather than merely look right once.
+TX=$(mktemp -d); trap 'rm -rf "$TX"' EXIT
+
+# --- 1. DETERMINISM. The output is hashed like any other content. ----------------------
+# Nothing in the generator may use the `random` module: two runs of one recipe must be
+# byte-identical, or a pack's contentHash changes every build and stops meaning anything.
+./tools/zhasset texture --out "$TX/a.tga" --size 128 --seed 5 --rgb 90 100 80 >/dev/null
+./tools/zhasset texture --out "$TX/b.tga" --size 128 --seed 5 --rgb 90 100 80 >/dev/null
+cmp -s "$TX/a.tga" "$TX/b.tga" \
+  || { echo "  THE TEXTURE GENERATOR IS NOT DETERMINISTIC — contentHash would drift"; exit 1; }
+./tools/zhasset texture --out "$TX/c.tga" --size 128 --seed 6 --rgb 90 100 80 >/dev/null
+cmp -s "$TX/a.tga" "$TX/c.tga" \
+  && { echo "  a different seed produced identical bytes — the seed is being ignored"; exit 1; }
+echo "  same recipe, same bytes; a different seed differs"
+
+python3 - "$TX/a.tga" <<'PYTX'
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+idlen, _, dtc, _, _, _, _, _, w, h, bpp, _ = struct.unpack_from("<BBBHHBHHHHBB", d, 0)
+assert dtc == 2 and bpp == 24, (dtc, bpp)
+assert len(d) - 18 - idlen == w * h * 3, (len(d), w, h)
+
+def px(x, y):
+    p = 18 + idlen + (y * w + x) * 3
+    return sum(d[p:p + 3]) / 3.0
+
+# THE TILE SEAM. Panel cuts always include 0, so column 0 is a seam line. Without that a
+# panel grid produces a visible discontinuity every `size` pixels once the texture repeats —
+# an artefact that looks like a broken texture and is actually a layout mistake.
+col0 = sum(px(0, y) for y in range(h)) / h
+mid = sum(px(w // 2 + 3, y) for y in range(h)) / h
+if col0 >= mid * 0.92:
+    print(f"  NO SEAM AT THE TILE BOUNDARY: column 0 mean {col0:.1f} vs interior {mid:.1f}")
+    print("   — the panel grid must cut at 0 or the repeat shows a discontinuity")
+    sys.exit(1)
+print(f"  the panel grid cuts at the tile boundary (column 0 {col0:.0f} vs interior {mid:.0f})")
+PYTX
+
+# --- 2. A mesh must not NAME a texture nobody wrote. -----------------------------------
+# Same failure class as a model resolving to no file: the object appears, untextured, and
+# nothing anywhere reports it. Only checkable when Blender is present, since it needs a build.
+BL=/Applications/Blender.app/Contents/MacOS/Blender
+if [ ! -x "$BL" ]; then
+  echo "  (no Blender: the mesh/texture pairing check needs a build — skipped)"
+else
+  cat > "$TX/r.json" <<'JSONTX'
+{ "name": "TXGATE", "budget": 400, "uvScale": 16, "texture": "body.tga",
+  "textures": { "body.tga": { "size": 64, "seed": 2, "base": [100, 100, 100], "panel": 20 } },
+  "parts": [
+    { "name": "BODY", "shape": "box", "size": [20, 20, 20], "at": [0, 0, 10] },
+    { "name": "CAP", "shape": "box", "size": [10, 10, 6], "at": [0, 0, 23],
+      "texture": "nosuch.tga" }
+  ] }
+JSONTX
+  out=$(./tools/zhasset model --recipe "$TX/r.json" --out "$TX/r.w3d" 2>&1)
+  case "$out" in
+    *"WARNING"*"nosuch.tga"*) : ;;
+    *) echo "  A MESH NAMING A TEXTURE THAT WAS NEVER WRITTEN WENT UNREPORTED"; echo "$out"
+       exit 1 ;;
+  esac
+  echo "  a mesh naming a texture nobody wrote is reported, not silently untextured"
+
+  # --- 3. PER-PART materials must survive to per-mesh TEXTURE_NAME. --------------------
+  # One --texture for the whole model makes a two-tone vehicle inexpressible, and the failure
+  # is invisible: every part just wears the same surface.
+  python3 - "$TX/r.w3d" <<'PYPP'
+import struct, sys
+buf = open(sys.argv[1], "rb").read()
+def tree(off, end):
+    n = []
+    while off + 8 <= end:
+        t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+        n.append((t, None if raw & 0x80000000 else buf[body:body + sz],
+                  tree(body, body + sz) if raw & 0x80000000 else []))
+        off = body + sz
+    return n
+got = {}
+for t, p, k in tree(0, len(buf)):
+    if t != 0x0000:
+        continue
+    st = {}
+    def scan(ns):
+        for tt, pp, kk in ns:
+            if tt == 0x001F: st["nm"] = pp[8:24].split(b"\0")[0].decode()
+            if tt == 0x0032: st["tex"] = pp.split(b"\0")[0].decode()
+            scan(kk)
+    scan(k)
+    got[st["nm"]] = st.get("tex")
+if got.get("BODY") == got.get("CAP"):
+    print(f"  PER-PART TEXTURES COLLAPSED: both parts name {got.get('BODY')!r}")
+    sys.exit(1)
+print(f"  per-part materials survive: BODY={got['BODY']} CAP={got['CAP']}")
+PYPP
+
+  # --- 4. And the texture must EMBED, or a viewer shows grey and nothing says why. -----
+  ./tools/zhasset gltf "$TX/r.w3d" --out "$TX/r.glb" | grep -q "textures EMBEDDED: body.tga" \
+    || { echo "  THE TEXTURE DID NOT EMBED into the glb"; exit 1; }
+  python3 - "$TX/r.glb" <<'PYEMB'
+import json, struct, sys, zlib
+d = open(sys.argv[1], "rb").read()
+off, ch = 12, {}
+while off + 8 <= len(d):
+    ln, ct = struct.unpack_from("<II", d, off); ch[ct] = d[off + 8:off + 8 + ln]; off += 8 + ln
+doc = json.loads(ch[0x4E4F534A]); bn = ch[0x004E4942]
+assert doc["images"], "no images"
+assert doc["samplers"][0]["wrapS"] == 10497, "sampler does not REPEAT — tiled UVs would smear"
+v = doc["bufferViews"][doc["images"][0]["bufferView"]]
+png = bn[v["byteOffset"]: v["byteOffset"] + v["byteLength"]]
+assert png[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+w, h, depth, ctype = struct.unpack_from(">IIBB", png, 16)
+# Decompress the IDAT for real. A PNG with a correct header and a corrupt stream is exactly
+# what a hand-rolled encoder produces, and it renders as nothing.
+idat = b""
+p = 8
+while p < len(png):
+    ln, typ = struct.unpack_from(">I4s", png, p)
+    if typ == b"IDAT": idat += png[p + 8: p + 8 + ln]
+    p += 12 + ln
+raw = zlib.decompress(idat)
+assert len(raw) == h * (1 + w * 3), (len(raw), h * (1 + w * 3))
+print(f"  embedded PNG decodes: {w}x{h}, {len(raw):,} bytes of pixels, sampler REPEATs")
+PYEMB
+fi
+rm -rf "$TX"; trap - EXIT
+
+
 echo
 echo "E2E PASS"

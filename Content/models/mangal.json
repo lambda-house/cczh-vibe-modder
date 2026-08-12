@@ -35,6 +35,36 @@
   "budget": 420,
   "uvScale": 12.0,
 
+  "_texture": [
+    "TWO materials, not one texture with a stripe in it. Under cube projection a band in",
+    "texture space becomes a band at a fixed WORLD height, and crosses the tracks and the gun",
+    "barrel at that height too — which is what the first attempt did. An olive hull and a rust",
+    "roof are two surfaces on two parts, so each part names its own.",
+    "",
+    "Both TILE, and that is measured rather than assumed: 61.9% of the 3,790 retail meshes",
+    "carrying texcoords have UVs outside 0..1, so the engine wraps and a texture here is a",
+    "MATERIAL rather than an unwrapped atlas. Which is exactly what cube projection produces.",
+    "",
+    "Emitted by the same `zhasset model` run, under exactly the names the TEXTURE_NAME chunks",
+    "ask for, so mesh and texture cannot drift apart."
+  ],
+  "textures": {
+    "mangal.tga": {
+      "_": "Weathered olive drab. Small panels, because the reference's hull is slab armour",
+      "__": "and applique blocks rather than one pressed sheet.",
+      "size": 256, "seed": 4,
+      "base": [86, 92, 66], "panel": 40, "seam": 0.52, "wear": 0.34,
+      "rivets": true, "accent": [58, 62, 44]
+    },
+    "mangal_roof.tga": {
+      "_": "The corrugated shed roof: rust-brown, and NARROW panels at a strong seam contrast,",
+      "__": "which is what corrugation reads as once it is a texture rather than geometry.",
+      "size": 256, "seed": 9,
+      "base": [124, 72, 46], "panel": 14, "seam": 0.62, "wear": 0.42,
+      "rivets": false, "accent": [92, 50, 34]
+    }
+  },
+
   "parts": [
     {
       "_": "Track runs. Boxes, not modelled links: the links AND the road wheels live in the",
@@ -64,6 +94,7 @@
       "____": "it 13 units tall starting at z=13.5, which rendered as a tent on skis. The",
       "_____": "reference is LONG and LOW — roughly 3:1 length to height, not 2:1.",
       "name": "CARAPACE",
+      "texture": "mangal_roof.tga",
       "shape": "ridge",
       "size": [52, 21, 15],
       "at": [2, 0, 16.5],

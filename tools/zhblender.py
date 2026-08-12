@@ -187,6 +187,14 @@ def build_part(spec, uv_scale):
     ob.name = spec["name"]
     ob.data.name = spec["name"]
 
+    # A part may name its OWN texture. Carried as a Blender material name, which the glTF
+    # exporter writes out and `zhasset w3dfrom` turns back into that mesh's TEXTURE_NAME chunk.
+    # This is what a two-tone vehicle needs: an olive hull and a rust roof are two materials on
+    # two parts, not one texture with a stripe in it — a stripe in texture space becomes a band
+    # at a fixed WORLD height under cube projection, and crosses everything at that height.
+    if spec.get("texture"):
+        ob.data.materials.append(bpy.data.materials.new(name=spec["texture"]))
+
     _taper(ob, spec.get("taper"), spec.get("taperAxis", "z"))
 
     for c in spec.get("cuts", []):

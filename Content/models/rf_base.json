@@ -28,6 +28,48 @@
   "budget": 650,
   "uvScale": 24.0,
 
+  "_texture": [
+    "Three materials. Cold grey concrete for the mass, a darker ribbed metal for the dome,",
+    "and banded stacks.",
+    "",
+    "THE STACK BANDS ARE THE INTERESTING ONE. A band lives in texture V, and under cube",
+    "projection V maps to world Z on any vertical surface — so on a standing cylinder a",
+    "texture band IS a horizontal band at a real height, which is exactly the red-and-white",
+    "banding the reference has. The same feature was WRONG on the Mangal, where it crossed the",
+    "hull, the tracks and the gun barrel at one height. The lesson is not that bands are bad,",
+    "it is that cube projection makes texture V mean world height, so a band belongs only on",
+    "parts that are meant to be banded.",
+    "",
+    "Everything TILES: measured, 61.9% of the 3,790 retail meshes with texcoords have UVs",
+    "outside 0..1, so the engine wraps and these are MATERIALS, not unwrapped atlases."
+  ],
+  "textures": {
+    "rfbase.tga": {
+      "_": "Poured concrete. Large panels, low wear, almost no rivets — it is cast, not welded.",
+      "size": 256, "seed": 3,
+      "base": [124, 126, 122], "panel": 84, "seam": 0.72, "wear": 0.18,
+      "rivets": false, "accent": [104, 106, 100]
+    },
+    "rfbase_dome.tga": {
+      "_": "Ribbed sheet metal, darker and cooler than the concrete so the dome separates from",
+      "__": "the drum it stands on. Narrow panels read as ribs at this distance.",
+      "size": 256, "seed": 12,
+      "base": [98, 104, 110], "panel": 12, "seam": 0.66, "wear": 0.22,
+      "rivets": true, "accent": [78, 84, 92]
+    },
+    "rfbase_stack.tga": {
+      "_": "Banded stacks: two red bands on dirty white. See the note above about why this works",
+      "__": "here and not on a tank.",
+      "size": 256, "seed": 21,
+      "base": [188, 186, 178], "panel": 64, "seam": 0.74, "wear": 0.40,
+      "rivets": false,
+      "bands": [
+        { "from": 54, "to": 104, "rgb": [150, 52, 40] },
+        { "from": 168, "to": 218, "rgb": [150, 52, 40] }
+      ]
+    }
+  },
+
   "parts": [
     {
       "_": "Battered podium. taper < 1 leans the walls inward, which is what reads as poured",
@@ -53,6 +95,7 @@
       "__": "size — the silhouette is a half-circle and extra rings buy interior shading",
       "___": "nobody sees. Its base sits exactly on the drum's top at z = 32.",
       "name": "DOME",
+      "texture": "rfbase_dome.tga",
       "shape": "dome",
       "size": [58, 58, 26],
       "segments": 12,
@@ -110,6 +153,7 @@
       "__": "they are the highest thing on the site, and a stack that stops below the dome",
       "___": "reads as a vent. The red and white banding is texture.",
       "name": "STACKS",
+      "texture": "rfbase_stack.tga",
       "shape": "cylinder",
       "size": [10, 10, 34],
       "segments": 6,
