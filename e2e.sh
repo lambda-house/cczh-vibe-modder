@@ -2094,6 +2094,48 @@ haslabel "$STR/out/Maps/demo_map/map.str" "MAP:demo_map" \
   || { echo "  map.str does not name the map"; exit 1; }
 echo "  labels.str carries INI:Faction AND SIDE; map.str names the map"
 
+# --- 1b. EVERY LABEL AN INI REFERENCES MUST EXIST, AND VICE VERSA. -------------------
+# *This one was found by a witness in a real match and by nothing else.* The string table had
+# always carried a CONTROLBAR:ToolTip<unit> label per unit, and the `DescriptLabel` key that
+# references it was never emitted — so every build button in every pack shipped with an EMPTY
+# description while eight authored strings sat orphaned.
+#
+# Nothing structural could catch it, and the asymmetry is why: an invalid enum VALUE kills the
+# process and names the file, but a MISSING KEY is silently dropped and the boot stays clean.
+# The engine's own log gave it away, printing `descriptionLabel=` with nothing after it.
+#
+# So the check runs BOTH WAYS. A dangling reference renders as MISSING:'...' in game; an
+# orphaned label is a string nobody can ever see, and is how a whole key goes unnoticed.
+python3 - "$STR/out" <<'PYLBL'
+import glob, re, sys
+out = sys.argv[1]
+have = set()
+for ln in open(f"{out}/labels.str", encoding="latin-1").read().replace("\r", "").splitlines():
+    if re.match(r"^[A-Za-z]+:\S+$", ln):
+        have.add(ln.strip())
+used = set()
+for f in glob.glob(f"{out}/Data/INI/*/*.ini"):
+    t = open(f, encoding="latin-1").read().replace("\r", "")
+    for m in re.finditer(r"^\s*(?:TextLabel|DescriptLabel|DisplayName)\s*=\s*(\S+)", t, re.M):
+        used.add(m.group(1))
+# Only OUR labels are ours to satisfy: an INI may legitimately reference a retail label, and
+# `INI:Faction…`/`SIDE:…` are consumed by the shell rather than by any INI key.
+ours = {u for u in used if u.startswith(("CONTROLBAR:", "OBJECT:"))}
+dangling = sorted(u for u in ours if u not in have)
+orphan = sorted(h for h in have
+                if h.startswith(("CONTROLBAR:", "OBJECT:")) and h not in used)
+if dangling:
+    print(f"  INI REFERENCES LABELS THAT WERE NEVER AUTHORED: {dangling[:4]}")
+    print("   — these render as MISSING:'...' in game")
+    sys.exit(1)
+if orphan:
+    print(f"  AUTHORED LABELS NOTHING REFERENCES: {orphan[:4]}")
+    print("   — a string nobody can see means a KEY was never emitted, and a missing key")
+    print("     is silently dropped while the boot stays clean")
+    sys.exit(1)
+print(f"  {len(ours)} label references all resolve, and no authored label is orphaned")
+PYLBL
+
 # --- 2. labels.str must NOT be installable by accident. ------------------------------
 # A bare Generals.str under Data/ would be picked up by `rsync -a Data Art` and replace the
 # whole retail table with 37 labels. It lives at the pack root for exactly that reason.

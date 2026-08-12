@@ -342,6 +342,13 @@ public static class ZhCompiler
 
             sb.AppendLine($"Object {P(u.Id)}");
             sb.AppendLine($"  Side = {Side(u.FactionId)}");
+            // The object's NAME as the player reads it. Authored into the string table since
+            // labels landed, and never referenced from here — the second instance of exactly
+            // the bug a real match turned up on `DescriptLabel`, and found by generalising
+            // that one into a both-ways label check rather than by looking again.
+            // Legal per ThingTemplate.cpp:132 (INI::parseAndTranslateLabel); retail spells it
+            // `DisplayName = OBJECT:Humvee`.
+            sb.AppendLine($"  DisplayName = OBJECT:{P(u.Id)}");
             // Portrait and button art. Without SelectPortrait the selected object shows an
             // empty tile in the control bar — cosmetic, but it reads as "broken", and both
             // are just names of images the player already has installed.
@@ -749,6 +756,18 @@ public static class ZhCompiler
             sb.AppendLine($"  Command = {(u.IsStructure ? "DOZER_CONSTRUCT" : "UNIT_BUILD")}");
             sb.AppendLine($"  Object = {P(u.Id)}");
             sb.AppendLine($"  TextLabel = CONTROLBAR:{P(u.Id)}");
+            // *FOUND BY A WITNESS IN A REAL MATCH, and by nothing else.* The string table has
+            // always carried a CONTROLBAR:ToolTip<unit> label per unit, and this key that
+            // references it was never emitted — so every build button in every pack we have
+            // shipped had an EMPTY description, and eight authored strings sat orphaned.
+            //
+            // Nothing here could have caught it. `DescriptLabel` is a KEY, not a value, and an
+            // unknown or absent key is silently dropped while the boot stays clean; only a bad
+            // enum VALUE kills the process. The engine's own log gave it away, reading
+            // `descriptionLabel=` with nothing after the equals.
+            // Legal per ControlBar.cpp:115 (INI::parseAsciiString), and retail spells it this
+            // way — `DescriptLabel = CONTROLBAR:TooltipDaisyCutter`.
+            sb.AppendLine($"  DescriptLabel = CONTROLBAR:ToolTip{P(u.Id)}");
             sb.AppendLine($"  ButtonImage = {icons.Claim(P(u.Id))}");
             sb.AppendLine("  ButtonBorderType = BUILD");
             sb.AppendLine("End").AppendLine();
