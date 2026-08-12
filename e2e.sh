@@ -1645,6 +1645,21 @@ if [ "${ZH_PLAY:-0}" != "1" ]; then
 elif [ ! -x "$HOME/GeneralsX/GeneralsZH/GeneralsXZH" ]; then
   echo "  skipped (no retail install at ~/GeneralsX/GeneralsZH)"
 else
+  # UNINSTALL every pack already there, first. Retail's PlayerTemplate is a single file at
+  # Data/INI/PlayerTemplate.ini, so anything inside the DIRECTORY is a pack — which makes the
+  # installed set discoverable without a manifest. Since sides became pack-prefixed, packs no
+  # longer overwrite each other; they COEXIST, the lobby lists several factions, and the drive
+  # plays whichever is default. Installing on top of leftovers silently tests the wrong pack.
+  ZHDIR="$HOME/GeneralsX/GeneralsZH"
+  for old_pack in $(ls "$ZHDIR/Data/INI/PlayerTemplate/"*.ini 2>/dev/null \
+                    | xargs -r -n1 basename | sed 's/\.ini$//'); do
+    find "$ZHDIR/Data/INI" \( -name "$old_pack.ini" -o -name "${old_pack}_overrides.ini" \) \
+      -delete 2>/dev/null || true
+    rm -f "$ZHDIR/Art/Textures/${old_pack}_icons.tga" \
+          "$ZHDIR/Art/Textures/${old_pack}_spark.tga" \
+          "$ZHDIR/Art/Terrain/${old_pack}_ground.tga"
+  done
+
   PLAY=$(mktemp -d)
   rts compile --target zh --out "$PLAY" \
     --mod content/mods/chokepoint.json --mod content/mods/demo-attach.json >/dev/null

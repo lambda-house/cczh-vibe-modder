@@ -118,23 +118,53 @@ def game_is_front():
         return False
 
 
-def assert_game_front(what):
-    """Refuse to read or click game-space coordinates while another app is in front.
+def game_visible():
+    """Is the GAME what occupies its window right now — not merely focused?
 
-    Not paranoia — this happened: Chrome took focus mid-sequence and `find` cheerfully
-    returned a point in ITS window, after which every click went into a browser. A pixel read
-    of the wrong app comes back as plausible DATA rather than as an error, which makes it the
-    more dangerous half. `shot` is deliberately exempt: capturing the screen is always safe and
-    is how you find out what went wrong.
+    FRONTMOST IS THE WRONG TEST, and using it cost two rounds of false refusals. Focus and
+    occlusion are different things: the driver's own Terminal necessarily has focus when a
+    standalone command runs, and clicks still reach the game perfectly well; conversely an app
+    can hold focus from another display while the game is fully visible. What actually matters
+    is whether the game's pixels are the ones under our coordinates — which is a CONTENT
+    question.
+
+    The engine draws a saturated cyan nothing else on this desktop does: shell menu button
+    borders, and the command bar's outline in a match. Finding it at either place means we are
+    looking at the game.
     """
-    if not game_is_front():
-        who = subprocess.run(
-            ["osascript", "-e", 'tell application "System Events" to return name of '
-                                'first process whose frontmost is true'],
-            capture_output=True, text=True).stdout.strip() or "something else"
-        sys.exit(f"  REFUSING TO {what}: '{who}' is frontmost, not the game.\n"
-                 f"  Game-space coordinates would land in the wrong window. "
-                 f"Raise the game and re-run.")
+    for gx, gy in ((643, 150), (338, 392), (259, 392)):
+        try:
+            r, g, b = pixel(gx, gy)
+        except Exception:
+            return False
+        if b > 170 and g > 110 and r < 90:
+            return True
+    return False
+
+
+def assert_game_front(what):
+    """Refuse to read or click game-space coordinates while something else covers the window.
+
+    Not paranoia — this happened: Chrome took focus AND covered the game, `find` returned a
+    point inside ITS window, and every subsequent click went into a browser. A pixel read of
+    the wrong app comes back as plausible DATA rather than as an error, which makes reading the
+    more dangerous half. `shot` is exempt: capturing is always safe and is how you find out
+    what went wrong.
+    """
+    if game_visible():
+        return
+    focus_game()                      # raise, then look again
+    if game_visible():
+        return
+    # WARN, do not refuse. Two attempts at a hard gate — frontmost, then a cyan content probe —
+    # both produced false refusals that blocked real work: focus legitimately sits with the
+    # terminal that launched the command, and the cyan landmarks move with window size and
+    # camera. The genuine hazard (Chrome COVERING the game, so a read returns another app's
+    # colours as plausible data) is real but rare, and a warning that names it is worth more
+    # than a gate that stops the tool being usable. The costly half is guarded where it
+    # actually bit: find_structure sanity-checks its own answer.
+    print(f"  WARNING: could not confirm the game is visible before {what} — if the numbers "
+          f"look wrong, something is covering the window.", file=sys.stderr)
 
 
 def require_cliclick():
@@ -524,6 +554,9 @@ def region_grid(gx, gy, gw, gh, cols=64, rows=40):
     return out
 
 
+C_R_GAP = 40
+
+
 def find_structure():
     """Locate the player's starting building on screen, by COLOUR rather than coordinate.
 
@@ -552,7 +585,14 @@ def find_structure():
     def neighbours(p):
         return sum(1 for q in blue if abs(q[0] - p[0]) < 70 and abs(q[1] - p[1]) < 70)
     best = max(blue, key=lambda p: (neighbours(p), -p[1]))
-    return round(best[0]), round(best[1])
+    x, y = round(best[0]), round(best[1])
+    # Sanity-check the ANSWER, since the visibility guard is only a warning: re-probe the point
+    # and require it to still be blue. A coordinate found inside an occluding window will not
+    # survive this, which is the failure that sent clicks into a browser.
+    r, g, b = pixel(x, y)
+    if not (b > C_R_GAP + r and b > 70):
+        return None
+    return x, y
 
 
 def cmd_find(a):

@@ -208,9 +208,31 @@ public static class Program
                           $"{r.Locomotors} locomotors · {r.Buttons} buttons · {r.Sets} command sets · " +
                           $"{r.Templates} factions");
         foreach (var f in r.Files) Console.WriteLine($"  {Path.GetRelativePath(outRoot, f)}");
+        // A MANIFEST, and an uninstall built from it. Installing is rsync and leaves no record,
+        // so packs accumulate — and since faction sides became pack-prefixed they no longer
+        // overwrite each other, they COEXIST. The lobby then lists several factions and a match
+        // plays whichever is default, which silently tests the wrong pack. That cost an hour
+        // twice: once chasing a model override that was never broken, once a build bar that was
+        // never missing.
+        var rel = r.Files.Select(f => Path.GetRelativePath(outRoot, f))
+                         .OrderBy(x => x, StringComparer.Ordinal).ToList();
+        File.WriteAllLines(Path.Combine(outRoot, "MANIFEST.txt"), rel);
+
+        // The map is the exception: MapCache only scans USER data, never the install, so it
+        // goes somewhere else and comes back out somewhere else.
+        string userMaps = "~/Library/Application\\ Support/GeneralsX/GeneralsZH/Maps";
+        bool hasMap = rel.Any(f => f.StartsWith("Maps" + Path.DirectorySeparatorChar));
+
         Console.WriteLine();
-        Console.WriteLine("install:  rsync -a " + outRoot + "/ ~/GeneralsX/GeneralsZH/");
-        Console.WriteLine("play:     cd ~/GeneralsX/GeneralsZH && ./run.sh -win");
+        Console.WriteLine($"  MANIFEST.txt ({rel.Count} files)");
+        Console.WriteLine();
+        Console.WriteLine("uninstall previous:");
+        Console.WriteLine("  (cd ~/GeneralsX/GeneralsZH && xargs -r rm -f < " + outRoot + "/MANIFEST.txt) 2>/dev/null");
+        Console.WriteLine("install:");
+        Console.WriteLine("  rsync -a " + outRoot + "/Data " + outRoot + "/Art ~/GeneralsX/GeneralsZH/");
+        if (hasMap)
+            Console.WriteLine($"  rsync -a {outRoot}/Maps/ {userMaps}/     # user data, NOT the install");
+        Console.WriteLine("play:     cd ~/GeneralsX/GeneralsZH && ./run-logged.sh -win -quickstart");
         return 0;
     }
 

@@ -416,6 +416,23 @@ other out, which is not a diagnosis. *Every place that moves the cursor must REC
 left it — the guard's first outing blamed a human for the driver's own focus click on a retry,
 and a guard that cries wolf is worse than none.*
 
+**Installing a pack must UNINSTALL the previous one.** `rts compile` writes `MANIFEST.txt` and
+prints the `rm`-by-manifest that undoes an install. Since faction sides became pack-prefixed,
+packs no longer overwrite each other — they COEXIST, the lobby lists several factions, and a
+match plays whichever is default. That silently tests the wrong pack, and it cost an hour
+twice: once chasing a model override that was never broken, once a build bar that was never
+missing. Retail's `PlayerTemplate` is a single file, so anything inside
+`Data/INI/PlayerTemplate/` is a pack and the installed set is discoverable without the manifest
+— which is how the e2e gate cleans before it installs, and why it refuses to run with more
+than one pack present.
+
+*The visibility guard on `zhdrive` is a WARNING, not a gate.* Two attempts at a hard check —
+frontmost, then a cyan content probe — both produced false refusals that blocked real work:
+focus legitimately sits with the terminal that launched the command, and the cyan landmarks
+move with window size and camera. The genuine hazard is real but rare (Chrome COVERING the
+game, so a read returns another app's colours as plausible data), so `find_structure`
+re-probes its own answer instead and the rest warns.
+
 **Observe needs no permission and answers every LOAD-TIME question**, which is where every
 bug so far has actually lived. Act buys "click build and see" and nothing before it.
 *Do not use `osascript -e 'tell application "Finder" to get bounds of window of desktop'` to
