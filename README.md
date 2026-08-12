@@ -299,3 +299,15 @@ e2e.sh      build + verification gate + balance demos + shell equivalence check
    they belong before anyone tunes a faction seriously.
 8. Lockstep session layer: exchange command logs, per-tick hash comparison for
    desync detection — the machinery `rts replay` already exercises in-process.
+
+## License
+
+GPL v3 — see [LICENSE](LICENSE).
+
+This project contains no Electronic Arts code and no retail game content. It is
+written against EA's GPL v3 release of the Command & Conquer Generals / Zero Hour
+source as a *schema reference*, and it emits `Data/INI` for a retail install the
+user already owns. The `.big` archives, `Data/INI`, `generals.csf`, the maps and
+all art remain EA-copyrighted and are not redistributed here; the directories that
+hold extracted material locally (`reference/`, `build/`, `.rts-packs/`) are
+gitignored for that reason.
