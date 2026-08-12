@@ -181,6 +181,19 @@
       "grilles": 0,
       "ao": 0.3,
       "lip": 0.35
+    },
+    "mangal_wheel.tga": {
+      "_": "Road wheels on a hull plate, with the belt's runs shadowed top and bottom.",
+      "size": 64,
+      "seed": 52,
+      "base": [
+        108,
+        110,
+        96
+      ],
+      "wheels": 1,
+      "runDepth": 0.14,
+      "paint": "wheels"
     }
   },
   "parts": [
@@ -254,6 +267,38 @@
         "width": 0.6,
         "segments": 1
       }
+    },
+    {
+      "_": [
+        "WHAT YOU SEE FROM THE SIDE IS WHEELS, NOT TRACK. The belt reads as two horizontal",
+        "runs along the top and bottom, and the space between them is running gear.",
+        "",
+        "It has to be its OWN mesh, and that is forced rather than stylistic: W3DTankDraw",
+        "animates a belt by sliding its whole sheet along U, so a wheel painted onto the",
+        "tread travels down the hull with the links. Static plate, moving belt around it.",
+        "",
+        "Mirrored, and deliberately NOT named TREADS* — it must not be found by the scan.",
+        "Sits 0.4 proud of the belt's outer face so it is never coplanar with it.",
+        "A plain box, no bevel: 12 triangles for the single most legible feature on the",
+        "lower half of the vehicle."
+      ],
+      "name": "WHEELS",
+      "shape": "box",
+      "texture": "mangal_wheel.tga",
+      "size": [
+        30,
+        0.8,
+        6
+      ],
+      "at": [
+        0,
+        17.4,
+        3
+      ],
+      "mirror": "y",
+      "noAtlas": true,
+      "uvScale": 6,
+      "_uv": "uvScale 6 with the plate spanning z 0..6 makes V land on exactly 0..1 — the whole sheet once, no offset, no wrap. U then runs 5 repeats over 30 units, so one wheel per tile is five wheels on the vehicle."
     },
     {
       "_": "THE SKIRT — vertical plates over the upper half of each track, and it exists to",
@@ -349,17 +394,17 @@
       "texture": "mangal_roof.tga",
       "shape": "ridge",
       "size": [
-        52,
+        50,
         40,
-        12
+        11
       ],
       "at": [
-        2,
+        1,
         0,
         22
       ],
       "ridgeAxis": "x",
-      "ridgeWidth": 0.18,
+      "ridgeWidth": 0.5,
       "bevel": {
         "width": 0.4,
         "segments": 1
@@ -368,7 +413,8 @@
       "__": "It OVERHANGS everything — 52 x 42 over a 44 x 34 frame, four units proud on every side. That overhang is most of what makes the silhouette read as a shelter draped over a tank rather than a hull wearing a lid.",
       "___": "ridgeAxis x: the ridge runs fore-and-aft, so the panels shed to the flanks.",
       "____": "The EAVES come down to 16 — below the frame's top at 20 — so the panels cover the flanks and the open frame is seen mainly from the FRONT. That is how the reference is put together, and a roof whose eaves sat above the frame turned the whole thing into a carport.",
-      "_____": "Pushed 4 units FORWARD of the frame. The reference's roof projects past the nose as a visor over the open front — it is the first thing you see coming at you, and a roof flush with the frame loses it entirely."
+      "_____": "Two units proud of the frame at the nose. The reference's roof projects over the open front, but at six units it SHADED the opening shut at the game's camera angle and the interior stopped being visible at all.",
+      "______": "ridgeWidth 0.5, not 0.18. The flat crown is HALF the width — the panels break at its edges rather than meeting in a line. 0.18 was pass one's tent value reinstated on a wider part, and it made a barn."
     },
     {
       "_": "THE CASEMATE, and the name is the decision. It was called TURRET, and that name is",

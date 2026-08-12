@@ -4148,6 +4148,112 @@ def _paint_tread(w, h, spec):
     return rows
 
 
+def _paint_wheels(w, h, spec):
+    """The RUNNING GEAR seen from the side: road wheels in a row, between the two track runs.
+
+    This exists because the belt started scrolling. Wheels and track are one texture only while
+    nothing moves; a `W3DTankDraw` belt slides its whole sheet along U, so a painted road wheel
+    travels down the hull with the links. They had to become separate SURFACES — a static plate
+    of wheels, with the moving belt visible above it, below it, and around the sloped ends.
+
+    Which is also what a tank actually looks like from the side: the belt reads as two
+    horizontal bands, and what fills the space between them is wheels.
+    """
+    lo = spec.get("base", [66, 68, 60])
+    seed = spec.get("seed", 1)
+    horiz = w >= h
+    length, across = (w, h) if horiz else (h, w)
+    n = max(2, int(spec.get("wheels", 5)))
+    # The runs the belt makes along the top and bottom of the plate. The wheels are tangent to
+    # them rather than floating, so the assembly reads as load-bearing.
+    run = max(2, int(across * float(spec.get("runDepth", 0.13))))
+    r = (across - 2 * run) * 0.5
+
+    rows = []
+    for y in range(h):
+        row = []
+        for x in range(w):
+            u, v = (x, y) if horiz else (y, x)
+            k = 0.92 + 0.16 * _hf(seed, x, y, 7)
+            if v < run or v > across - 1 - run:
+                k *= 0.62                                  # the belt's runs, in shadow
+            else:
+                # Wheel centres step by a float so the row closes on the tile boundary.
+                cyc = (u / (length / float(n))) % 1.0
+                dx = abs(cyc - 0.5) * 2.0 * (length / float(n)) * 0.5
+                dy = abs(v - across / 2.0)
+                d = (dx * dx + dy * dy) ** 0.5 / max(1.0, r)
+                if d < 1.0:
+                    # Tyre, then rim, then a bright hub. Three bands is all that survives at
+                    # RTS distance, and the hub is what makes it read as a wheel and not a hole.
+                    k *= (0.55 if d > 0.86 else
+                          1.18 if d > 0.66 else
+                          0.72 if d > 0.34 else 1.30)
+                else:
+                    k *= 0.80                              # the hull plate behind the wheels
+            row.append(tuple(int(max(0, min(255, c * k))) for c in lo))
+        rows.append(row)
+    return rows
+
+
+def _paint_ribbed(w, h, spec):
+    """Vertical ribs on sheet: a dome's meridians, a silo's stiffeners, a cooling tower.
+
+    The ribs run across the region's SHORT axis, because that is the direction a rib stiffens.
+    Structure a tiling material cannot express — it has no idea which way is up on the part.
+    """
+    rows = _panel_texture(dict(spec, size=max(w, h)))[1]
+    out = [list(rows[y][:w]) for y in range(h)]
+    n = max(4, int(spec.get("ribs", 14)))
+    # ALONG U BY DEFAULT, and NOT along the region's long axis. Under cube projection a
+    # vertical wall takes U from world x and V from world z, so a pattern varying in U is a
+    # set of UPRIGHT ribs — which is what a pilaster, a stiffener and a dome meridian all are.
+    # Choosing the axis by whichever side of the rect is longer made the building's buttresses
+    # come out as horizontal bands on any part whose UV box happened to be taller than wide,
+    # which is a property of where the part stands, not of what it is.
+    across = str(spec.get("ribAxis", "u")).lower() != "u"
+    span = h if across else w
+    pitch = span / float(n)
+    for y in range(h):
+        for x in range(w):
+            t = ((y if across else x) / pitch) % 1.0
+            # A rounded rib: bright on the near shoulder, dark in the valley beside it.
+            k = 1.16 if t < 0.22 else (0.66 if t < 0.40 else 0.94)
+            out[y][x] = tuple(int(max(0, min(255, c * k))) for c in out[y][x])
+    return out
+
+
+def _paint_pipes(w, h, spec):
+    """Pipe runs and conduit banks — the dressing that makes an industrial wall read as plant.
+
+    Retail buildings are dense with this and it is almost entirely texture: a bank of pipes at
+    RTS distance is a few light-and-dark stripes with a fitting every so often, and modelling
+    it would cost more triangles than the whole building has.
+    """
+    rows = _panel_texture(dict(spec, size=max(w, h)))[1]
+    out = [list(rows[y][:w]) for y in range(h)]
+    seed = spec.get("seed", 1)
+    n = max(2, int(spec.get("pipes", 5)))
+    horiz = w >= h
+    across = h if horiz else w
+    for i in range(n):
+        # Bands of two or three pipes, spaced irregularly but deterministically.
+        c = int(across * ((i + 0.5) / n + 0.16 * (_hf(seed, i * 37, 3, 11) - 0.5)))
+        rad = max(2, int(across * 0.035 * (1.0 + _hf(seed, i, 9, 5))))
+        for y in range(h):
+            for x in range(w):
+                u, v = (x, y) if horiz else (y, x)
+                d = abs(v - c)
+                if d > rad:
+                    continue
+                s = d / float(rad)
+                k = 1.22 - 0.62 * s * s              # a lit cylinder falling to its shadow
+                if u % max(8, int((w if horiz else h) * 0.22)) < 2:
+                    k *= 0.68                        # a flange every so often along the run
+                out[y][x] = tuple(int(max(0, min(255, cc * k))) for cc in out[y][x])
+    return out
+
+
 def _paint_hatch(w, h, spec):
     """A plated surface with one big ring hatch in the middle — a turret roof, a cupola."""
     rows = _panel_texture(dict(spec, size=max(w, h)))[1]
@@ -4212,7 +4318,8 @@ def _paint_trackmark(w, h, spec):
     return rows, alpha
 
 
-PAINTERS = {"tread": _paint_tread, "hatch": _paint_hatch}
+PAINTERS = {"tread": _paint_tread, "hatch": _paint_hatch, "wheels": _paint_wheels,
+            "ribbed": _paint_ribbed, "pipes": _paint_pipes}
 # Painters that produce a 32-bit sheet. Kept separate rather than sniffed from the return
 # value: a painter silently returning the wrong arity would be written as garbage pixels.
 ALPHA_PAINTERS = {"trackmark": _paint_trackmark}

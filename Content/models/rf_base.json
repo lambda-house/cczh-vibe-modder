@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "The Russian Federation's construction base \u2014 a Soviet-industrial pile with a dome.",
+    "The Russian Federation's construction base — a Soviet-industrial pile with a dome.",
     "Authored from the four-view turnaround at incoming/factions/russian-federation/",
     "structures/base/ (gitignored: third-party rights, and it informs PARAMETERS only).",
     "A front/rear/left/right sheet is the ideal modelling reference, because massing and",
@@ -10,7 +10,7 @@
     "565 triangles, the war factory 100 x 58 x 122 at 684.",
     "",
     "WHAT THE BUDGET BUYS IS THE SILHOUETTE, NOT THE PIPEWORK. The reference is dense with",
-    "gantry cranes, rail spurs, pipe runs and crates \u2014 all of it scene dressing around the",
+    "gantry cranes, rail spurs, pipe runs and crates — all of it scene dressing around the",
     "building rather than the building. At ~650 triangles the things that must read are the",
     "dome, the drum it sits on, the entrance portico and the stacks. Everything else is a",
     "texture's job.",
@@ -19,7 +19,7 @@
     "sit at the rear. Z is up and z = 0 is the ground, so `at` is the CENTRE of a part.",
     "",
     "The drum is 12-sided ON PURPOSE. The reference has vertical ribs around it, and a radial",
-    "array is not something this recipe format has \u2014 but a 12-gon already reads as ribbed at",
+    "array is not something this recipe format has — but a 12-gon already reads as ribbed at",
     "RTS camera distance, and it costs 44 triangles instead of a rib array's several hundred."
   ],
   "name": "RFBASE",
@@ -31,7 +31,7 @@
     "and banded stacks.",
     "",
     "THE STACK BANDS ARE THE INTERESTING ONE. A band lives in texture V, and under cube",
-    "projection V maps to world Z on any vertical surface \u2014 so on a standing cylinder a",
+    "projection V maps to world Z on any vertical surface — so on a standing cylinder a",
     "texture band IS a horizontal band at a real height, which is exactly the red-and-white",
     "banding the reference has. The same feature was WRONG on the Mangal, where it crossed the",
     "hull, the tracks and the gun barrel at one height. The lesson is not that bands are bad,",
@@ -43,7 +43,7 @@
   ],
   "textures": {
     "rfbase.tga": {
-      "_": "Poured concrete. Large panels, low wear, almost no rivets \u2014 it is cast, not welded.",
+      "_": "Poured concrete. Large panels, low wear, almost no rivets — it is cast, not welded.",
       "size": 256,
       "seed": 3,
       "base": [
@@ -71,9 +71,9 @@
       "size": 256,
       "seed": 12,
       "base": [
-        98,
-        104,
-        110
+        150,
+        156,
+        160
       ],
       "panel": [
         14,
@@ -83,12 +83,14 @@
       "wear": 0.22,
       "rivets": true,
       "accent": [
-        78,
-        84,
-        92
+        126,
+        132,
+        138
       ],
-      "ao": 0.5,
-      "lip": 0.4
+      "ao": 0.35,
+      "lip": 0.4,
+      "ribs": 16,
+      "_lighten": "Three darkening passes stack on a dome: the material's own occlusion, the rib painter's valleys, and a Cycles bake of a surface curving away from every light. Authored at the flanks' tone it renders as a black cap."
     },
     "rfbase_stack.tga": {
       "_": "Banded stacks: two red bands on dirty white. See the note above about why this works",
@@ -126,6 +128,77 @@
       ],
       "ao": 0.4,
       "lip": 0.3
+    },
+    "rfbase_ribbed.tga": {
+      "_": "Concrete with pilasters — the wings and the drum. Same base as the mass so the building stays one material, with structure cut into it rather than colour.",
+      "size": 256,
+      "seed": 33,
+      "base": [
+        124,
+        126,
+        122
+      ],
+      "panel": 52,
+      "seam": 0.7,
+      "wear": 0.18,
+      "rivets": false,
+      "accent": [
+        104,
+        106,
+        100
+      ],
+      "ao": 0.5,
+      "lip": 0.4,
+      "hatches": 0,
+      "grilles": 0,
+      "ribs": 9
+    },
+    "rfbase_pipes.tga": {
+      "_": "The machine hall's pipe runs and conduit banks, with a flange every few units.",
+      "size": 256,
+      "seed": 41,
+      "base": [
+        116,
+        118,
+        112
+      ],
+      "panel": 60,
+      "seam": 0.66,
+      "wear": 0.3,
+      "rivets": true,
+      "accent": [
+        96,
+        98,
+        92
+      ],
+      "ao": 0.55,
+      "lip": 0.45,
+      "hatches": 1,
+      "grilles": 2,
+      "pipes": 6
+    },
+    "rfbase_sign.tga": {
+      "_": "The entrance sign band. Deep red with a white rule, which is what the reference has under its lettering — the lettering itself is beyond what a 256px region can hold at this scale and is deliberately not attempted.",
+      "size": 128,
+      "seed": 61,
+      "base": [
+        148,
+        46,
+        38
+      ],
+      "panel": 200,
+      "seam": 0.85,
+      "wear": 0.22,
+      "rivets": true,
+      "accent": [
+        120,
+        36,
+        30
+      ],
+      "ao": 0.4,
+      "lip": 0.5,
+      "hatches": 0,
+      "grilles": 0
     }
   },
   "parts": [
@@ -168,11 +241,14 @@
       "bevel": {
         "width": 0.8,
         "segments": 1
-      }
+      },
+      "paint": "ribbed",
+      "_paint": "Ribbed, and it replaces geometry: the 12-gon already stands in for the reference's vertical ribs at silhouette level, and the painter puts the rest of them on the surface for nothing. The reference's drum is a colonnade — many more uprights than a 12-gon has corners.",
+      "texture": "rfbase_ribbed.tga"
     },
     {
       "_": "THE DOME. The whole reason `dome` exists as a shape. 3 rings is enough at this",
-      "__": "size \u2014 the silhouette is a half-circle and extra rings buy interior shading",
+      "__": "size — the silhouette is a half-circle and extra rings buy interior shading",
       "___": "nobody sees. Its base sits exactly on the drum's top at z = 32.",
       "name": "DOME",
       "texture": "rfbase_dome.tga",
@@ -188,11 +264,12 @@
         0,
         0,
         45
-      ]
+      ],
+      "paint": "ribbed"
     },
     {
       "_": "Entrance portico, projecting forward, with the archway cut clean through its front",
-      "__": "face. NOTE the cut is in the PART's local frame \u2014 the part is still at the origin",
+      "__": "face. NOTE the cut is in the PART's local frame — the part is still at the origin",
       "___": "when a boolean runs, so this is x +6 of the portico's own centre, not of the",
       "____": "world's. A doorway is the one thing a texture genuinely cannot fake, because the",
       "_____": "silhouette has to have a hole in it.",
@@ -229,7 +306,7 @@
       ]
     },
     {
-      "_": "The sign band over the entrance \u2014 \u0421\u041e\u0412\u0415\u0422\u0421\u041a\u0410\u042f \u041a\u041e\u041d\u0421\u0422\u0420\u0423\u041a\u0426\u0418\u041e\u041d\u041d\u0410\u042f \u0411\u0410\u0417\u0410 in the",
+      "_": "The sign band over the entrance — СОВЕТСКАЯ КОНСТРУКЦИОННАЯ БАЗА in the",
       "__": "reference. Geometry, not just painted on, because the reference's band stands",
       "___": "proud of the wall and catches its own shadow line. The lettering is the",
       "____": "texture's job.",
@@ -248,7 +325,8 @@
       "bevel": {
         "width": 0.3,
         "segments": 1
-      }
+      },
+      "texture": "rfbase_sign.tga"
     },
     {
       "_": "Flanking halls, one authored and mirrored across Y. Taller than the podium and",
@@ -270,10 +348,13 @@
       "bevel": {
         "width": 1.0,
         "segments": 1
-      }
+      },
+      "paint": "ribbed",
+      "_paint": "Pilasters. Fewer and heavier than the drum's ribs, so they read as buttresses.",
+      "texture": "rfbase_ribbed.tga"
     },
     {
-      "_": "Rear machine hall \u2014 the block the stacks stand on.",
+      "_": "Rear machine hall — the block the stacks stand on.",
       "name": "REARBLOCK",
       "shape": "box",
       "size": [
@@ -290,7 +371,9 @@
       "bevel": {
         "width": 1.0,
         "segments": 1
-      }
+      },
+      "paint": "pipes",
+      "texture": "rfbase_pipes.tga"
     },
     {
       "_": "Stacks, mirrored across Y. Deliberately TALLER than the dome: in the reference",

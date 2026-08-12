@@ -100,6 +100,11 @@
       // straight into its neighbour's. Retail splits it the same way — NVGattTank.tga for the
       // body, NVTreads.tga for the two belts.
       "build/models/mangal_tread.tga",
+      // The running gear, on its own sheet for a DIFFERENT reason than the belt's: it does not
+      // scroll, but it is a thin plate standing 17 units off the centreline, and cube
+      // projection puts its faces so far apart in UV that an atlas region sized to hold them
+      // all left the face that matters sampling an empty band of itself.
+      "build/models/mangal_wheel.tga",
       // The mud, laid on the terrain rather than on the tank. Named by no mesh — the compiler
       // finds it here, by the `track` prefix, and emits it as TrackMarks.
       "build/models/track_rf.tga",

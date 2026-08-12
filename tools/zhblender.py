@@ -458,7 +458,20 @@ def main():
         # either: every repeat would write into the same texels, over the top of whatever part
         # legitimately owns them. It stays in the SCENE, so it still casts occlusion onto the
         # hull above it; it simply is not a surface the bake writes to.
-        atlased = [o for o in parts if not o.name.upper().startswith("TREADS")]
+        #
+        # `"noAtlas": true` opts a part out for the OTHER reason, which is geometric rather
+        # than animated. Cube projection places each face by its WORLD position, so a part's UV
+        # bounding box is the union of faces that may sit far apart in UV — and the packer
+        # scales that whole box into the rect. For a chunky part the faces that matter fill it.
+        # For a THIN, OFFSET plate they do not: a 30 x 0.8 x 6 wheel plate standing at y = 17.4
+        # puts its two big faces at V = z/scale and its thin top and bottom at V = y/scale, so
+        # the box spans 1.25 of V to hold a face needing 0.5, and the face lands in the bottom
+        # third of its own region. The wheels were painted in the middle of that rect and the
+        # plate rendered the empty band above them — a region correctly packed, correctly
+        # painted, and sampling the wrong part of itself.
+        skip = {(p.get("name") or "").upper() for p in recipe["parts"] if p.get("noAtlas")}
+        atlased = [o for o in parts
+                   if not o.name.upper().startswith("TREADS") and o.name.upper() not in skip]
         rects = pack_atlas(atlased)
         for ob in atlased:
             rx, ry, rw, rh = rects[ob.name]
