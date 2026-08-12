@@ -537,14 +537,22 @@ def find_structure():
     # perfect match for the authored mesh's teal — it was the "bluest thing on screen" on the
     # first attempt, and the search happily selected a point on the HUD.
     samples = region_grid(40, 60, 720, 290)
-    best = max(samples, key=lambda s: s[2][2] - s[2][0])
-    x, y, c = best
-    if c[2] - c[0] < 40:
+    blue = [(x, y) for x, y, c in samples if c[2] - c[0] > 40 and c[2] > 70]
+    if not blue:
         return None
-    # The PEAK, not a centroid. A weighted centroid was the first attempt and it read 150
-    # game-units low: the unlit map border is dark blue too, and there is far more of it than
-    # there is building, so the mass dragged the answer onto empty ground.
-    return round(x), round(y)
+    # DENSEST, not brightest and not the centroid. Three attempts, and the reason each failed
+    # says what the signal actually is:
+    #   centroid — dragged 150 units onto empty ground by the unlit map border, which is dark
+    #     blue and far larger than any building;
+    #   peak — picks a single bright pixel, so once units and buildings shared a texture it
+    #     started selecting the UNIT, and the assertions then blamed the pack for a portrait
+    #     that was simply the wrong object's;
+    #   densest — a building occupies many samples and a tank occupies few, which is the
+    #     property that actually distinguishes them.
+    def neighbours(p):
+        return sum(1 for q in blue if abs(q[0] - p[0]) < 70 and abs(q[1] - p[1]) < 70)
+    best = max(blue, key=lambda p: (neighbours(p), -p[1]))
+    return round(best[0]), round(best[1])
 
 
 def cmd_find(a):
@@ -593,8 +601,13 @@ def cmd_verify_pack(a):
     does nothing, a portrait that silently falls back to nothing at all.
     """
     require_cliclick()
+    # focus_game RAISES and deliberately does not demand frontmost — another app can hold that
+    # flag from a second display while the game is perfectly visible and clickable. Asserting
+    # it here re-introduced the exact failure that degrade was written to remove, and failed a
+    # green run because the e2e script's own Terminal had focus. The Chrome case is different
+    # and still guarded: `find` and `pixel` keep the hard check, because reading an occluding
+    # window returns plausible DATA rather than an error.
     focus_game()
-    assert_game_front("VERIFY")
     fails = []
 
     # Selecting can miss, and a missed click looks EXACTLY like broken icons — an unlit
@@ -609,10 +622,15 @@ def cmd_verify_pack(a):
         ui_click(*where, settle=2.0)
         portrait = pixel(*MATCH["portrait"])
         button = pixel(*MATCH["build_1"])
-        if saturated(portrait) or saturated(button):
-            print(f"  selected the structure at game {where}")
+        # BOTH, not either. A unit's portrait lights up too, so stopping at the portrait
+        # accepts a tank as "the structure" and then blames the pack for a build bar the tank
+        # was never going to have. Only a producer lights both.
+        if saturated(portrait) and saturated(button):
+            print(f"  selected a producer at game {where}")
             break
-        print(f"  selection attempt {sel} found nothing lit, retrying")
+        print(f"  attempt {sel}: portrait={saturated(portrait)} button={saturated(button)} "
+              f"— not a producer, retrying")
+        time.sleep(1.5)
 
     if not saturated(portrait):
         fails.append(f"SelectPortrait did not resolve: portrait is {portrait}, an unlit panel. "

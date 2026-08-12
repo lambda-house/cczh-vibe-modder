@@ -962,8 +962,18 @@ print(f"  geometry and rally point both derived from mesh '{model}' ({radius})")
 PY4
 
 # Presentation that is mandatory rather than cosmetic.
-grep -q "^ControlBarScheme hellfire8x6" <(tr -d '\r' < "$POUT/Data/INI/ControlBarScheme/demo.ini") \
-  || { echo "  no ControlBarScheme for the new Side — the faction has no command bar"; exit 1; }
+# Derived, not hardcoded: what matters is that a scheme declares the Side the OBJECT claims.
+# setControlBarSchemeByPlayer matches on Side and leaves the bar unset when nothing does, so a
+# name check passes right up until the two drift apart — which is exactly what happened when
+# faction sides gained a pack prefix and this line still spelled the old name.
+objside=$(tr -d '\r' < "$POUT/Data/INI/Object/demo.ini" | awk '/^Object demo_hellfire_works$/,/^End$/' \
+          | sed -n 's/^  Side = //p' | head -1)
+schemeside=$(tr -d '\r' < "$POUT/Data/INI/ControlBarScheme/demo.ini" | sed -n 's/^  Side //p' | sort -u)
+case "$schemeside" in
+  *"$objside"*) : ;;
+  *) echo "  no ControlBarScheme for Side '$objside' (schemes cover: $schemeside)"
+     echo "  the faction would be selectable and have no command bar"; exit 1 ;;
+esac
 tr -d '\r' < "$OBJ" | awk '/^Object demo_hellhound$/,/^End$/' | grep -q "SelectPortrait" \
   || { echo "  no SelectPortrait — the control bar shows an empty tile"; exit 1; }
 echo "  a new Side gets a command bar, and objects get portraits"
@@ -1776,7 +1786,27 @@ PYART
     echo "  a pack ships its own mesh, and the compiled output carries it byte-identically"
   fi
 
-  # --- 4. Objects placed on the map survive into the emitted .map. ---------------------
+  # --- 4. TWO PACKS MUST NOT FIGHT. -----------------------------------------------------
+  # Objects were prefixed from the start; a faction's SIDE was not. Install two packs that each
+  # define a faction called "hellfire" and you get duplicate PlayerTemplates, duplicate
+  # ControlBarSchemes and one Side three files disagree about — the surviving faction points at
+  # ONE pack's objects and the other's are unreachable. Four packs accumulated in a test
+  # install and a match silently played the wrong pack's units.
+  rts compile --target zh --out "$AS/p1" --mod content/mods/demo-attach.json >/dev/null
+  rts compile --target zh --out "$AS/p2" --mod "$AS/ships.json" >/dev/null
+  for kind in PlayerTemplate ControlBarScheme; do
+    a=$(tr -d '\r' < "$AS/p1/Data/INI/$kind"/*.ini | grep -oE "^$kind \S+" | sort)
+    b=$(tr -d '\r' < "$AS/p2/Data/INI/$kind"/*.ini | grep -oE "^$kind \S+" | sort)
+    both=$(printf '%s\n%s\n' "$a" "$b" | sort | uniq -d)
+    [ -z "$both" ] || { echo "  TWO PACKS DECLARE THE SAME $kind: $both"; exit 1; }
+  done
+  s1=$(tr -d '\r' < "$AS/p1/Data/INI/PlayerTemplate"/*.ini | grep -oE '^  Side = \S+' | sort -u)
+  s2=$(tr -d '\r' < "$AS/p2/Data/INI/PlayerTemplate"/*.ini | grep -oE '^  Side = \S+' | sort -u)
+  shared=$(printf '%s\n%s\n' "$s1" "$s2" | sort | uniq -d)
+  [ -z "$shared" ] || { echo "  TWO PACKS SHARE A FACTION Side: $shared"; exit 1; }
+  echo "  two packs installed together share no faction, side or control bar"
+
+  # --- 5. Objects placed on the map survive into the emitted .map. ---------------------
   # Checked by the independent reader, and the OWNER is checked by name: GameLogic resolves
   # it with PlayerList::validateTeam, whose miss path is a DEBUG_CRASH before it falls back,
   # and DEBUG_CRASH is compiled into this build. "team" — the neutral side's default — is the

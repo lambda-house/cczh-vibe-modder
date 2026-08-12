@@ -131,6 +131,15 @@ Retail's own 41 `map.ini` files corroborate the shape: `Object` 272, `Buildable`
 `ParticleSystem` 4 — and **zero** `GameData`. They override locomotors but never declare a new
 one there (rule 3), and touch weapons only alongside an object override (rule 4).
 
+8b. **A faction's SIDE is a global name and must be PACK-PREFIXED, like everything else.**
+   Objects, weapons and armor were prefixed from the start; the faction name, its `Side` and
+   its `ControlBarScheme` were not. Install two packs that each define a faction called
+   `hellfire` and you get duplicate `PlayerTemplate`s, duplicate schemes, and one Side that
+   three files disagree about — the survivor points at ONE pack's objects and the other's are
+   unreachable. **Four packs accumulated in a test install and a match silently played the
+   wrong pack's units**, which cost an hour chasing a model override that was never broken.
+   e2e compiles two packs and asserts they share no faction, side or control bar.
+
 8. **A new faction needs its own `ControlBarScheme` or it is selectable and UNPLAYABLE.**
    `setControlBarSchemeByPlayer` matches `CBScheme->m_side` against the player's Side and
    leaves the bar unset when nothing matches; retail ships schemes for America, China, GLA and

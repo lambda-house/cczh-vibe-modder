@@ -83,6 +83,15 @@ public static class ZhCompiler
         // of code rather than 202,322 lines of duplication.
         string P(string id) => pack + "_" + Sanitize(id);
 
+        // A faction's SIDE is a global name, exactly like an object's, and it was the one
+        // thing left unprefixed. Install two packs that each define a faction called
+        // "hellfire" and you get duplicate PlayerTemplates, duplicate ControlBarSchemes and
+        // one Side that three files disagree about — the surviving faction then points at ONE
+        // pack's objects and the others are unreachable. That is not hypothetical: four packs
+        // accumulated in a test install, and a match played the wrong pack's units for long
+        // enough to send me hunting a phantom model-override bug.
+        string Side(string fid) => pack + "_" + Sanitize(fid);
+
         // ---- Icons: authored, not borrowed ----------------------------------------------
         // Built up front because objects, command buttons and upgrades all address the same
         // sheet, and the sheet's layout is fixed by claim order. Content icons are OURS; the
@@ -315,7 +324,7 @@ public static class ZhCompiler
             var weapon = db.Weapons[u.WeaponIdx];
 
             sb.AppendLine($"Object {P(u.Id)}");
-            sb.AppendLine($"  Side = {Sanitize(u.FactionId)}");
+            sb.AppendLine($"  Side = {Side(u.FactionId)}");
             // Portrait and button art. Without SelectPortrait the selected object shows an
             // empty tile in the control bar — cosmetic, but it reads as "broken", and both
             // are just names of images the player already has installed.
@@ -775,11 +784,11 @@ public static class ZhCompiler
             string baseSide = zh.Sides.TryGetValue(fid, out var bs) ? bs : "USA";
             var ui = UiChrome(baseSide);
 
-            sb.AppendLine($"PlayerTemplate Faction{Sanitize(fid)}");
-            sb.AppendLine($"  Side = {Sanitize(fid)}");
+            sb.AppendLine($"PlayerTemplate Faction{Side(fid)}");
+            sb.AppendLine($"  Side = {Side(fid)}");
             sb.AppendLine($"  BaseSide = {baseSide}");
             sb.AppendLine($"  PlayableSide = {(playable ? "Yes" : "No")}");
-            sb.AppendLine($"  DisplayName = INI:Faction{Sanitize(fid)}");
+            sb.AppendLine($"  DisplayName = INI:Faction{Side(fid)}");
             sb.AppendLine($"  StartMoney = {(f.StartMoney >= 0 ? f.StartMoney : 0)}");
             sb.AppendLine("  PreferredColor = R:0 G:0 B:255");
             if (f.StartingBuildingIdx >= 0)
@@ -830,9 +839,9 @@ public static class ZhCompiler
             {
                 if (!db.Factions[fid].IsStartable) continue;
                 var ui = UiChrome(zh.Sides.TryGetValue(fid, out var bs2) ? bs2 : "USA");
-                cb.AppendLine($"ControlBarScheme {Sanitize(fid)}8x6");
+                cb.AppendLine($"ControlBarScheme {Side(fid)}8x6");
                 cb.AppendLine("  ScreenCreationRes X:800 Y:600");
-                cb.AppendLine($"  Side {Sanitize(fid)}");
+                cb.AppendLine($"  Side {Side(fid)}");
                 cb.AppendLine("  QueueButtonImage SCBigButton");
                 cb.AppendLine($"  RightHUDImage {ui.HudLogo}");
                 cb.AppendLine("  CommandBarBorderColor R:0 G:21 B:126 A:255");
@@ -1118,7 +1127,7 @@ public static class ZhCompiler
                                          .OrderBy(x => x, StringComparer.Ordinal))
                 Label($"UPGRADE:{up.Substring("Upgrade_".Length)}", Title(up.Substring("Upgrade_".Length)));
             foreach (var fid in db.FactionOrder)
-                Label($"INI:Faction{Sanitize(fid)}", Title(fid));
+                Label($"INI:Faction{Side(fid)}", Title(fid));
             Write(r, Path.Combine(outRoot, "Data", "Generals.str"), st);
             r.Warnings.Add("Generals.str SHADOWS all 6,422 retail strings — every other label becomes MISSING. " +
                            "Only correct for a full conversion.");
