@@ -3987,6 +3987,81 @@ def _panel_texture(spec):
     return size, rows
 
 
+def _paint_tread(w, h, spec):
+    """A track run: link plates across the belt, and the ROAD WHEELS behind them.
+
+    This is the region that pays for the whole atlas. The Mangal spent 240 of 436 triangles on
+    modelled road wheels which turned out to be completely invisible inside the track boxes,
+    and they were deleted with a note that retail puts links and wheels in the texture instead.
+    That note was a promise a tiling material could not keep — a tile has no idea it is on a
+    track — and this is where it gets kept.
+
+    The belt runs along the region's LONG axis, whichever that is: cube projection gives a
+    48x9 track box a roughly 5:1 rectangle, and hard-coding an orientation would put the links
+    across the wrong way on any part shaped differently.
+    """
+    lo = spec.get("base", [70, 70, 64])
+    seed = spec.get("seed", 1)
+    horiz = w >= h
+    length, across = (w, h) if horiz else (h, w)
+    pitch = max(4, int(spec.get("linkPitch", 9)))
+    wheel_r = across * 0.30
+    # Six road wheels is what the reference vehicle has, and what a tank of this length reads
+    # as. Deriving the count from the radius gave three fat discs instead.
+    n_wheels = max(2, int(spec.get("wheels", 6)))
+
+    rows = []
+    for y in range(h):
+        row = []
+        for x in range(w):
+            u, v = (x, y) if horiz else (y, x)          # u along the belt, v across it
+            k = 0.9 + 0.2 * _hf(seed, x, y, 3)
+
+            # The wheels sit UNDER the links and show between them, which is why they are
+            # drawn first and the links over the top.
+            cyc = (u % max(1, int(length / n_wheels))) / max(1.0, length / n_wheels)
+            wr = abs(v - across / 2.0) / max(1.0, wheel_r)
+            wc = abs(cyc - 0.5) * 2.0
+            d = (wr * wr + wc * wc) ** 0.5
+            if d < 1.0:
+                # Tyre, rim, hub — three bands. The contrast has to be strong: this is read at
+                # RTS distance through a belt of links drawn over the top of it.
+                k *= (1.45 if d > 0.80 else
+                      0.40 if d > 0.62 else
+                      1.10 if d > 0.28 else 0.55)
+
+            # Link plates: a bright edge and its own shadow, repeated along the belt.
+            m = u % pitch
+            if m == 0:
+                k *= 0.42                                # the gap between links
+            elif m == 1:
+                k *= 1.28                                # the lit lip of the next link
+            if v < 2 or v > across - 3:
+                k *= 0.55                                # the belt's own edges, in shadow
+
+            row.append(tuple(int(max(0, min(255, c * k))) for c in lo))
+        rows.append(row)
+    return rows
+
+
+def _paint_hatch(w, h, spec):
+    """A plated surface with one big ring hatch in the middle — a turret roof, a cupola."""
+    rows = _panel_texture(dict(spec, size=max(w, h)))[1]
+    out = [list(rows[y][:w]) for y in range(h)]
+    cx, cy, r = w / 2.0, h / 2.0, min(w, h) * 0.31
+    for y in range(h):
+        for x in range(w):
+            d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+            if d < r:
+                # Ring, not disc: an outline plus a shadow is what reads as a raised cover.
+                k = 0.5 if d > r - 2.5 else (1.14 if d > r - 5 else 0.95)
+                out[y][x] = tuple(int(max(0, min(255, c * k))) for c in out[y][x])
+    return out
+
+
+PAINTERS = {"tread": _paint_tread, "hatch": _paint_hatch}
+
+
 def _atlas_texture(size, regions, base_spec):
     """Paint one atlas: each part's rectangle gets its own material.
 
@@ -4012,7 +4087,13 @@ def _atlas_texture(size, regions, base_spec):
         # Generate at the region's own size so the material's feature scale is in ATLAS
         # pixels — a panel width of 34 means 34 pixels here as it did across the whole sheet.
         s["size"] = max(pw, ph)
-        _, tile = _panel_texture(s)
+        # A region KNOWS WHAT IT IS. That is the entire point of the atlas: a tiling material
+        # has no idea it is on a track, so it can only make generic surface everywhere, while
+        # a painter told `tread` can put the links and the road wheels exactly where the belt
+        # is. Unpainted regions fall back to the panel material, which is still right for a
+        # large plated flank.
+        painter = PAINTERS.get(s.get("paint"))
+        tile = painter(pw, ph, s) if painter else _panel_texture(s)[1]
         for y in range(ph):
             for x in range(pw):
                 if py0 + y < size and px0 + x < size:
@@ -4161,7 +4242,10 @@ def cmd_model(a):
             nm = (p.get("name") or "").upper()
             if nm not in uvrects:
                 continue
-            regions.append((nm, uvrects[nm], specs.get(p.get("texture")) if p.get("texture") else None))
+            rspec = dict(specs.get(p.get("texture")) or {}) if p.get("texture") else {}
+            if p.get("paint"):
+                rspec["paint"] = p["paint"]
+            regions.append((nm, uvrects[nm], rspec or None))
         size = recipe.get("textureSize", base.get("size", 256))
         base = dict(base); base["size"] = size
         size, rows = _atlas_texture(size, regions, base)

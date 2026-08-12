@@ -104,7 +104,8 @@
       "bevel": {
         "width": 0.6,
         "segments": 1
-      }
+      },
+      "paint": "tread"
     },
     {
       "_": "The hull under the shed. Visible through the open front and whenever the camera",
@@ -208,7 +209,8 @@
       "bevel": {
         "width": 0.6,
         "segments": 1
-      }
+      },
+      "paint": "hatch"
     },
     {
       "_": "Gun, out of the turret and through the opening.",
