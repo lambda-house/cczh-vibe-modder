@@ -83,6 +83,14 @@
       // the roof is now a REGION of mangal.tga rather than a separate file. Leaving the old
       // name here was a dangling reference the pack gate caught immediately.
       "build/models/mangal.tga",
+      // The tread belt is the ONE part that cannot be a region of that atlas: W3DTankDraw
+      // scrolls a belt by adding to the mesh's U offset, which would walk a packed rectangle
+      // straight into its neighbour's. Retail splits it the same way — NVGattTank.tga for the
+      // body, NVTreads.tga for the two belts.
+      "build/models/mangal_tread.tga",
+      // The mud, laid on the terrain rather than on the tank. Named by no mesh — the compiler
+      // finds it here, by the `track` prefix, and emits it as TrackMarks.
+      "build/models/track_rf.tga",
       // One sheet for the base too, same as the Mangal: the dome and stack materials are now
       // REGIONS of rfbase.tga rather than separate files.
       "build/models/rfbase.tga"

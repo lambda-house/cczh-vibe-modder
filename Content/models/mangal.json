@@ -82,14 +82,74 @@
       ],
       "ao": 0.55,
       "lip": 0.45
+    },
+    "mangal_tread.tga": {
+      "_": "THE ONE SHEET THAT IS NOT A REGION OF THE ATLAS, because a scrolling tread cannot",
+      "__": "be. W3DTankDraw animates a belt by adding to the mesh's U offset, so UVs confined",
+      "___": "to a sub-rectangle would scroll straight out of it and into the hull's. Retail says",
+      "____": "the same by construction: NVGattTank's body is on NVGattTank.tga and its two treads",
+      "_____": "are on NVTreads.tga.",
+      "______": "128 rather than 256 because it is one belt seen edge-on, and it must TILE \u2014 the",
+      "_______": "wrap crosses the screen several times a second once the thing is moving.",
+      "________": "NO ROAD WHEELS, and that reverses what the atlas pass concluded. Painting the",
+      "_________": "wheels was right while the belt was STATIC — they were invisible geometry inside",
+      "__________": "the track box and cost 55% of the model's triangles. A W3DTankDraw belt animates",
+      "___________": "by sliding the whole sheet along U, so a painted wheel travels down the hull with",
+      "____________": "the links. A link is the only thing on a real track that moves; it is the only",
+      "_____________": "thing left on this sheet.",
+      "______________": "Darker than the hull's olive on purpose. This sheet is the one surface",
+      "_______________": "the AO bake does not reach — it left the atlas — so it has to carry its",
+      "________________": "own tone, or a belt tucked under an overhanging carapace renders as the",
+      "_________________": "brightest thing on the vehicle.",
+      "size": 128,
+      "seed": 31,
+      "paint": "tread",
+      "base": [
+        58,
+        60,
+        52
+      ],
+      "linkPitch": 16,
+      "wheels": 0
+    },
+    "mangal_house.tga": {
+      "_": "The house-colour plate, and it is painted NEARLY WHITE on purpose. Recolouring SETS",
+      "__": "the vertex material's ambient and diffuse to the team colour \u2014 the engine's own",
+      "___": "comment says it ignores whatever was there and assumes 1.0 \u2014 and the texture still",
+      "____": "modulates. So the pixel is texture x teamColour: a light plate reads as the team's",
+      "_____": "actual colour, and an olive one would read as muddy olive for every player alike.",
+      "______": "hatches and grilles are switched OFF explicitly, because an atlas region",
+      "_______": "inherits them from the sheet's base spec — the first render put a big dark",
+      "________": "access hatch in the middle of the team-colour plate.",
+      "size": 128,
+      "seed": 44,
+      "base": [
+        226,
+        226,
+        220
+      ],
+      "panel": 40,
+      "seam": 0.72,
+      "wear": 0.12,
+      "rivets": true,
+      "hatches": 0,
+      "grilles": 0,
+      "ao": 0.3,
+      "lip": 0.35
     }
   },
   "parts": [
     {
-      "_": "Track runs, pushed out to the new width. Links and road wheels are painted, not",
-      "__": "modelled \u2014 see the note above.",
-      "name": "TRACKS",
+      "_": "Track runs. Links and road wheels are painted, not modelled \u2014 see the note above.",
+      "__": "",
+      "___": "TWO PARTS NOW, NOT ONE MIRRORED PART, and the names are the reason. W3DTankDraw",
+      "____": "finds a belt by _strnicmp(meshName, \"TREADS\", 6) and reads the SEVENTH character",
+      "_____": "for the side, scrolling L forwards and R backwards. A single mirrored mesh has one",
+      "______": "name and can only be one side, so the mirror had to go. +Y is to the LEFT with +X",
+      "_______": "forward and Z up, which is what puts TREADSL at y = +13.5.",
+      "name": "TREADSL",
       "shape": "box",
+      "texture": "mangal_tread.tga",
       "size": [
         48,
         7,
@@ -100,12 +160,30 @@
         13.5,
         4.5
       ],
-      "mirror": "y",
       "bevel": {
         "width": 0.6,
         "segments": 1
-      },
-      "paint": "tread"
+      }
+    },
+    {
+      "_": "The right belt. Authored rather than mirrored, for the naming reason above.",
+      "name": "TREADSR",
+      "shape": "box",
+      "texture": "mangal_tread.tga",
+      "size": [
+        48,
+        7,
+        9
+      ],
+      "at": [
+        0,
+        -13.5,
+        4.5
+      ],
+      "bevel": {
+        "width": 0.6,
+        "segments": 1
+      }
     },
     {
       "_": "The hull under the shed. Visible through the open front and whenever the camera",
@@ -213,6 +291,33 @@
       "paint": "hatch"
     },
     {
+      "_": "THE HOUSE-COLOUR PLATE — the cheapest thing on this model and the one that says",
+      "__": "whose unit it is. Two quads' worth of geometry per flank, and the engine finds it",
+      "___": "the same way it finds a tread: by the mesh NAME. _strnicmp(meshName, \"HOUSECOLOR\",",
+      "____": "10) makes the whole submesh's vertex material take the player's colour, which is",
+      "_____": "why this is a separate part rather than a painted stripe on the carapace — a",
+      "______": "material is per-mesh, so a stripe can only be recoloured by being its own mesh.",
+      "_______": "Mirrored, because both flanks carry one and neither name is load-bearing per side.",
+      "name": "HOUSECOLOR01",
+      "shape": "box",
+      "texture": "mangal_house.tga",
+      "size": [
+        13,
+        1.4,
+        3.6
+      ],
+      "at": [
+        -11,
+        17.3,
+        18.5
+      ],
+      "mirror": "y",
+      "bevel": {
+        "width": 0.3,
+        "segments": 1
+      }
+    },
+    {
       "_": "Gun, out of the turret and through the opening.",
       "name": "BARREL",
       "shape": "cylinder",
@@ -234,6 +339,43 @@
       ]
     }
   ],
+  "_bones": [
+    "Pivots with no geometry, which is how a model tells the engine things it cannot see.",
+    "TREADFX01 and TREADFX02 are read by computeTrackSpacing: it measures the distance between",
+    "them and adds one belt width (4.0) to get how wide the mud ribbon should be. Missing, it",
+    "falls back to a fixed default sized for nothing in particular. Placed at the REAR of each",
+    "belt at ground level, matching NVGattTank's own four TREADFX pivots.",
+    "",
+    "03 and 04 are the front pair. Nothing reads them today — the engine takes 01 and 02 only —",
+    "but retail carries all four and they cost 60 bytes each."
+  ],
+  "bones": [
+    { "name": "TREADFX01", "at": [-22, -13.5, 0.2] },
+    { "name": "TREADFX02", "at": [-22, 13.5, 0.2] },
+    { "name": "TREADFX03", "at": [22, 13.5, 0.2] },
+    { "name": "TREADFX04", "at": [22, -13.5, 0.2] }
+  ],
+
+  "extraTextures": {
+    "track_rf.tga": {
+      "_": "The mud, laid on the terrain rather than on the tank — so no mesh names it and it",
+      "__": "is declared here instead of under `textures`. 32-bit: the terrain-track shader is",
+      "___": "_PresetAlphaShader and the alpha channel IS the mark.",
+      "size": 128,
+      "seed": 61,
+      "paint": "trackmark",
+      "base": [
+        58,
+        50,
+        38
+      ],
+      "bands": 2,
+      "bandWidth": 0.17,
+      "linkPitch": 8,
+      "strength": 0.8
+    }
+  },
+
   "atlas": true,
   "textureSize": 512
 }

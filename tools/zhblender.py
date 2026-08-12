@@ -192,8 +192,14 @@ def build_part(spec, uv_scale):
     # This is what a two-tone vehicle needs: an olive hull and a rust roof are two materials on
     # two parts, not one texture with a stripe in it — a stripe in texture space becomes a band
     # at a fixed WORLD height under cube projection, and crosses everything at that height.
+    # REUSED, not re-created, when two parts name the same texture. `materials.new` treats the
+    # name as a hint and silently disambiguates the second one to "<name>.001" — which is then
+    # exported, arrives here as the mesh's TEXTURE_NAME, and names a file nothing ever writes.
+    # The two treads are the first pair of parts to share a sheet, and they found it at once.
     if spec.get("texture"):
-        ob.data.materials.append(bpy.data.materials.new(name=spec["texture"]))
+        mat = bpy.data.materials.get(spec["texture"]) or \
+            bpy.data.materials.new(name=spec["texture"])
+        ob.data.materials.append(mat)
 
     _taper(ob, spec.get("taper"), spec.get("taperAxis", "z"))
 
@@ -430,14 +436,22 @@ def main():
     # large flat surface and switching every existing recipe at once would be a change nobody
     # asked for. When on, each part owns a rectangle and the generator paints into it.
     if recipe.get("atlas"):
-        rects = pack_atlas(parts)
-        for ob in parts:
+        # A TREAD IS EXCLUDED FROM THE PACK, and it has to be excluded from the BAKE for the
+        # same reason it is excluded from the pack. W3DTankDraw animates a tread by adding to
+        # its U offset, so its UVs must stay a full tiling material rather than a rectangle of
+        # a shared sheet — and a part whose UVs run well past 0..1 cannot be a bake target
+        # either: every repeat would write into the same texels, over the top of whatever part
+        # legitimately owns them. It stays in the SCENE, so it still casts occlusion onto the
+        # hull above it; it simply is not a surface the bake writes to.
+        atlased = [o for o in parts if not o.name.upper().startswith("TREADS")]
+        rects = pack_atlas(atlased)
+        for ob in atlased:
             rx, ry, rw, rh = rects[ob.name]
             print(f"ZHUV {ob.name} {rx:.6f} {ry:.6f} {rw:.6f} {rh:.6f}")
-        if recipe.get("ao", True) and len(argv) > 2:
+        if recipe.get("ao", True) and len(argv) > 2 and atlased:
             size = recipe.get("textureSize", 256)
             try:
-                bake_ao(parts, size, argv[2], recipe.get("aoSamples", 16))
+                bake_ao(atlased, size, argv[2], recipe.get("aoSamples", 16))
                 print(f"ZHAO {argv[2]} {size}")
             except Exception as e:
                 # A failed bake must not lose the model. The material still carries its own

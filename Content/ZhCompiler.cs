@@ -108,6 +108,27 @@ public static class ZhCompiler
         // made one. `zhasset models` writes <MODEL>_icon.tga beside every mesh it builds, so
         // the file is found the same way the zero-borrow lint finds a mesh's textures: through
         // zh.Art, by leaf name. No new schema field, and nothing to keep in sync.
+        // The pack's own meshes, by model name. Used twice below and cached because the second
+        // use opens the file: which sub-objects a model carries decides which Draw module and
+        // which module fields the Object gets, and that is only knowable by looking inside.
+        string? MeshFile(string model) => zh.Art.FirstOrDefault(p =>
+            string.Equals(Path.GetFileNameWithoutExtension(p), model,
+                          StringComparison.OrdinalIgnoreCase)
+            && string.Equals(Path.GetExtension(p), ".w3d", StringComparison.OrdinalIgnoreCase));
+
+        var subObjects = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        List<string> SubObjects(string model)
+        {
+            if (subObjects.TryGetValue(model, out var got)) return got;
+            var f = MeshFile(model);
+            // An ADOPTED mesh resolves to no file here, and the empty list is the right answer
+            // rather than a gap: we have not read it, so we must not claim it has treads. The
+            // measured art profile is where adopted art states its rig.
+            got = f is not null && File.Exists(f) ? W3dRefs.MeshNames(f) : [];
+            subObjects[model] = got;
+            return got;
+        }
+
         foreach (var u in db.Units)
         {
             if (!zh.Models.TryGetValue(u.Id, out var model) || string.IsNullOrWhiteSpace(model))
@@ -387,7 +408,15 @@ public static class ZhCompiler
                 r.Errors.Add($"zh.models has no model for unit '{u.Id}' — an Object with no Draw is invisible in game");
                 model = "AVCrusader";
             }
-            string draw = zh.DrawModules.TryGetValue(u.Id, out var dm) ? dm : "W3DModelDraw";
+            // WHICH DRAW MODULE IS DECIDED BY THE MESH, not by the author restating it. A model
+            // carrying TREADSL/TREADSR sub-objects wants W3DTankDraw, because that is the only
+            // module that scans for them; a model without them gains nothing from it. An
+            // explicit zh.drawModules entry still wins — adopted art has rigs we did not build.
+            var subs = SubObjects(model);
+            bool hasTreads = subs.Any(n => n.StartsWith("TREADS", StringComparison.OrdinalIgnoreCase));
+            bool hasHouseColor = subs.Any(n => n.StartsWith("HOUSECOLOR", StringComparison.OrdinalIgnoreCase));
+            string draw = zh.DrawModules.TryGetValue(u.Id, out var dm) ? dm
+                        : hasTreads ? "W3DTankDraw" : "W3DModelDraw";
             var weapon = db.Weapons[u.WeaponIdx];
 
             sb.AppendLine($"Object {P(u.Id)}");
@@ -721,6 +750,33 @@ public static class ZhCompiler
             sb.AppendLine("  End");
 
             sb.AppendLine($"  Draw = {draw} ModuleTag_Draw");
+            // HOUSE COLOUR IS OFF BY DEFAULT and costs one line to switch on. `m_okToChangeModelColor`
+            // initialises to false, and `replaceIndicatorColor` returns immediately without it —
+            // so a model with perfectly named HOUSECOLOR submeshes stays neutral grey for every
+            // player, with nothing anywhere reporting why.
+            if (hasHouseColor)
+                sb.AppendLine("    OkToChangeModelColor = Yes");
+            if (draw == "W3DTankDraw" && hasTreads)
+            {
+                // TreadAnimationRate is not a tuning knob with a sensible default — it is the
+                // GATE. `updateTreadObjects` checks it before it will even scan the sub-objects,
+                // and its default is 0.0, so a W3DTankDraw with correctly named and correctly
+                // mapped treads and no rate here never finds them. Retail's own value across the
+                // 70 objects that set it is 2.0, with 4.0 on the two fastest.
+                sb.AppendLine("    TreadAnimationRate = 2.0");
+                // Below these fractions of locomotor speed the belts stop and the hull is
+                // allowed to pivot in place. Retail sets both on every object that sets the rate.
+                sb.AppendLine("    TreadDriveSpeedFraction = 0.3");
+                sb.AppendLine("    TreadPivotSpeedFraction = 0.6");
+                // The mud the tracks leave behind, if the pack authored a strip for it. Named
+                // through zh.Art like everything else the pack carries, so a pack without one
+                // simply lays no marks rather than pointing at EA's EXTnkTrack.tga.
+                var track = zh.Art.FirstOrDefault(p =>
+                    Path.GetFileName(p).StartsWith("track", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(Path.GetExtension(p), ".tga", StringComparison.OrdinalIgnoreCase));
+                if (track is not null)
+                    sb.AppendLine($"    TrackMarks = {Path.GetFileName(track)}");
+            }
             sb.AppendLine("    DefaultConditionState");
             sb.AppendLine($"      Model = {model}");
             // The ART turret: the bone the renderer spins. The AIUpdateInterface Turret block

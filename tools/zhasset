@@ -2436,6 +2436,7 @@ W3D_CHUNKS = {
     0x0022: "VERTEX_SHADE_INDICES", 0x0023: "PRELIT_UNLIT", 0x0024: "PRELIT_VERTEX",
     0x0028: "MATERIAL_INFO", 0x0029: "SHADERS", 0x002A: "VERTEX_MATERIALS",
     0x002B: "VERTEX_MATERIAL", 0x002C: "VERTEX_MATERIAL_NAME", 0x002D: "VERTEX_MATERIAL_INFO",
+    0x002E: "VERTEX_MAPPER_ARGS0", 0x002F: "VERTEX_MAPPER_ARGS1",
     0x0030: "TEXTURES", 0x0031: "TEXTURE", 0x0032: "TEXTURE_NAME", 0x0033: "TEXTURE_INFO",
     0x0038: "MATERIAL_PASS", 0x0039: "VERTEX_MATERIAL_IDS", 0x003A: "SHADER_IDS",
     0x003B: "DCG", 0x003C: "DIG", 0x003E: "SCG", 0x0048: "TEXTURE_STAGE",
@@ -3467,14 +3468,53 @@ W3D_SHADER_OPAQUE = bytes([3, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0])
 # W3dVertexMaterialStruct: Attributes, then Ambient/Diffuse/Specular/Emissive as RGB+pad,
 # then Shininess, Opacity, Translucency. White ambient and diffuse, near-white specular,
 # shininess 0.25, fully opaque.
-W3D_VMAT_PLAIN = (struct.pack("<I", 0)
-                  + bytes([0xFF, 0xFF, 0xFF, 0]) + bytes([0xFF, 0xFF, 0xFF, 0])
-                  + bytes([0xE5, 0xE5, 0xE5, 0]) + bytes([0, 0, 0, 0])
-                  + struct.pack("<3f", 0.25, 1.0, 0.0))
+#
+# WHITE AMBIENT AND DIFFUSE IS ALSO WHAT MAKES HOUSE COLOUR WORK, and that is not a
+# coincidence to be tidied away later. `W3DAssetManager::Recolor_Vertex_Material` says so in
+# its own comment — "We ignore the existing ambient/diffuse and assume they were 1.0" — and
+# then SETS both to the team colour outright. The texture still modulates, so the pixel a
+# player sees is texture x teamColour: a HOUSECOLOR region painted near-white reads as the
+# pure team colour, and one painted olive reads as muddy olive whatever colour the team is.
+def _vmat(attributes=0):
+    return (struct.pack("<I", attributes)
+            + bytes([0xFF, 0xFF, 0xFF, 0]) + bytes([0xFF, 0xFF, 0xFF, 0])
+            + bytes([0xE5, 0xE5, 0xE5, 0]) + bytes([0, 0, 0, 0])
+            + struct.pack("<3f", 0.25, 1.0, 0.0))
+
+
+W3D_VMAT_PLAIN = _vmat()
+
+# W3DVERTMAT_STAGE0_MAPPING_LINEAR_OFFSET, from w3d_file.h's mapping enum (mask 0x00FF0000).
+# The tread contract, confirmed by dumping NVGattTank.W3D rather than by reading the header:
+# its TREADSL01 and TREADSR01 meshes each carry attr=0x00040000 and a MAPPER_ARGS0 chunk
+# reading 'UPerSec=0.1'. W3DTankDraw REQUIRES that mapper to exist — it scans the sub-objects,
+# checks `Peek_Mapper()->Mapper_ID() == MAPPER_ID_LINEAR_OFFSET`, and silently skips any tread
+# mesh without one. A correctly named TREADSL that does not carry this is a tread that never
+# moves and reports nothing.
+W3D_VMAT_LINEAR_OFFSET = 0x00040000
+W3D_TREAD_MAPPER_ARGS = "UPerSec=0.1"       # copied verbatim from the retail mesh above
 
 W3D_MESH_HEADER3_VERSION = 0x00040002       # 4.2, what every shipped mesh carries
 W3D_VERTEX_CHANNEL_LOCATION_NORMAL = 3      # LOCATION | NORMAL
 W3D_FACE_CHANNEL_FACE = 1
+
+
+def tread_side(name):
+    """Which side a mesh name declares, or None if it is not a tread at all.
+
+    THE NAME IS THE DECLARATION, exactly as it is for the engine: W3DTankDraw finds treads by
+    `_strnicmp(meshName, "TREADS", 6)` and then reads the SEVENTH character for the side. There
+    is deliberately no separate recipe flag, because a flag and a name can disagree and only
+    one of them is what the engine reads.
+
+    A trailing digit is fine and retail uses one (TREADSL01). A missing side letter is NOT: the
+    engine's default is TREAD_MIDDLE, which `updateTreadPositions` handles with a DEBUG_CRASH
+    and an offset of zero — a tread that is found, bound, and then never scrolls.
+    """
+    n = (name or "").upper()
+    if not n.startswith("TREADS"):
+        return None
+    return n[6] if len(n) > 6 and n[6] in "LR" else ""
 
 
 def _m4_mul(a, b):
@@ -3605,7 +3645,7 @@ def _zup(x, y, z):
     return (x, -z, y)
 
 
-def _w3d_mesh_node(name, container, verts, norms, uvs, tris, texture):
+def _w3d_mesh_node(name, container, verts, norms, uvs, tris, texture, mapper_args=None):
     """Build one complete MESH chunk tree from nothing.
 
     Every chunk a loading retail mesh carries is emitted here, in the order it carries them.
@@ -3674,8 +3714,9 @@ def _w3d_mesh_node(name, container, verts, norms, uvs, tris, texture):
         (0x002A, None, [                                                       # VERTEX_MATERIALS
             (0x002B, None, [
                 (0x002C, b"Material\0", []),                                   # ..._NAME
-                (0x002D, W3D_VMAT_PLAIN, []),                                  # ..._INFO
-            ]),
+                (0x002D, _vmat(W3D_VMAT_LINEAR_OFFSET if mapper_args else 0), []),
+            ] + ([(0x002E, mapper_args.encode("latin-1") + b"\0", [])]         # MAPPER_ARGS0
+                 if mapper_args else [])),
         ]),
         (0x0029, W3D_SHADER_OPAQUE, []),                                       # SHADERS
         (0x0030, None, [                                                       # TEXTURES
@@ -3730,6 +3771,15 @@ def cmd_w3dfrom(a):
     if len(set(names)) != len(names):                  # collisions would make the HLOD ambiguous
         names = [base if len(prims) == 1 else f"{base}{i:02d}" for i in range(len(prims))]
 
+    # A tread that cannot say which side it is on is refused here rather than shipped. In game
+    # it would be found, bound and then held at offset zero for the life of the match, with the
+    # engine's own complaint compiled out of the build we run.
+    bad = [n for n in names if tread_side(n) == ""]
+    if bad:
+        print(f"{os.path.basename(a.gltf)}: tread mesh must name its side — "
+              f"{', '.join(bad)} should be TREADSL... or TREADSR...")
+        return 1
+
     # Each part's centroid, in W3D space. Used twice and they must agree: as the pivot's
     # translation, and as the offset the mesh is rebased BY. The loader composes
     # world = boneTransform * vertex, so a mesh left in model space under a translated bone is
@@ -3764,10 +3814,18 @@ def cmd_w3dfrom(a):
         # per-part name has stopped meaning a separate file and now selects which material
         # fills that part's rectangle. Outside atlas mode the per-part material still wins,
         # because that is what makes a two-tone vehicle expressible.
-        tex = (a.texture if getattr(a, "force_texture", False)
+        # A TREAD IS THE ONE PART THE ATLAS CANNOT HOLD, and that is arithmetic rather than
+        # taste: scrolling works by adding to the mesh's U offset, so a tread whose UVs sit in
+        # a sub-rectangle of a shared sheet scrolls straight out of its own region and into
+        # the hull's. Retail says the same thing by construction — NVGattTank's body is on
+        # NVGattTank.tga and its two treads are on NVTreads.tga. So a tread keeps its own
+        # tiling material even in atlas mode, and the force_texture rule steps aside for it.
+        tread = tread_side(names[i]) is not None
+        tex = (a.texture if getattr(a, "force_texture", False) and not tread
                else (p["texture"] or a.texture))
         nodes.append(_w3d_mesh_node(names[i], base if len(prims) > 1 else "",
-                                    verts, norms, uvs, p["tris"], tex))
+                                    verts, norms, uvs, p["tris"], tex,
+                                    mapper_args=W3D_TREAD_MAPPER_ARGS if tread else None))
         total_v += len(verts); total_t += len(p["tris"])
 
     if len(prims) > 1:
@@ -3791,9 +3849,22 @@ def cmd_w3dfrom(a):
             piv += (_name16(nm) + struct.pack("<I", 0)
                     + struct.pack("<3f", *c) + struct.pack("<3f", 0, 0, 0)
                     + struct.pack("<4f", 0, 0, 0, 1))
+
+        # BONES WITHOUT MESHES, and they are the majority of a real model's skeleton rather
+        # than an exotic case: NVGattTank carries 29 pivots for 12 sub-objects, and the 17 with
+        # no geometry are where the engine is told things it cannot see. TREADFX01/02 set the
+        # width of the mud a tank lays, FIREPOINT01..08 place the flames on a wreck, SMOKE01..03
+        # the damage plume, MUZZLE01 the launch point. Every one is found by NAME, so a pivot
+        # writer that can only emit a pivot per mesh cannot express any of them.
+        # Appended AFTER the mesh pivots so the HLOD's bone indices (i + 1) stay correct.
+        for bn in getattr(a, "bones", None) or []:
+            piv += (_name16(str(bn["name"]).upper()) + struct.pack("<I", 0)
+                    + struct.pack("<3f", *(float(v) for v in bn["at"]))
+                    + struct.pack("<3f", 0, 0, 0) + struct.pack("<4f", 0, 0, 0, 1))
+        nbones = len(names) + 1 + len(getattr(a, "bones", None) or [])
         hier = (_chunk(W3D_HIER_HEADER,
                        struct.pack("<I", 0x00040001) + _name16(base)
-                       + struct.pack("<I", len(names) + 1) + struct.pack("<3f", 0, 0, 0))
+                       + struct.pack("<I", nbones) + struct.pack("<3f", 0, 0, 0))
                 + _chunk(W3D_PIVOTS, piv))
         nodes.append((W3D_HIERARCHY, None, w3d_tree(hier)))
 
@@ -3999,16 +4070,36 @@ def _paint_tread(w, h, spec):
     The belt runs along the region's LONG axis, whichever that is: cube projection gives a
     48x9 track box a roughly 5:1 rectangle, and hard-coding an orientation would put the links
     across the wrong way on any part shaped differently.
+
+    SEAMLESS ALONG THE BELT, which stopped being cosmetic once treads started SCROLLING. A
+    W3DTankDraw tread is a tiling material with a moving U offset, so the join between one
+    repeat and the next crosses the screen several times a second — any mismatch there reads
+    as a stutter in the track rather than as a texture seam. Both features therefore have to
+    close on the width: the link pitch divides it, and the wheels step by a FLOAT (the old
+    `int(length / n_wheels)` left a remainder, so the last wheel before the wrap was a
+    different width from the other five).
     """
     lo = spec.get("base", [70, 70, 64])
     seed = spec.get("seed", 1)
     horiz = w >= h
     length, across = (w, h) if horiz else (h, w)
+    # Round the pitch DOWN to a divisor of the belt length so the link run closes on the wrap.
     pitch = max(4, int(spec.get("linkPitch", 9)))
+    while pitch > 4 and length % pitch:
+        pitch -= 1
     wheel_r = across * 0.30
     # Six road wheels is what the reference vehicle has, and what a tank of this length reads
     # as. Deriving the count from the radius gave three fat discs instead.
-    n_wheels = max(2, int(spec.get("wheels", 6)))
+    #
+    # ZERO IS A LEGAL AND OFTEN CORRECT ANSWER, and it is the right one for a belt that
+    # SCROLLS. Painting the wheels was justified by their being invisible geometry inside the
+    # track box — true, and it stays true — but a W3DTankDraw belt animates by sliding the
+    # whole texture along U, and a road wheel that slides along the hull is worse than no road
+    # wheel at all. A static tread region on an atlas can still have them; a scrolling sheet
+    # gets links, which are the only thing on a real track that does travel.
+    n_wheels = int(spec.get("wheels", 6))
+    # Counts here are PER TILE. Cube projection repeats this sheet along the run, so six on a
+    # 48-long belt at uvScale 12 arrived in game as twenty-four.
 
     rows = []
     for y in range(h):
@@ -4019,16 +4110,17 @@ def _paint_tread(w, h, spec):
 
             # The wheels sit UNDER the links and show between them, which is why they are
             # drawn first and the links over the top.
-            cyc = (u % max(1, int(length / n_wheels))) / max(1.0, length / n_wheels)
-            wr = abs(v - across / 2.0) / max(1.0, wheel_r)
-            wc = abs(cyc - 0.5) * 2.0
-            d = (wr * wr + wc * wc) ** 0.5
-            if d < 1.0:
-                # Tyre, rim, hub — three bands. The contrast has to be strong: this is read at
-                # RTS distance through a belt of links drawn over the top of it.
-                k *= (1.45 if d > 0.80 else
-                      0.40 if d > 0.62 else
-                      1.10 if d > 0.28 else 0.55)
+            if n_wheels:
+                cyc = (u / (length / float(n_wheels))) % 1.0
+                wr = abs(v - across / 2.0) / max(1.0, wheel_r)
+                wc = abs(cyc - 0.5) * 2.0
+                d = (wr * wr + wc * wc) ** 0.5
+                if d < 1.0:
+                    # Tyre, rim, hub — three bands. The contrast has to be strong: this is read
+                    # at RTS distance through a belt of links drawn over the top of it.
+                    k *= (1.45 if d > 0.80 else
+                          0.40 if d > 0.62 else
+                          1.10 if d > 0.28 else 0.55)
 
             # Link plates: a bright edge and its own shadow, repeated along the belt.
             m = u % pitch
@@ -4036,8 +4128,13 @@ def _paint_tread(w, h, spec):
                 k *= 0.42                                # the gap between links
             elif m == 1:
                 k *= 1.28                                # the lit lip of the next link
-            if v < 2 or v > across - 3:
-                k *= 0.55                                # the belt's own edges, in shadow
+            elif m == pitch - 1:
+                k *= 0.78                                # the plate falling away into the gap
+            # The belt's own edges, in shadow. Scaled to the sheet rather than a fixed 2 px:
+            # at 128 across, two pixels was 1.5% of the belt and invisible.
+            edge = max(2, across // 12)
+            if v < edge or v > across - 1 - edge:
+                k *= 0.62
 
             row.append(tuple(int(max(0, min(255, c * k))) for c in lo))
         rows.append(row)
@@ -4059,7 +4156,85 @@ def _paint_hatch(w, h, spec):
     return out
 
 
+def _paint_trackmark(w, h, spec):
+    """The mud a tracked vehicle leaves behind. Returns (rows, alpha) — alpha is REQUIRED here.
+
+    The ribbon's UVs are generated by the engine and they decide the whole layout, so this is
+    read off `W3DTerrainTracks.cpp` rather than designed:
+
+      * U runs ACROSS the ribbon, 0 at one edge and 1 at the other, and the ribbon's width is
+        the distance between the TREADFX01 and TREADFX02 bones plus one belt width. So a tank's
+        two belts are two bands in U with bare ground between them, not one solid smear.
+      * V runs ALONG the ribbon, and it ALTERNATES 0/1 every other edge — `//every other edge
+        has different set of UV's`. The pattern is therefore drawn and immediately redrawn
+        mirrored, forever. Anything not symmetric in V flickers between two orientations as the
+        vehicle drives, which is why the source's own comment asks for a symmetrical image.
+      * `_PresetAlphaShader`, so this is composited over the terrain and the alpha channel is
+        the mark. A 24-bit track texture lays an opaque rectangle of dirt.
+    """
+    lo = spec.get("base", [58, 48, 38])
+    seed = spec.get("seed", 1)
+    n_bands = max(1, int(spec.get("bands", 2)))
+    half = float(spec.get("bandWidth", 0.16))          # each band's half-width in U
+    pitch = max(3, int(spec.get("linkPitch", 7)))
+    while pitch > 3 and h % pitch:                     # close the imprint run on the V wrap
+        pitch -= 1
+
+    # Band centres, spread evenly and pushed to the ribbon's edges: the belts are the outermost
+    # thing on the vehicle, and the ribbon is sized from their centres outward.
+    centres = ([half, 1.0 - half] if n_bands == 2
+               else [(i + 0.5) / n_bands for i in range(n_bands)])
+
+    rows, alpha = [], []
+    for y in range(h):
+        row, arow = [], []
+        # V-symmetric by construction: fold the row index about the middle before it is used.
+        vy = min(y, h - 1 - y) * 2
+        for x in range(w):
+            u = x / float(w)
+            d = min(abs(u - c) for c in centres) / half
+            a = 0.0 if d >= 1.0 else (1.0 - d) ** 0.65      # soft-edged band
+            k = 0.82 + 0.36 * _hf(seed, x, y, 5)            # churned dirt
+            if vy % pitch < 2:
+                k *= 0.72                                    # the imprint of one link, repeated
+                a *= 1.12
+            row.append(tuple(int(max(0, min(255, c * k))) for c in lo))
+            arow.append(int(max(0, min(255, a * 255 * spec.get("strength", 0.85)))))
+        rows.append(row)
+        alpha.append(arow)
+    return rows, alpha
+
+
 PAINTERS = {"tread": _paint_tread, "hatch": _paint_hatch}
+# Painters that produce a 32-bit sheet. Kept separate rather than sniffed from the return
+# value: a painter silently returning the wrong arity would be written as garbage pixels.
+ALPHA_PAINTERS = {"trackmark": _paint_trackmark}
+
+
+def _write_tiling(outdir, texname, spec):
+    """One standalone TILING sheet — the non-atlas path, and the one a tread lands on.
+
+    A painter works here as well as in an atlas region, and it has to: the tread painter is the
+    whole reason the wheels could be deleted from the geometry, and a tread is exactly the part
+    the atlas cannot hold. The difference is that a tiling sheet must be SEAMLESS, which is why
+    `_paint_tread` steps its wheels by a float rather than an integer.
+    """
+    spec = dict(spec)
+    size = spec.get("size", 256)
+    paint = spec.pop("paint", None)
+    if paint and paint in ALPHA_PAINTERS:
+        rows, alpha = ALPHA_PAINTERS[paint](size, size, spec)
+        tga_write(os.path.join(outdir, texname), size, size, rows, alpha)
+        print(f"  texture {texname}: {size}x{size} tiling 32-bit, painted as '{paint}'")
+        return
+    if paint and paint in PAINTERS:
+        rows = PAINTERS[paint](size, size, spec)
+        tga_write(os.path.join(outdir, texname), size, size, rows)
+        print(f"  texture {texname}: {size}x{size} tiling, painted as '{paint}'")
+        return
+    size, rows = _panel_texture(spec)
+    tga_write(os.path.join(outdir, texname), size, size, rows)
+    print(f"  texture {texname}: {size}x{size} tiling, seed {spec.get('seed', 1)}")
 
 
 def _atlas_texture(size, regions, base_spec):
@@ -4217,6 +4392,7 @@ def cmd_model(a):
 
         ns = argparse.Namespace(gltf=glb, out=a.out, name=name,
                                 texture=a.texture or recipe.get("texture"),
+                                bones=recipe.get("bones"),
                                 force_texture=bool(recipe.get("atlas")))
         rc = cmd_w3dfrom(ns)
         if rc:
@@ -4229,6 +4405,15 @@ def cmd_model(a):
     if recipe.get("textureRecipe"):                       # single-texture shorthand
         specs[a.texture or recipe.get("texture")] = recipe["textureRecipe"]
     outdir = os.path.dirname(os.path.abspath(a.out))
+
+    # Sheets NO MESH NAMES but the model still needs — today that is the track mark, which the
+    # engine lays on the terrain rather than on the vehicle. They are declared separately
+    # because the orphan check below is one-directional on purpose: a mesh naming a texture
+    # nobody wrote is a bug, while a texture no mesh names is how a decal or an FX sprite
+    # legitimately arrives. Written unconditionally, atlas mode or not.
+    for texname, spec in sorted((recipe.get("extraTextures") or {}).items()):
+        if texname:
+            _write_tiling(outdir, texname, spec)
 
     if uvrects and recipe.get("atlas"):
         # ONE sheet for the whole model. Per-part `texture` names stop meaning separate files
@@ -4281,14 +4466,24 @@ def cmd_model(a):
         tga_write(os.path.join(outdir, atlas), size, size, rows)
         print(f"  atlas {atlas}: {size}x{size}, {len(regions)} region(s) packed by surface area"
               + (", AO baked from geometry" if ao else ""))
-        specs = {atlas: base}
+        # Parts that stayed OUT of the pack — today that means treads — still name a texture,
+        # and it still has to be written. Collapsing `specs` to the atlas alone was correct
+        # while every part was in it and became a dangling reference the moment one was not.
+        kept = {atlas: base}
+        for p in recipe.get("parts", []):
+            nm, tn = (p.get("name") or "").upper(), p.get("texture")
+            if nm and nm not in uvrects and tn and tn in specs:
+                kept[tn] = specs[tn]
+        specs = kept
+        for texname, spec in sorted(specs.items()):
+            if texname == atlas:
+                continue
+            _write_tiling(outdir, texname, spec)
     else:
         for texname, spec in sorted(specs.items()):
             if not texname:
                 continue
-            size, rows = _panel_texture(dict(spec))
-            tga_write(os.path.join(outdir, texname), size, size, rows)
-            print(f"  texture {texname}: {size}x{size} tiling, seed {spec.get('seed', 1)}")
+            _write_tiling(outdir, texname, spec)
 
     # Every texture a mesh NAMES must be one the recipe actually WROTE. This is the same class
     # of failure as a model resolving to no file: the object appears, untextured or white, and

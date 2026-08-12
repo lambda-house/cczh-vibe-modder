@@ -18,6 +18,27 @@ namespace RtsSkeleton.Content;
 public static class W3dRefs
 {
     private const uint TextureName = 0x0032;
+    private const uint MeshHeader3 = 0x001F;
+
+    /// <summary>
+    /// Sub-object names the model declares, read out of each <c>MESH_HEADER3</c>.
+    ///
+    /// <para><b>The name is the interface.</b> Two engine features are switched on by nothing
+    /// but a mesh's name — <c>W3DTankDraw</c> finds a scrolling belt with
+    /// <c>_strnicmp(meshName,"TREADS",6)</c>, and <c>W3DAssetManager</c> recolours a submesh to
+    /// the player's colour on <c>_strnicmp(meshName,"HOUSECOLOR",10)</c>. Neither is declared in
+    /// INI, so the only way for the compiler to know whether a model can use them is to open
+    /// the model and look. Emitting the INI half without the mesh half gives a tank whose
+    /// treads never move and whose colour never changes, silently and in a clean boot.</para>
+    /// </summary>
+    public static List<string> MeshNames(string path)
+    {
+        var found = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!TryRead(path, out var buf)) return found;
+        Walk(buf, 0, buf.Length, 0, MeshHeader3, found, seen);
+        return found;
+    }
 
     /// <summary>
     /// Texture filenames the model names, in file order, de-duplicated case-insensitively.
@@ -29,44 +50,55 @@ public static class W3dRefs
     {
         var found = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        byte[] buf;
-        try { buf = File.ReadAllBytes(path); }
-        catch (IOException) { return found; }
-        catch (UnauthorizedAccessException) { return found; }
-
-        Walk(buf, 0, buf.Length, 0);
+        if (!TryRead(path, out var buf)) return found;
+        Walk(buf, 0, buf.Length, 0, TextureName, found, seen);
         return found;
+    }
 
-        void Walk(byte[] b, int off, int end, int depth)
+    private static bool TryRead(string path, out byte[] buf)
+    {
+        try { buf = File.ReadAllBytes(path); return true; }
+        catch (IOException) { buf = []; return false; }
+        catch (UnauthorizedAccessException) { buf = []; return false; }
+    }
+
+    private static void Walk(byte[] b, int off, int end, int depth, uint want,
+                             List<string> found, HashSet<string> seen)
+    {
+        // A malformed file can nest arbitrarily; bound it rather than risk a stack
+        // overflow on input the lint does not control.
+        if (depth > 16) return;
+        while (off + 8 <= end)
         {
-            // A malformed file can nest arbitrarily; bound it rather than risk a stack
-            // overflow on input the lint does not control.
-            if (depth > 16) return;
-            while (off + 8 <= end)
-            {
-                uint type = BitConverter.ToUInt32(b, off);
-                uint raw = BitConverter.ToUInt32(b, off + 4);
-                // The HIGH BIT of the size marks a container, and the size excludes the
-                // 8-byte header. Reading it as a plain length is the single mistake that
-                // turns this walk into garbage.
-                int size = (int)(raw & 0x7FFFFFFF);
-                bool container = (raw & 0x80000000) != 0;
-                int body = off + 8;
-                if (size < 0 || body + size > end) return;      // truncated: stop, do not throw
+            uint type = BitConverter.ToUInt32(b, off);
+            uint raw = BitConverter.ToUInt32(b, off + 4);
+            // The HIGH BIT of the size marks a container, and the size excludes the
+            // 8-byte header. Reading it as a plain length is the single mistake that
+            // turns this walk into garbage.
+            int size = (int)(raw & 0x7FFFFFFF);
+            bool container = (raw & 0x80000000) != 0;
+            int body = off + 8;
+            if (size < 0 || body + size > end) return;      // truncated: stop, do not throw
 
-                if (container)
-                {
-                    Walk(b, body, body + size, depth + 1);
-                }
-                else if (type == TextureName && size > 0)
-                {
-                    int len = 0;
-                    while (len < size && b[body + len] != 0) len++;
-                    string name = System.Text.Encoding.Latin1.GetString(b, body, len).Trim();
-                    if (name.Length > 0 && seen.Add(name)) found.Add(name);
-                }
-                off = body + size;
+            if (container)
+            {
+                Walk(b, body, body + size, depth + 1, want, found, seen);
             }
+            else if (type == want && size > 0)
+            {
+                // MESH_HEADER3 carries a fixed-width NUL-padded MeshName at offset 8, 16 bytes
+                // wide; TEXTURE_NAME is a NUL-terminated string filling the chunk. Same
+                // extraction either way once the window is right.
+                int at = want == MeshHeader3 ? body + 8 : body;
+                int cap = want == MeshHeader3 ? Math.Min(16, body + size - at) : size;
+                if (cap <= 0) { off = body + size; continue; }
+                int len = 0;
+                while (len < cap && b[at + len] != 0) len++;
+                string name = System.Text.Encoding.Latin1.GetString(b, at, len).Trim();
+                if (name.Length > 0 && seen.Add(name)) found.Add(name);
+            }
+            off = body + size;
         }
     }
+
 }

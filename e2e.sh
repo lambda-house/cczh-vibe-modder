@@ -2941,5 +2941,177 @@ PYDROP
 fi
 
 
+gate "a MESH NAME switches on an engine feature — scrolling treads and house colour"
+# TWO FEATURES THAT NO INI KEY TURNS ON. The engine finds both by string-matching a submesh's
+# NAME and nothing else:
+#
+#   W3DTankDraw::updateTreadObjects  _strnicmp(meshName, "TREADS", 6), then meshName[6] for the side
+#   W3DAssetManager::Recolor_Mesh    _strnicmp(meshName, "HOUSECOLOR", 10)
+#
+# Both need a matching half in INI (TreadAnimationRate, OkToChangeModelColor) and BOTH halves
+# fail silently and separately. A tread with no LINEAR_OFFSET mapper is skipped by the scan; a
+# rate left at its 0.0 default means the scan never runs; a HOUSECOLOR mesh under a draw module
+# that did not opt in stays grey for every player. Nothing is logged in any of the four cases,
+# so the only evidence is the bytes and the emitted INI — which is what this checks.
+#
+# The constants are not invented: they were read out of NVGattTank.W3D, whose TREADSL01 and
+# TREADSR01 carry attr=0x00040000 and a MAPPER_ARGS0 of 'UPerSec=0.1'.
+BL=/Applications/Blender.app/Contents/MacOS/Blender
+if [ ! -x "$BL" ]; then
+  echo "  (no Blender: the model is a build step that cannot run — skipped)"
+else
+  TR=$(mktemp -d); trap 'rm -rf "$TR"' EXIT
+  ./tools/zhasset model --recipe Content/models/mangal.json --out "$TR/MANGAL.W3D" >/dev/null 2>&1 \
+    || { echo "  THE MODEL BUILD FAILED"
+         ./tools/zhasset model --recipe Content/models/mangal.json --out "$TR/MANGAL.W3D"; exit 1; }
+
+  # --- 1. THE MESH SIDE. ---------------------------------------------------------------
+  python3 - "$TR/MANGAL.W3D" <<'PYTREAD'
+import struct, sys
+NUL = bytes([0])
+b = open(sys.argv[1], "rb").read()
+meshes, cur, pivots = {}, None, []
+
+def walk(o, e):
+    global cur
+    while o + 8 <= e:
+        t, s = struct.unpack_from("<II", b, o)
+        c = s & 0x80000000; s &= 0x7FFFFFFF
+        body, bend = o + 8, o + 8 + s
+        if t == 0x001F:                                    # MESH_HEADER3
+            cur = b[body + 8:body + 24].split(NUL)[0].decode("latin-1")
+            meshes[cur] = {"attr": None, "args": None, "tex": None}
+        elif t == 0x002D and cur:                          # VERTEX_MATERIAL_INFO
+            meshes[cur]["attr"] = struct.unpack_from("<I", b, body)[0]
+        elif t == 0x002E and cur:                          # VERTEX_MAPPER_ARGS0
+            meshes[cur]["args"] = b[body:bend].split(NUL)[0].decode("latin-1")
+        elif t == 0x0032 and cur:                          # TEXTURE_NAME
+            meshes[cur]["tex"] = b[body:bend].split(NUL)[0].decode("latin-1")
+        elif t == 0x0102:                                  # PIVOTS
+            for i in range(s // 60):
+                p = body + i * 60
+                pivots.append((b[p:p + 16].split(NUL)[0].decode("latin-1"),
+                               struct.unpack_from("<3f", b, p + 20)))
+        if c:
+            walk(body, bend)
+        o = bend
+
+walk(0, len(b))
+fail = []
+treads = {n: m for n, m in meshes.items() if n.upper().startswith("TREADS")}
+if len(treads) != 2:
+    fail.append(f"expected two tread submeshes, found {sorted(treads)}")
+if {n.upper()[6] for n in treads} != {"L", "R"}:
+    # TREAD_MIDDLE is the engine's default and updateTreadPositions handles it with a
+    # DEBUG_CRASH compiled out of our build — the belt is bound and then never moves.
+    fail.append(f"tread submeshes must name a side: {sorted(treads)}")
+for n, m in treads.items():
+    if m["attr"] != 0x00040000:
+        fail.append(f"{n}: attr=0x{(m['attr'] or 0):08X}, want the LINEAR_OFFSET mapper 0x00040000")
+    if not m["args"]:
+        fail.append(f"{n}: no VERTEX_MAPPER_ARGS0 — Peek_Mapper() is null and the scan skips it")
+
+# The belt CANNOT share the body's atlas: scrolling its U offset would walk it into the
+# neighbouring region. Retail splits the same way (NVGattTank.tga / NVTreads.tga).
+body_tex = {m["tex"] for n, m in meshes.items() if not n.upper().startswith("TREADS")}
+for n, m in treads.items():
+    if m["tex"] in body_tex:
+        fail.append(f"{n}: shares sheet '{m['tex']}' with the body — scrolling would leave its region")
+
+if not any(n.upper().startswith("HOUSECOLOR") for n in meshes):
+    fail.append("no HOUSECOLOR submesh — the unit cannot show whose it is")
+
+# Bones with no geometry. computeTrackSpacing measures TREADFX01 to TREADFX02 and adds one
+# belt width; without them a tank lays a ribbon sized for nothing in particular. This is also
+# the general case — retail's NVGattTank carries 29 pivots for 12 submeshes.
+names = {n.upper() for n, _ in pivots}
+for want in ("TREADFX01", "TREADFX02"):
+    if want not in names:
+        fail.append(f"no {want} pivot — track marks fall back to a default width")
+if len(pivots) <= len(meshes):
+    fail.append("no mesh-less bones at all: the pivot writer can only express geometry")
+
+if fail:
+    print("  THE MESH DOES NOT CARRY WHAT THE ENGINE LOOKS FOR:")
+    for f in fail:
+        print("    " + f)
+    sys.exit(1)
+print(f"  {len(meshes)} submeshes, {len(pivots)} pivots: "
+      f"both belts carry the linear-offset mapper on their own sheet, "
+      f"house colour is named, TREADFX01/02 are placed")
+PYTREAD
+
+  # --- 2. THE NEGATIVE. A tread that cannot name its side must be REFUSED. --------------
+  # Without this the gate above only proves the recipe is currently right, not that anything
+  # would notice if it stopped being.
+  python3 - Content/models/mangal.json "$TR/nosides.json" <<'PYBAD'
+import json, sys
+r = json.load(open(sys.argv[1]))
+# ONE belt loses its side letter. Renaming both would collide and send the writer down its
+# duplicate-name fallback, which renames everything to ordinals — the build would then fail
+# for a different reason and the check would be testing nothing, which has happened here twice.
+for p in r["parts"]:
+    if p.get("name") == "TREADSL":
+        p["name"] = "TREADS"
+        break
+else:
+    raise SystemExit("the recipe has no TREADSL part — this negative tests nothing")
+json.dump(r, open(sys.argv[2], "w"))
+PYBAD
+  bad=$(./tools/zhasset model --recipe "$TR/nosides.json" --out "$TR/bad.W3D" 2>&1 || true)
+  case "$bad" in
+    *"tread mesh must name its side"*) : ;;
+    *) echo "  A SIDELESS TREAD MESH WAS ACCEPTED — it would bind and then never scroll"
+       echo "$bad" | tail -4; exit 1 ;;
+  esac
+  echo "  a tread that does not name its side is refused at build time"
+
+  # --- 3. THE INI SIDE, and that it is DECIDED BY THE MESH. -----------------------------
+  # The compiler opens the model rather than trusting the author to restate what is in it,
+  # so this also checks that the Object without treads did not pick the tank draw module up.
+  RFT=$(mktemp -d)
+  ./tools/zhasset models --out "$RFT/models" >/dev/null 2>&1
+  python3 - Content/mods/russian-federation.json "$RFT/models" "$RFT/rf.json" <<'PYRFT'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+open(sys.argv[3], "w").write(src.replace("build/models/", sys.argv[2].rstrip("/") + "/"))
+PYRFT
+  rts compile --target zh --out "$RFT/out" --mod "$RFT/rf.json" >/dev/null
+  python3 - "$RFT/out" <<'PYINI'
+import glob, re, sys
+txt = "".join(open(f, encoding="latin-1").read().replace("\r", "")
+              for f in glob.glob(f"{sys.argv[1]}/Data/INI/Object/*.ini"))
+objs = dict((m.group(1), m.group(2)) for m in re.finditer(r"^Object (\S+)(.*?)^End", txt, re.S | re.M))
+tank = objs.get("rf_mangal", "")
+base = objs.get("rf_rf_base", "")
+fail = []
+if "W3DTankDraw" not in tank:
+    fail.append("rf_mangal did not get W3DTankDraw although its mesh has belts")
+for k in ("TreadAnimationRate", "TreadDriveSpeedFraction", "TreadPivotSpeedFraction"):
+    if k not in tank:
+        fail.append(f"rf_mangal has no {k}")
+# The GATE, not a tuning value: updateTreadObjects returns before it scans anything when the
+# rate is its 0.0 default, so every other line above would be inert.
+m = re.search(r"TreadAnimationRate\s*=\s*([0-9.]+)", tank)
+if m and float(m.group(1)) == 0.0:
+    fail.append("TreadAnimationRate is 0 — the sub-object scan never runs")
+if "TrackMarks" not in tank:
+    fail.append("rf_mangal lays no track marks although the pack carries a strip")
+if "OkToChangeModelColor = Yes" not in tank:
+    fail.append("rf_mangal has HOUSECOLOR submeshes but did not opt into recolouring")
+if "W3DTankDraw" in base:
+    fail.append("the base got a TANK draw module — the choice is not coming from the mesh")
+if fail:
+    print("  THE EMITTED INI DOES NOT MATCH THE MESH:")
+    for f in fail:
+        print("    " + f)
+    sys.exit(1)
+print("  the compiler read the mesh: tank draw + tread rate + track marks on the vehicle, "
+      "plain model draw on the structure")
+PYINI
+  rm -rf "$TR" "$RFT"; trap - EXIT
+fi
+
+
 echo
 echo "E2E PASS"
