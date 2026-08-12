@@ -3378,11 +3378,43 @@ W3D_VERTEX_CHANNEL_LOCATION_NORMAL = 3      # LOCATION | NORMAL
 W3D_FACE_CHANNEL_FACE = 1
 
 
+def _m4_mul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+
+
+def _m4_node(n):
+    """One glTF node's local matrix, from either `matrix` or TRS.
+
+    glTF stores a matrix COLUMN-major, so element [col*4+row] — transposing it by accident
+    produces a model that is rotated and sheared but still plausible-looking, which is the
+    worst kind of wrong.
+    """
+    if "matrix" in n:
+        m = n["matrix"]
+        return [[m[c * 4 + r] for c in range(4)] for r in range(4)]
+    t = n.get("translation", [0, 0, 0])
+    q = n.get("rotation", [0, 0, 0, 1])                       # x, y, z, w
+    s = n.get("scale", [1, 1, 1])
+    x, y, z, w = q
+    rot = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+           [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+           [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+    return [[rot[r][c] * s[c] for c in range(3)] + [t[r]] for r in range(3)] + [[0, 0, 0, 1]]
+
+
 def _glb_read(path):
     """Read a .glb into [{name, verts, normals, uvs, tris, texture}], in glTF's own Y-up frame.
 
     Handles interleaved bufferViews (byteStride), because Blender's exporter emits them and a
     reader that assumes tight packing silently produces scrambled geometry rather than an error.
+
+    Walks the NODE GRAPH and bakes each node's world transform into the vertices, rather than
+    reading mesh primitives raw. A W3D mesh has no node transform to carry one — position lives
+    in the vertices — so a reader that ignores glTF's leaves every transformed part sitting at
+    the origin. *This was a live bug:* a building whose parts each declared a position came out
+    with its main hall at z=-15 instead of z=23, the roof floating over a gap, and nothing
+    anywhere reported a problem. It was found by RENDERING the result and looking at it, which
+    is the entire argument for having built the viewer first.
     """
     d = open(path, "rb").read()
     magic, ver, total = struct.unpack_from("<III", d, 0)
@@ -3410,19 +3442,58 @@ def _glb_read(path):
         return [struct.unpack_from(f"<{n}{code}", bin_, base + i * stride)
                 for i in range(acc["count"])]
 
+    nodes = doc.get("nodes", [])
+    IDENT = [[1 if i == j else 0 for j in range(4)] for i in range(4)]
+
+    # Which nodes carry which mesh, and with what world matrix. A mesh may be instanced by
+    # several nodes, so this is a list of (node, matrix) rather than a dict keyed by mesh.
+    placed = []
+    seen = set()
+
+    def visit(ni, parent):
+        if ni in seen:                          # a malformed file can cycle; do not hang on it
+            return
+        seen.add(ni)
+        n = nodes[ni]
+        world = _m4_mul(parent, _m4_node(n))
+        if "mesh" in n:
+            placed.append((n, world))
+        for c in n.get("children", []):
+            visit(c, world)
+
+    scene = doc.get("scenes", [{}])[doc.get("scene", 0)]
+    for ni in scene.get("nodes", range(len(nodes))):
+        visit(ni, IDENT)
+    if not placed:                              # no scene graph at all: take meshes as they lie
+        placed = [({"mesh": mi}, IDENT) for mi in range(len(doc.get("meshes", [])))]
+
+    def xform(m, p, translate=True):
+        t = 1.0 if translate else 0.0
+        return tuple(m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3] * t
+                     for r in range(3))
+
     out = []
-    for mi, m in enumerate(doc.get("meshes", [])):
+    for node, world in placed:
+        m = doc["meshes"][node["mesh"]]
         for pi, prim in enumerate(m.get("primitives", [])):
             at = prim["attributes"]
             mat = doc.get("materials", [])[prim["material"]] if "material" in prim else {}
             idx = [i[0] for i in read(prim["indices"])] if "indices" in prim else None
-            verts = read(at["POSITION"])
+            verts = [xform(world, v) for v in read(at["POSITION"])]
             if idx is None:
                 idx = list(range(len(verts)))
+            norms = []
+            for n in (read(at["NORMAL"]) if "NORMAL" in at else []):
+                # Direction, so no translation. Renormalised rather than inverse-transposed:
+                # these recipes produce rigid transforms with uniform scale, where the two
+                # agree, and a non-uniform scale would need the full treatment.
+                v = xform(world, n, translate=False)
+                ln = (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) ** 0.5 or 1.0
+                norms.append((v[0] / ln, v[1] / ln, v[2] / ln))
             out.append({
-                "name": m.get("name") or f"mesh{mi}_{pi}",
+                "name": node.get("name") or m.get("name") or f"mesh{node['mesh']}_{pi}",
                 "verts": verts,
-                "normals": read(at["NORMAL"]) if "NORMAL" in at else [],
+                "normals": norms,
                 "uvs": read(at["TEXCOORD_0"]) if "TEXCOORD_0" in at else [],
                 "tris": [tuple(idx[i:i + 3]) for i in range(0, len(idx) - 2, 3)],
                 "texture": (mat.get("extras") or {}).get("w3dTexture") or mat.get("name"),
@@ -3543,13 +3614,29 @@ def cmd_w3dfrom(a):
         return 1
     base = a.name or os.path.splitext(os.path.basename(a.out))[0].upper()
 
+    # Sub-object NAMES are load-bearing, not cosmetic: the engine addresses a turret by name to
+    # rotate it, and an INI Draw module names the sub-objects it shows and hides. So a name that
+    # arrived from the modelling recipe is carried through rather than replaced by an ordinal.
+    # W3D_NAME_LEN is 16 and the field is NUL-terminated, hence 15 usable characters.
+    def meshname(i, p):
+        raw = (p.get("name") or "").strip().upper()
+        # Blender appends .001 to disambiguate duplicates, and a dot is the separator the HLOD
+        # uses between container and mesh — leaving one in would produce a name nothing resolves.
+        raw = raw.replace(".", "_")
+        if raw and raw not in ("MESH", "CUBE"):
+            return raw[:15]
+        return base if len(prims) == 1 else f"{base}{i:02d}"
+
+    names = [meshname(i, p) for i, p in enumerate(prims)]
+    if len(set(names)) != len(names):                  # collisions would make the HLOD ambiguous
+        names = [base if len(prims) == 1 else f"{base}{i:02d}" for i in range(len(prims))]
+
     nodes, total_v, total_t = [], 0, 0
     for i, p in enumerate(prims):
         verts = [_zup(*v) for v in p["verts"]]
         norms = [_zup(*n) for n in p["normals"]]
         uvs = [(u, 1.0 - v) for u, v in p["uvs"]]
-        nm = base if len(prims) == 1 else f"{base}{i:02d}"
-        nodes.append(_w3d_mesh_node(nm, base if len(prims) > 1 else "",
+        nodes.append(_w3d_mesh_node(names[i], base if len(prims) > 1 else "",
                                     verts, norms, uvs, p["tris"], a.texture or p["texture"]))
         total_v += len(verts); total_t += len(p["tris"])
 
@@ -3558,8 +3645,8 @@ def cmd_w3dfrom(a):
         # and states which render object they belong to. A multi-mesh .w3d without one loads
         # as several unrelated pieces the engine never puts together.
         sub = b"".join(_chunk(0x0704, struct.pack("<I", 0)
-                              + f"{base}.{base}{i:02d}".encode("latin-1")[:31].ljust(32, b"\0"))
-                       for i in range(len(prims)))
+                              + f"{base}.{n}".encode("latin-1")[:31].ljust(32, b"\0"))
+                       for n in names)
         lod = _chunk(0x0703, struct.pack("<If", len(prims), 3.4028235e38)) + sub
         hl = (_chunk(0x0701, struct.pack("<II", 0x00010000, 1) + _name16(base) + _name16(base))
               + _chunk(0x0702, lod, container=True))
@@ -3571,6 +3658,67 @@ def cmd_w3dfrom(a):
     print(f"  {len(prims)} mesh(es), {total_v:,} vertices, {total_t:,} triangles"
           f"{', HLOD assembled' if len(prims) > 1 else ''}")
     print(f"  every chunk authored — no template, no retail bytes")
+    return 0
+
+
+BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
+
+
+def cmd_model(a):
+    """Build a .w3d from a parametric RECIPE, through Blender's geometry kernel.
+
+        recipe.json -> blender (boolean/bevel/array/mirror/decimate) -> glTF -> .w3d
+
+    The hand-rolled generators compute vertices directly, which is fine for a box and a
+    cylinder and stops there. What separates a building from a block is bevelled edges, cut
+    openings, repeated panels and a sloped face — a geometry kernel, and Blender already has
+    one. `tools/zhblender.py` is the half that runs under Blender's Python; this is the half
+    that runs under the system's, and the two never share an interpreter.
+    """
+    import subprocess, tempfile
+    blender = a.blender or BLENDER
+    if not os.path.exists(blender):
+        print(f"Blender not found at {blender} — pass --blender, or install it.")
+        print("  (the geometry kernel is what this command is FOR; there is no fallback that")
+        print("   produces the same shapes, so failing loudly beats emitting a worse mesh)")
+        return 1
+
+    recipe = json.load(open(a.recipe))
+    name = a.name or recipe.get("name") or os.path.splitext(os.path.basename(a.out))[0].upper()
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zhblender.py")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        glb = os.path.join(tmp, "model.glb")
+        r = subprocess.run([blender, "--background", "--python", script, "--", a.recipe, glb],
+                           capture_output=True, text=True)
+        parts = [l.split() for l in r.stdout.splitlines() if l.startswith("ZHPART ")]
+        tot = next((l.split() for l in r.stdout.splitlines() if l.startswith("ZHTOTAL ")), None)
+        if not os.path.exists(glb) or tot is None:
+            print("BLENDER FAILED to produce geometry:")
+            # Blender writes tracebacks to stdout, not stderr, and buries them in banner noise.
+            for line in (r.stdout + r.stderr).splitlines():
+                if any(k in line for k in ("Error", "error", "Traceback", "File \"", "raise",
+                                           "KeyError", "ValueError", "AttributeError")):
+                    print("  " + line)
+            return 1
+
+        ns = argparse.Namespace(gltf=glb, out=a.out, name=name,
+                                texture=a.texture or recipe.get("texture"))
+        rc = cmd_w3dfrom(ns)
+        if rc:
+            return rc
+
+    print(f"  recipe {os.path.basename(a.recipe)} -> {len(parts)} part(s), "
+          f"{tot[2]} triangles, Blender {tot[3]}")
+    for p in parts:
+        print(f"    {p[1]:<16} {p[2]:>5} verts  {p[3]:>5} tris")
+    budget = recipe.get("budget")
+    if budget:
+        # State the budget against the MEASURED corpus rather than against a number someone
+        # liked: median 169 triangles, p90 619. A model over p90 is not wrong, but it is
+        # heavier than 90% of everything the game already ships.
+        verdict = "within" if int(tot[2]) <= budget else "OVER"
+        print(f"  budget {budget}: {verdict} (retail median 169 tris, p90 619)")
     return 0
 
 
@@ -3616,6 +3764,12 @@ def main():
     gl = sub.add_parser("gltf", help="export a .w3d as glTF 2.0 (.glb) so it can be LOOKED AT")
     gl.add_argument("file"); gl.add_argument("--out", required=True)
     gl.set_defaults(fn=cmd_gltf)
+
+    md = sub.add_parser("model", help="build a .w3d from a parametric recipe via Blender's kernel")
+    md.add_argument("--recipe", required=True); md.add_argument("--out", required=True)
+    md.add_argument("--name"); md.add_argument("--texture")
+    md.add_argument("--blender", help=f"path to Blender (default {BLENDER})")
+    md.set_defaults(fn=cmd_model)
 
     wf = sub.add_parser("w3dfrom", help="build a .w3d from a .glb — every chunk authored, no template")
     wf.add_argument("--gltf", required=True); wf.add_argument("--out", required=True)

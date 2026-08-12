@@ -2399,5 +2399,65 @@ fi
 rm -rf "$FN"; trap - EXIT
 
 
+gate "a glTF NODE TRANSFORM lands in the vertices"
+# *This was a live bug, and it is the one that justifies having built the viewer first.* A W3D
+# mesh has no node transform to carry a position — it lives in the vertices — while glTF puts
+# it on the node. The importer read mesh primitives raw, so every part that declared a position
+# came out at the origin. The authored building rendered with its main hall fifteen units below
+# where the recipe put it and its roof floating over a gap, and NOTHING reported a problem:
+# counts matched, the file round-tripped byte-identically, Blender read it back happily. It was
+# found by rendering the model and looking at it.
+#
+# Synthetic input on purpose — no retail install and no Blender needed, so the check runs
+# everywhere. A hand-built glb is also the only way to state the case exactly: one triangle,
+# one node, one translation, one right answer.
+NT=$(mktemp -d); trap 'rm -rf "$NT"' EXIT
+python3 - "$NT/node.glb" <<'PYNT'
+import json, struct, sys
+# One triangle at the origin, on a node translated by (100, 200, 300) in glTF's Y-up frame.
+tri = struct.pack("<9f", 0,0,0, 10,0,0, 0,10,0) + struct.pack("<3I", 0, 1, 2)
+doc = {
+  "asset": {"version": "2.0"},
+  "scene": 0, "scenes": [{"nodes": [0]}],
+  "nodes": [{"mesh": 0, "name": "SHIFTED", "translation": [100, 200, 300]}],
+  "meshes": [{"name": "SHIFTED", "primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+     "min": [0,0,0], "max": [10,10,0]},
+    {"bufferView": 1, "componentType": 5125, "count": 3, "type": "SCALAR"}],
+  "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36},
+                  {"buffer": 0, "byteOffset": 36, "byteLength": 12}],
+  "buffers": [{"byteLength": len(tri)}],
+}
+js = json.dumps(doc, separators=(",", ":")).encode()
+js += b" " * (-len(js) % 4)
+bn = tri + b"\0" * (-len(tri) % 4)
+body = struct.pack("<II", len(js), 0x4E4F534A) + js + struct.pack("<II", len(bn), 0x004E4942) + bn
+open(sys.argv[1], "wb").write(struct.pack("<III", 0x46546C67, 2, 12 + len(body)) + body)
+PYNT
+./tools/zhasset w3dfrom --gltf "$NT/node.glb" --out "$NT/node.w3d" --name NODETEST >/dev/null
+python3 - "$NT/node.w3d" <<'PYCHK'
+import struct, sys
+buf = open(sys.argv[1], "rb").read()
+def walk(off, end):
+    while off + 8 <= end:
+        t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+        if raw & 0x80000000: yield from walk(body, body + sz)
+        else: yield t, buf[body:body + sz]
+        off = body + sz
+v = next(p for t, p in walk(0, len(buf)) if t == 0x0002)
+verts = [struct.unpack_from("<3f", v, i * 12) for i in range(len(v) // 12)]
+# glTF Y-up (100,200,300) -> W3D Z-up (x, -z, y) = (100, -300, 200).
+want = (100.0, -300.0, 200.0)
+got = verts[0]
+if max(abs(a - b) for a, b in zip(got, want)) > 1e-4:
+    print(f"  NODE TRANSFORM WAS DROPPED: first vertex at {got}, expected {want}")
+    print("   — every positioned part would collapse to the origin, silently")
+    sys.exit(1)
+print(f"  a node translated by (100,200,300) Y-up puts its vertex at {tuple(round(c) for c in got)} Z-up")
+PYCHK
+rm -rf "$NT"; trap - EXIT
+
+
 echo
 echo "E2E PASS"

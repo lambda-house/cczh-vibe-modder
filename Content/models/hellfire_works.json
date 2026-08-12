@@ -1,0 +1,82 @@
+{
+  "_comment": [
+    "The hellfire faction's production building, authored from nothing.",
+    "",
+    "Scale and budget are taken from MEASURED retail peers, not chosen: the GLA barracks is",
+    "110 x 51 x 88 world units at 565 triangles, the war factory 100 x 58 x 122 at 684. A",
+    "building noticeably outside that envelope is either invisible at normal camera height or",
+    "swallows the units it builds, and neither failure names itself.",
+    "",
+    "Coordinates are Z-UP, in the same frame the W3D ends up in. Ground is z = 0, so a part's",
+    "'at' is the CENTRE of its box and its size/2 is how far it reaches below that. Getting",
+    "this wrong buries the building or floats it, and both look like a scale bug rather than a",
+    "placement one.",
+    "",
+    "Part names are load-bearing. Each becomes a W3D sub-object, which is how an INI Draw",
+    "module shows or hides a piece and how the engine finds something to rotate."
+  ],
+
+  "name": "HELLWORKS",
+  "texture": "hellworks.tga",
+  "budget": 620,
+  "uvScale": 24.0,
+
+  "parts": [
+    {
+      "_": "Battered plinth. taper < 1 narrows the TOP, so the walls lean inward like poured",
+      "__": "concrete — the cheapest cue that reads as mass rather than as a floating box.",
+      "name": "PLINTH",
+      "shape": "box",
+      "size": [96, 88, 9],
+      "at": [0, 0, 4.5],
+      "taper": 0.94,
+      "bevel": { "width": 1.4, "segments": 1 }
+    },
+    {
+      "_": "Main hall, with the bay door cut straight through the -Y face. A boolean is the",
+      "__": "whole reason this pipeline goes through Blender: an opening is not expressible as",
+      "___": "a primitive, and faking it with a dark texture panel is what it replaces.",
+      "name": "HALL",
+      "shape": "box",
+      "size": [78, 68, 30],
+      "at": [0, 0, 23],
+      "taper": 0.9,
+      "bevel": { "width": 1.6, "segments": 1 },
+      "cuts": [
+        { "shape": "box", "size": [30, 16, 22], "at": [0, -32, 15] }
+      ]
+    },
+    {
+      "_": "Overhanging cap. Wider than the hall on purpose: the shadow line under an eave is",
+      "__": "what separates a roof from a lid.",
+      "name": "ROOF",
+      "shape": "box",
+      "size": [84, 74, 5],
+      "at": [0, 0, 40.5],
+      "bevel": { "width": 1.0, "segments": 1 }
+    },
+    {
+      "_": "Three stacks from ONE part via array — count and offset, not three copy-pasted",
+      "__": "blocks. 8 segments because at this camera distance a rounder cylinder spends",
+      "___": "triangles nobody can see, against a 169-triangle retail median.",
+      "name": "STACKS",
+      "shape": "cylinder",
+      "size": [11, 11, 26],
+      "segments": 8,
+      "at": [-26, 20, 53],
+      "array": { "count": 3, "offset": [26, 0, 0] },
+      "bevel": { "width": 0.8, "segments": 1 }
+    },
+    {
+      "_": "Cooling louvres, arrayed up the flank and mirrored across X so both sides match",
+      "__": "without authoring either twice.",
+      "name": "LOUVRES",
+      "shape": "box",
+      "size": [5, 44, 3],
+      "at": [37, 4, 16],
+      "array": { "count": 4, "offset": [0, 0, 6] },
+      "mirror": "x",
+      "bevel": { "width": 0.4, "segments": 1 }
+    }
+  ]
+}

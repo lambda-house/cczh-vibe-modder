@@ -6,3 +6,8 @@ reference/
 build/
 .rts-packs/
 __pycache__/
+# Reference imagery handed in for art direction: photographs, stills and concept art whose
+# rights belong to third parties. It informs PARAMETERS — silhouette, proportion, palette —
+# and no pixel of it enters a pack. Same rule as reference/: keep the input local, ship only
+# what we authored from it.
+incoming/
