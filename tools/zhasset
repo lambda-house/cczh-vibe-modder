@@ -1142,7 +1142,10 @@ def cmd_dossier(a):
     for st in dossier["drawStates"][:8]:
         extra = " ".join(f"{k}={v}" for k, v in st.items()
                          if k not in ("condition", "model") and v)
-        print(f"    {st['condition'][:44]:44s} model={st['model']} {extra}")
+        # An animation-only ConditionState carries no Model of its own — it inherits the
+        # previous state's. Infantry are full of them (the Ranger has 44 states over 2 models),
+        # and assuming a model key is present crashed the dossier on every one of them.
+        print(f"    {st['condition'][:44]:44s} model={st.get('model') or '(inherits)'} {extra}")
     ntex = len({t for v in assets.values() for t in v.get("textures", [])})
     print(f"  assets: {len(assets)} models, {ntex} distinct textures")
     for m, v in list(assets.items())[:6 if not a.json else len(assets)]:
