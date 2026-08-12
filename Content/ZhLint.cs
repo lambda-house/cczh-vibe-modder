@@ -48,7 +48,7 @@ public static class ZhLint
     };
 
     public static Report Check(ContentDb db, ZhTargetDto zh, AssetIndex? assets = null,
-                               string? noBorrowFaction = null)
+                               string? noBorrowFaction = null, ArtProfiles? art = null)
     {
         var r = new Report();
 
@@ -163,6 +163,44 @@ public static class ZhLint
                         if (!carried.ContainsKey(tex))
                             r.Borrowed.Add($"unit '{uid}': its mesh '{model}' names texture " +
                                            $"'{tex}', which this pack does not carry.");
+
+                    // THE THIRD CHANNEL, and until now it was unchecked: DEATH PRESENTATION.
+                    //
+                    // The compiler does not author a unit's death from nothing — it looks the
+                    // MODEL up in the art profiles and adopts whatever FXList and
+                    // ObjectCreationList retail attaches to that mesh, because a FINAL OCL is
+                    // mesh-specific (OCL_CrusaderTurret throws THAT tank's turret) and guessing
+                    // one bolts the wrong debris to the wrong hull. Correct for adopted art,
+                    // and a silent borrow for authored art the moment a profile has anything to
+                    // say about it.
+                    //
+                    // Profiles are keyed by MODEL NAME with the reference catalogue merged
+                    // under the pack's own, so this fires on the hazard that matters: an
+                    // authored model NAMED LIKE A RETAIL ONE inherits its death FX, its debris,
+                    // its turret bone and its geometry, all without a single reference in the
+                    // pack for anything else to see. A mesh you built and a name you did not
+                    // check is enough.
+                    //
+                    // The rule is the pack's own prefix. Everything ZhFx emits is
+                    // "<pack>_...", so a name without it resolves into the installed game.
+                    if (art is not null && art.TryGet(model, out var prof))
+                    {
+                        foreach (var (what, name) in new[]
+                                 {
+                                     ("FX = INITIAL", prof.DeathFX),
+                                     ("OCL = MIDPOINT", prof.DeathOCL),
+                                     ("FX = FINAL", prof.DeathFXFinal),
+                                     ("OCL = FINAL", prof.DeathOCLFinal),
+                                 })
+                        {
+                            if (string.IsNullOrWhiteSpace(name)) continue;
+                            if (name!.StartsWith(db.PackName + "_", StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            r.Borrowed.Add($"unit '{uid}': its death emits '{what} {name}', which " +
+                                           $"this pack does not author — the art profile for " +
+                                           $"model '{model}' supplied it.");
+                        }
+                    }
                 }
             }
         }

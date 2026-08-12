@@ -341,8 +341,14 @@ public static class Program
             // emits the whole content db, so the base sim's units are in every output and they
             // do adopt retail meshes. Asking the question of a directory can only ever fail.
             var noBorrow = Opt(args, "--no-borrow", "");
-            var zr = ZhLint.Check(db, ContentDb.LoadZhTarget(contentPath), assets,
-                                  noBorrow.Length == 0 ? null : noBorrow);
+            // Loaded the same way `compile` loads it, and for the same reason: the profiles are
+            // what DECIDE a unit's death presentation, so a borrow check that cannot see them
+            // cannot see the death channel at all.
+            var lintZh = ContentDb.LoadZhTarget(contentPath);
+            var lintArt = ArtProfiles.Load(Opt(args, "--art-profiles", "reference/art-profiles.json"),
+                                           lintZh.Art);
+            var zr = ZhLint.Check(db, lintZh, assets,
+                                  noBorrow.Length == 0 ? null : noBorrow, lintArt);
             Console.WriteLine();
             Console.WriteLine($"target zh — {zr.Checked} value(s) round-trip checked");
 
@@ -356,7 +362,8 @@ public static class Program
                 // as often as it means "clean", and silence would read as the wrong one. The
                 // second line is the part that matters: passing is not a licence to ship.
                 Console.WriteLine($"  faction '{noBorrow}': every mesh and every texture it " +
-                                  $"names is carried by this pack");
+                                  $"names is carried by this pack, and its units die on " +
+                                  $"effects the pack authors");
 
             if (zr.CapErrors.Count == 0 && zr.RoundTrip.Count == 0 && zr.Divergence.Count == 0
                 && zr.Borrowed.Count == 0)

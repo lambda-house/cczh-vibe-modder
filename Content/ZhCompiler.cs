@@ -166,6 +166,9 @@ public static class ZhCompiler
 
         var fx = ZhFx.Write(pack, pack + "_spark.tga", audio.Events["Death"]);
         string packDeathFx = fx.FxLists[0];
+        // The second list ZhFx authors: the FINAL stage, for units whose mesh
+        // brings no adopted death presentation of its own.
+        string packDeathFinalFx = fx.FxLists[1];
 
         var dmg = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var dt in db.DamageTypes)
@@ -728,7 +731,12 @@ public static class ZhCompiler
                 // Authored art has no such peer, so it gets the pack's effect instead of none.
                 sb.AppendLine($"    FX = INITIAL {dfx?.DeathFX ?? packDeathFx}");
                 if (dfx?.DeathOCL is string o0) sb.AppendLine($"    OCL = MIDPOINT {o0}");
-                if (dfx?.DeathFXFinal is string f1) sb.AppendLine($"    FX = FINAL {f1}");
+                // FINAL is the hull letting go, and authored art was getting nothing for it —
+                // SlowDeathBehavior fires INITIAL, MIDPOINT and FINAL, and a unit on OUR meshes
+                // flashed once and vanished while one on an adopted mesh got all three from the
+                // peer that owns its geometry. Same asymmetry FX was written to close, one level
+                // in. The pack's own is the fallback, never the override, exactly as INITIAL is.
+                sb.AppendLine($"    FX = FINAL {dfx?.DeathFXFinal ?? packDeathFinalFx}");
                 if (dfx?.DeathOCLFinal is string o1) sb.AppendLine($"    OCL = FINAL {o1}");
                 sb.AppendLine("  End");
             }

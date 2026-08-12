@@ -220,6 +220,30 @@ public static class ZhFx
             r.Systems.AppendLine("End").AppendLine();
         }
 
+        // ---- THE FINAL STAGE. -----------------------------------------------------------------
+        //
+        // SlowDeathBehavior fires INITIAL, then MIDPOINT, then FINAL, and until now authored art
+        // supplied only the first: a unit flashed once and disappeared, while a unit on ADOPTED
+        // art got all three because it inherits the shape of whatever peer owns its mesh. That
+        // asymmetry is the same one FX was written to close — authored art inheriting nothing —
+        // just one level further in.
+        //
+        // Deliberately NOT a copy of the initial burst at a larger size. The two read as
+        // different events because they are: the first is the hit that kills, bright and brief;
+        // the second is the hull letting go, and it is mostly smoke that outlives it.
+        string finalFx = P("DeathFinalFX");
+        r.FxLists.Add(finalFx);
+        System(P("WreckBlast"), "DEATH_EXPLOSION", "ADDITIVE", 34, 52, 18, 7, (255, 214, 128), (200, 60, 12));
+        System(P("WreckSmoke"), "DEATH_EXPLOSION", "ALPHA", 30, 54, 90, 10, (58, 54, 50), (18, 17, 16), r.CloudName);
+        r.Ini.AppendLine($"FXList {finalFx}");
+        foreach (var n in new[] { "WreckBlast", "WreckSmoke" })
+        {
+            r.Ini.AppendLine("  ParticleSystem");
+            r.Ini.AppendLine($"    Name = {P(n)}");
+            r.Ini.AppendLine("  End");
+        }
+        r.Ini.AppendLine("End").AppendLine();
+
         r.TreadDustLeft = P("TreadDustLeft");
         r.TreadDustRight = P("TreadDustRight");
         Dust(r.TreadDustLeft, 13.5);

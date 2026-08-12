@@ -2937,6 +2937,29 @@ PYDROP
        echo "$deep" | tail -6; exit 1 ;;
   esac
   echo "  --no-borrow reads INSIDE the mesh: a texture named there must be carried too"
+
+  # THE THIRD CHANNEL, and it was unchecked until a claim about it turned out to be wrong.
+  # A unit's death is not authored from nothing: the compiler looks the MODEL up in the art
+  # profiles and adopts whatever FXList and OCL retail attaches to that mesh, because a FINAL
+  # OCL is mesh-specific (OCL_CrusaderTurret throws THAT tank's turret). Right for adopted art;
+  # a silent borrow for authored art the moment a profile has anything to say about it — and
+  # profiles are keyed by MODEL NAME, so an authored mesh named like a retail one inherits its
+  # death, its debris and its turret bone with no reference anywhere for anything else to see.
+  python3 - "$RF/models/art-profiles.json" <<'PYDEATH'
+import json, sys
+d = json.load(open(sys.argv[1]))
+m = d["models"]["MANGAL"]
+assert not m.get("deathOCLFinal"), "MANGAL already carries a death OCL — this negative tests nothing"
+m["deathOCLFinal"] = "OCL_CrusaderTurret"
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PYDEATH
+  death=$(rts lint --target zh --no-borrow russian_federation --mod "$RF/rf.json" 2>&1 || true)
+  case "$death" in
+    *"its death emits 'OCL = FINAL OCL_CrusaderTurret'"*) : ;;
+    *) echo "  AN AUTHORED UNIT INHERITED A RETAIL DEATH EFFECT AND NOTHING NOTICED"
+       echo "$death" | tail -6; exit 1 ;;
+  esac
+  echo "  --no-borrow covers the DEATH channel: an adopted FX or OCL is a borrow too"
   rm -rf "$RF"; trap - EXIT
 fi
 
