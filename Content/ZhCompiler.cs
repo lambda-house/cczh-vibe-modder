@@ -786,6 +786,15 @@ public static class ZhCompiler
                 // and its default is 0.0, so a W3DTankDraw with correctly named and correctly
                 // mapped treads and no rate here never finds them. Retail's own value across the
                 // 70 objects that set it is 2.0, with 4.0 on the two fastest.
+                // ALWAYS EMITTED, never conditional, and that is the fix for a borrow no lint
+                // can see. `W3DTankDrawModuleData`'s CONSTRUCTOR assigns these two the string
+                // literals "TrackDebrisDirtLeft" and "TrackDebrisDirtRight" — EA ParticleSystem
+                // blocks — so a pack that adopts W3DTankDraw depends on retail content with no
+                // reference anywhere for a checker to find. It showed up in game as a dust plume
+                // behind a tank whose every byte we believed we had authored.
+                // Stating them unconditionally is what makes the default unreachable.
+                sb.AppendLine($"    TreadDebrisLeft = {fx.TreadDustLeft}");
+                sb.AppendLine($"    TreadDebrisRight = {fx.TreadDustRight}");
                 sb.AppendLine("    TreadAnimationRate = 2.0");
                 // Below these fractions of locomotor speed the belts stop and the hull is
                 // allowed to pivot in place. Retail sets both on every object that sets the rate.
@@ -1189,6 +1198,11 @@ public static class ZhCompiler
             Directory.CreateDirectory(Path.GetDirectoryName(sp)!);
             File.WriteAllBytes(sp, fx.Sprite);
             r.Files.Add(sp);
+            // The ALPHA systems' own sheet. Emitted beside the additive one because the two
+            // encode their falloff differently and a shared texture makes one of them wrong.
+            string cp = Path.Combine(outRoot, "Art", "Textures", fx.CloudName);
+            File.WriteAllBytes(cp, fx.Cloud);
+            r.Files.Add(cp);
         }
 
         // ---- Audio: the pack's own sound ----------------------------------------------------

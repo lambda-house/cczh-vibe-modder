@@ -3084,6 +3084,8 @@ txt = "".join(open(f, encoding="latin-1").read().replace("\r", "")
 objs = dict((m.group(1), m.group(2)) for m in re.finditer(r"^Object (\S+)(.*?)^End", txt, re.S | re.M))
 tank = objs.get("rf_mangal", "")
 base = objs.get("rf_rf_base", "")
+psys = "".join(open(f, encoding="latin-1").read().replace("\r", "")
+               for f in glob.glob(f"{sys.argv[1]}/Data/INI/ParticleSystem/*.ini"))
 fail = []
 if "W3DTankDraw" not in tank:
     fail.append("rf_mangal did not get W3DTankDraw although its mesh has belts")
@@ -3101,6 +3103,35 @@ if "OkToChangeModelColor = Yes" not in tank:
     fail.append("rf_mangal has HOUSECOLOR submeshes but did not opt into recolouring")
 if "W3DTankDraw" in base:
     fail.append("the base got a TANK draw module — the choice is not coming from the mesh")
+
+# A BORROW WITH NO REFERENCE TO FIND. W3DTankDrawModuleData's CONSTRUCTOR assigns
+# TrackDebrisDirtLeft/Right — EA ParticleSystem blocks — so adopting this module makes a pack
+# depend on retail content that appears nowhere in its INI. The zero-borrow lint reads what a
+# pack NAMES, and until these two lines existed the pack named nothing. Stating them
+# unconditionally is what makes the C++ default unreachable.
+for side in ("Left", "Right"):
+    m = re.search(rf"TreadDebris{side}\s*=\s*(\S+)", tank)
+    if not m:
+        fail.append(f"rf_mangal does not override TreadDebris{side} — it inherits EA's dust")
+    elif not m.group(1).startswith("rf_"):
+        fail.append(f"TreadDebris{side} points at '{m.group(1)}', which this pack does not author")
+    elif f"ParticleSystem {m.group(1)}" not in psys:
+        fail.append(f"TreadDebris{side} names '{m.group(1)}' but the pack emits no such system")
+
+# The dust must be a TRAIL, not a burst: IsOneShot = No and SystemLifetime = 0 are what let it
+# run while the tank moves. A one-shot inherits the death-effect shape and puffs once.
+for m in re.finditer(r"^ParticleSystem (rf_TreadDust\w+)(.*?)^End", psys, re.S | re.M):
+    if "IsOneShot = No" not in m.group(2):
+        fail.append(f"{m.group(1)} is one-shot — it would puff once and stop")
+    if not re.search(r"SystemLifetime\s*=\s*0\b", m.group(2)):
+        fail.append(f"{m.group(1)} has a finite SystemLifetime — the trail would end on its own")
+    # An ALPHA particle composites by its texture's alpha, so black in the sheet is opaque
+    # black rather than nothing. The additive spark encodes falloff as brightness ON black and
+    # renders as a dark square here; the two shaders need genuinely different textures.
+    sprite = re.search(r"ParticleName\s*=\s*(\S+)", m.group(2))
+    if "Shader = ALPHA" in m.group(2) and sprite and "_cloud" not in sprite.group(1):
+        fail.append(f"{m.group(1)} blends ALPHA but draws with the ADDITIVE sprite "
+                    f"'{sprite.group(1)}' — it renders as a dark square")
 
 # THE GUN IS FIXED, and it is fixed because the geometry behind the opening is named CASEMATE
 # rather than TURRET. ZH has no arc field at all — TurretAIData::buildFieldParse bounds pitch
@@ -3137,6 +3168,8 @@ print("  the compiler read the mesh: tank draw + tread rate + track marks on the
       "plain model draw on the structure")
 print(f"  CASEMATE not TURRET: no turret block, no turret bone, hull slews at 60 "
       f"({len(turreted)} turreted object(s) in the same pack still get theirs)")
+print("  tread dust is the PACK's, not EA's: both sides overridden, both authored, both "
+      "trails rather than bursts, drawn with an alpha sprite")
 PYINI
   rm -rf "$TR" "$RFT"; trap - EXIT
 fi
