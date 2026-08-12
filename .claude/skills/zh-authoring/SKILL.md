@@ -41,6 +41,35 @@ effects expanded into their particle systems and debris meshes. Full shapes in
 - **Cover does not exist in ZH.** Firing line-of-sight is checked nowhere — confirmed in a match
   by killing a target through a cliff. Never tune balance against terrain cover.
 
+## Silent failures that reach a match
+
+Every one of these compiles, loads, boots 42/42 and then does nothing. No error, no log line.
+They were each found by someone noticing something in a match, which is the slowest detector
+there is — check them before you look anywhere else.
+
+| Symptom | Cause |
+|---|---|
+| unit is invisible but behaves | **`GeometryIsSmall = Yes` on a radius > ~20.** Retail's small objects have median radius 10; only 3 of 237 exceed 30. Derive the flag from the radius, never from unit-vs-structure |
+| unit is invisible, nothing behaves | the model name resolves to no file — `zh.models` having an entry is not the same as the `.w3d` existing |
+| map renders BLACK | the `TerrainType` names a texture that ships in no archive. **12 of retail's own 291 blocks dangle this way**, `desertA` among them. Naming a real block is not sufficient |
+| terrain tile ignored | `countTiles` wants uncompressed true-colour, 24–32 bpp, at least one whole 64×64 tile, at `Art/Terrain/` — not `Art/Textures/` |
+| blank command-bar tiles | a `MappedImage` whose texture is missing. Both halves ship or neither |
+| units spawn INSIDE a building | geometry smaller than the mesh. It cannot be derived — adopt a mesh retail *uses*, or author one |
+| authored unit dies invisibly | no death FX. An adopted mesh inherits its peer's; an authored one inherits nothing |
+| faction plays the wrong pack's units | **two packs installed at once.** Sides are pack-prefixed so they coexist rather than collide, the lobby lists several factions, and a match takes whichever is default. Uninstall by `MANIFEST.txt` before installing |
+| build buttons render, click does nothing | missing `ProductionUpdate`, or a door count with no door states |
+
+## Driving the game to check
+
+`tools/zhdrive skirmish` launches and plays into a live match; `verify-pack` asserts icons
+resolve and the build button charges the player. Launch with **`-quickstart`** — it sets
+`m_playIntro = FALSE`, and pressing `esc` at the intro is what made early runs flaky.
+
+Three traps, all measured: the **cursor must be parked centre** after every click or the RTS
+edge-scrolls the camera out from under your coordinates; the **start position is randomised**,
+so find things by appearance rather than by coordinate; and `esc` **leaves none** of the shell's
+three wedged states, so relaunch instead of clicking harder.
+
 ## Retune a unit — pure-data, easy
 
 Drop 3–10 lines into `<MapDir>/map.ini`. Zero base modification; retail itself does this
