@@ -13,6 +13,25 @@ The authority is the engine's `FieldParse` tables — every INI block type decla
 it enumerates the legal keys plus a parser that implies each type. Extract with
 `tools/zhasset schema` → **253 tables, 2,993 fields**.
 
+## Numbers that should shape a design before you start
+
+- **`DefaultThingTemplate` is 130 lines serving all 1,949 objects.** Without an equivalent,
+  every new field is a breaking change to every existing unit.
+- **570 buildables split 379 units / 261 structures**, and a minimum viable faction is five
+  objects of which THREE are buildings. Content is more building than unit.
+- **1,716 of ~2,300 upgrade condition clauses are literally `None`.** The grammar a condition
+  system needs is tiny; selectors carry the rest.
+- **Retail ships 88 bad references across 68 broken definitions**, in all nine multiplayer
+  generals — a tracked defect class, not an anomaly. **`Prerequisites` contributes ZERO of
+  them**; 64 of 88 are reached through a SHARED INTERMEDIARY (`ObjectCreationList`
+  `Transport` / `Payload` / `ObjectNames`). Validate the intermediaries, not the obvious edges.
+- **Skill-point value IS experience value** — not one retail object overrides
+  `SkillPointValue` — so one number feeds both ladders.
+- **477 objects are wholesale clones.** `ObjectReskin` is restricted to ten appearance fields
+  and cannot change Side, cost, prerequisites, name, portrait or voice, so EA copied instead:
+  180,490 lines to express 5,385 lines of intent. **The restriction created the duplication** —
+  a "just the visuals" variant type is the anti-pattern, however tempting.
+
 The RESOLVED model — the corpus joined rather than enumerated — is:
 
 ```

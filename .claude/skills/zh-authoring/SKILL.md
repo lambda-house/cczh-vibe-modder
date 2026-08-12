@@ -68,6 +68,50 @@ there is — check them before you look anywhere else.
 | faction plays the wrong pack's units | **two packs installed at once.** Sides are pack-prefixed so they coexist rather than collide, the lobby lists several factions, and a match takes whichever is default. Uninstall by `MANIFEST.txt` before installing |
 | build buttons render, click does nothing | missing `ProductionUpdate`, or a door count with no door states |
 
+## What does NOT transfer — measure here, and it will differ there
+
+These all compile, load and play, and then behave differently from the numbers you tuned
+against. `rts lint --target zh` reports them per pack; know them before you tune, not after.
+
+| Ours | Theirs | Consequence |
+|---|---|---|
+| `spread` as a damage multiplier per shot | `ScatterRadius` — the projectile geometrically misses | not interchangeable; compiled damage is the un-spread mean |
+| veterancy bonuses composed with `Mul` | situational bonuses compose **additively-in-excess** | stacked bonuses resolve LOWER there. Use the `Excess` op to match |
+| a flag SET per unit | **one `PLAYER_UPGRADE` bit per object** | only the first conditional variant survives. The same restriction forced 268 `ConflictsWith` lines on retail |
+| terrain blocks line of sight | firing LOS is checked **nowhere** | a wall that gives COVER here gives only a DETOUR there. Never tune balance on cover |
+| a rank ladder in content | `Rank` blocks are NUMBERED, not named | emitting yours REPLACES retail's rather than extending it — the one type that cannot be additive |
+| `grantMoney` on death | nearest is `CreateCrateDie`, which the KILLER collects | different beneficiary, so it is not emitted at all |
+
+## Emit-time literals that are hard load errors
+
+Closed C++ name tables, not free strings — an unknown value aborts the boot. **Check the name
+table, never a grep of the INI**: `SCORCHMARK` and `SMUDGE` are legal `ParticleSystem` values
+that appear in no shipped file, and `GARRISONABLE` greps as present only because it is a
+substring of `GARRISONABLE_UNTIL_DESTROYED`.
+
+- **`GARRISONABLE` is NOT a KindOf.** The bit table has only `NO_GARRISON`, `STEALTH_GARRISON`,
+  `GARRISONABLE_UNTIL_DESTROYED`. Garrisonability is the PRESENCE OF the `GarrisonContain`
+  module. Emitting the invented name was a hard load error.
+- `ParticleSystem` `Priority` / `Shader` / `Type`, `Terrain` `Class`, `Locomotor`
+  `ZAxisBehavior` (`NO_Z_MOTIVE_FORCE`, not `NO_Z_MOTION`), `DamageType`, `SpecialPowerType`.
+- A map object's **owner** must be a team that exists. `PlayerList::validateTeam` guards the
+  miss with `DEBUG_CRASH` *before* falling back to neutral, and DEBUG_CRASH is compiled into
+  this build. Only `"team"` — the neutral side's default — is safe from a compiled map; a
+  skirmish opponent's name exists in the LOBBY, not in the map's `SidesList`.
+
+## Authoring FX is cheap, and here is the measurement
+
+**1,087 particle systems in the whole game draw on 81 distinct textures** — small additive
+sprites, reused everywhere. A from-scratch set is a modest art task, not a pipeline.
+
+- An ADDITIVE sprite's "empty" is **BLACK, not transparent**. Additive blending ignores alpha,
+  so the ordinary compositing instinct leaves a visible square. Squared falloff, because linear
+  reads as a flat disc with a hard edge.
+- **Two files, not one:** `ParticleSystem` blocks go to `Data/INI/ParticleSystem/` and the
+  `FXList` to `Data/INI/FXList/` — the directories each manager actually scans.
+- An adopted mesh inherits its peer's death FX and an authored one inherits nothing, so ours is
+  the FALLBACK, never the override: `OCL_CrusaderTurret` throws THAT tank's turret.
+
 ## Driving the game to check
 
 `tools/zhdrive skirmish` launches and plays into a live match; `verify-pack` asserts icons
