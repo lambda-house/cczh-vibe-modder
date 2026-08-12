@@ -2260,5 +2260,144 @@ fi
 rm -rf "$GL"; trap - EXIT
 
 
+gate "a mesh authored from NOTHING — no template, no retail bytes"
+# `w3dbox` computes its own geometry but needs a --template, and the only templates in
+# existence are RETAIL meshes: MATERIAL_INFO, SHADERS, VERTEX_MATERIALS, TEXTURES and the
+# MATERIAL_PASS scaffolding are copied out of ABPWRPLANT_D01.W3D. So "authored" has meant OUR
+# GEOMETRY IN THEIR CONTAINER, which is not the claim this project wants to make.
+#
+# `w3dfrom` builds every chunk from spec. That is also what lets Blender be the modelling
+# backend — real booleans, bevels and decimation, exported as glTF, landing here — because a
+# mesh arriving from outside has no template to inherit from.
+FN=$(mktemp -d); trap 'rm -rf "$FN"' EXIT
+W3DBIG="$HOME/GeneralsX/GeneralsZH/ZH_Generals/W3D.big"
+if [ ! -f "$W3DBIG" ]; then
+  echo "  (no install: the round-trip needs a real mesh to grade against — skipped)"
+else
+  python3 - "$W3DBIG" "$FN" <<'PYFN'
+import struct, sys, os
+big, out = sys.argv[1], sys.argv[2]
+with open(big, "rb") as f:
+    f.read(8); (n,) = struct.unpack(">I", f.read(4)); f.read(4)
+    ents = []
+    for _ in range(n):
+        off, size = struct.unpack(">II", f.read(8)); nm = b""
+        while True:
+            c = f.read(1)
+            if c in (b"\x00", b""): break
+            nm += c
+        ents.append((nm.decode("latin-1"), off, size))
+    for nm, off, size in ents:
+        base = nm.split("\\")[-1].upper()
+        if base in ("ABPWRPLANT_D01.W3D", "AVLEOPARD.W3D"):
+            f.seek(off); open(os.path.join(out, base), "wb").write(f.read(size))
+PYFN
+
+  # --- 1. w3d -> glTF -> w3d must preserve the GEOMETRY exactly. ------------------------
+  # Not byte-identity: the rebuilt file carries our own material name, so it is legitimately a
+  # few bytes different. What must survive is every number a renderer reads. Vertices are
+  # asserted BIT-exact because both hops are pure sign swaps between axes — anything non-zero
+  # there means a transform is doing arithmetic it should not be.
+  ./tools/zhasset gltf "$FN/ABPWRPLANT_D01.W3D" --out "$FN/p.glb" >/dev/null
+  ./tools/zhasset w3dfrom --gltf "$FN/p.glb" --out "$FN/p.w3d" --name RTPLANT >/dev/null
+  python3 - "$FN/ABPWRPLANT_D01.W3D" "$FN/p.w3d" <<'PYCMP'
+import struct, sys
+def geom(p):
+    buf = open(p, "rb").read()
+    def walk(off, end):
+        while off + 8 <= end:
+            t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+            if raw & 0x80000000: yield from walk(body, body + sz)
+            else: yield t, buf[body:body + sz]
+            off = body + sz
+    v = uv = tri = None
+    for t, pl in walk(0, len(buf)):
+        if t == 0x0002: v = [struct.unpack_from("<3f", pl, i * 12) for i in range(len(pl) // 12)]
+        if t == 0x004A: uv = [struct.unpack_from("<2f", pl, i * 8) for i in range(len(pl) // 8)]
+        if t == 0x0020: tri = [struct.unpack_from("<3I", pl, i * 32) for i in range(len(pl) // 32)]
+    return v, uv, tri
+a, b = geom(sys.argv[1]), geom(sys.argv[2])
+assert len(a[0]) == len(b[0]) and len(a[2]) == len(b[2]), "counts changed"
+dv = max(max(abs(p - q) for p, q in zip(P, Q)) for P, Q in zip(a[0], b[0]))
+du = max(max(abs(p - q) for p, q in zip(P, Q)) for P, Q in zip(a[1], b[1]))
+assert dv == 0.0, f"VERTICES MOVED by {dv} — an axis transform is not a pure sign swap"
+assert du < 1e-6, f"UVs drifted by {du}"
+assert a[2] == b[2], "triangle indices changed"
+print(f"  geometry survives w3d->gltf->w3d: {len(a[0])} verts bit-exact, "
+      f"{len(a[2])} tris identical, UVs within {du:.1e}")
+PYCMP
+
+  # --- 2. The rebuilt file must be a WELL-FORMED w3d by our own reader. -----------------
+  ./tools/zhasset w3dround "$FN/p.w3d" | grep -q "BYTE-IDENTICAL" \
+    || { echo "  A FROM-SCRATCH MESH DOES NOT ROUND-TRIP — the chunk tree is malformed"; exit 1; }
+  # And it must carry the same KINDS of chunk retail does. A file that parses but is missing
+  # SHADERS or MATERIAL_PASS renders untextured, with no error from anything.
+  for k in MESH_HEADER3 VERTICES VERTEX_NORMALS TRIANGLES VERTEX_SHADE_INDICES \
+           MATERIAL_INFO VERTEX_MATERIAL_INFO SHADERS TEXTURE_NAME STAGE_TEXCOORDS; do
+    ./tools/zhasset w3d "$FN/p.w3d" -v | grep -q "$k" \
+      || { echo "  REBUILT MESH IS MISSING $k — it would load and render wrong"; exit 1; }
+  done
+  echo "  the rebuilt mesh round-trips and carries every chunk kind retail carries"
+
+  # --- 3. Multi-mesh must be ASSEMBLED, not just concatenated. --------------------------
+  # A .w3d holding ten meshes and no HLOD loads as ten unrelated pieces the engine never puts
+  # together. AVLeopard is the real case: ten sub-objects, house colour among them.
+  ./tools/zhasset gltf "$FN/AVLEOPARD.W3D" --out "$FN/t.glb" >/dev/null
+  ./tools/zhasset w3dfrom --gltf "$FN/t.glb" --out "$FN/t.w3d" --name RTTANK >/dev/null
+  ./tools/zhasset w3d "$FN/t.w3d" | grep -q "sub-objects : 10" \
+    || { echo "  A TEN-MESH MODEL CAME BACK WITHOUT ITS HLOD — the pieces never assemble"; exit 1; }
+  ./tools/zhasset w3d "$FN/t.w3d" | grep -q "400 vertices, 245 triangles" \
+    || { echo "  the ten-mesh rebuild lost geometry"; exit 1; }
+  echo "  a ten-sub-object model rebuilds with its HLOD and all 400 verts / 245 tris"
+
+  # --- 4. NO UVs must drop the texture stage, not emit an empty one. --------------------
+  # The loader sizes STAGE_TEXCOORDS from NumVertices, so an empty array is a read past the
+  # end of the chunk — and MATERIAL_INFO's counts have to be restated to match, because those
+  # counts are what the parse consumes.
+  python3 - "$FN/t.glb" "$FN/nouv.glb" <<'PYNOUV'
+import json, struct, sys
+d = open(sys.argv[1], "rb").read()
+off, ch = 12, {}
+while off + 8 <= len(d):
+    ln, ct = struct.unpack_from("<II", d, off); ch[ct] = d[off + 8:off + 8 + ln]; off += 8 + ln
+doc = json.loads(ch[0x4E4F534A]); bn = ch[0x004E4942]
+for m in doc["meshes"]:
+    for p in m["primitives"]:
+        p["attributes"].pop("TEXCOORD_0", None)
+js = json.dumps(doc, separators=(",", ":")).encode(); js += b" " * (-len(js) % 4)
+body = struct.pack("<II", len(js), 0x4E4F534A) + js + struct.pack("<II", len(bn), 0x004E4942) + bn
+open(sys.argv[2], "wb").write(struct.pack("<III", 0x46546C67, 2, 12 + len(body)) + body)
+PYNOUV
+  ./tools/zhasset w3dfrom --gltf "$FN/nouv.glb" --out "$FN/nouv.w3d" --name NOUV >/dev/null
+  ./tools/zhasset w3d "$FN/nouv.w3d" -v | grep -q "STAGE_TEXCOORDS" \
+    && { echo "  A UV-LESS MESH EMITTED AN EMPTY TEXTURE STAGE — the loader reads past it"; exit 1; }
+  ./tools/zhasset w3dround "$FN/nouv.w3d" | grep -q "BYTE-IDENTICAL" \
+    || { echo "  the UV-less mesh is malformed"; exit 1; }
+  echo "  a UV-less mesh drops its texture stage instead of declaring an empty one"
+
+  # --- 5. And an INDEPENDENT implementation must still read the rebuilt file. -----------
+  BL=/Applications/Blender.app/Contents/MacOS/Blender
+  if [ ! -x "$BL" ]; then
+    echo "  (no Blender: the independent importer check is skipped)"
+  else
+    ./tools/zhasset gltf "$FN/t.w3d" --out "$FN/t2.glb" >/dev/null
+    "$BL" --background --python-expr "
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath='$FN/t2.glb')
+v = t = 0
+for o in bpy.data.objects:
+    if o.type == 'MESH':
+        o.data.calc_loop_triangles()
+        v += len(o.data.vertices); t += len(o.data.loop_triangles)
+print('BLENDER %d %d' % (v, t))
+" 2>/dev/null | grep -q "BLENDER 400 245" \
+      || { echo "  BLENDER COULD NOT READ THE REBUILT MESH BACK"; exit 1; }
+    echo "  Blender reads the rebuilt mesh back at 400 vertices / 245 triangles"
+  fi
+fi
+rm -rf "$FN"; trap - EXIT
+
+
 echo
 echo "E2E PASS"

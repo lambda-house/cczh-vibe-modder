@@ -3343,6 +3343,237 @@ def cmd_gltf(a):
     return 0
 
 
+# ---------------------------------------------------------------------------------------
+# glTF -> W3D. The return leg, and the one that makes "authored" literally true.
+#
+# `w3dbox` computes its own geometry but needs a --template, and the only templates in
+# existence are RETAIL meshes: it copies MATERIAL_INFO, SHADERS, VERTEX_MATERIALS, TEXTURES
+# and the MATERIAL_PASS scaffolding out of ABPWRPLANT_D01.W3D. So "authored" has until now
+# meant OUR GEOMETRY IN THEIR CONTAINER. Building the whole chunk tree from nothing is what
+# closes that, and it is also what lets Blender be the modelling backend — real booleans,
+# bevels and decimation, exported as glTF, landing here.
+#
+# The material values below are COPIED FROM A RETAIL MESH THAT DEMONSTRABLY LOADS, per the
+# standing rule that no literal is invented and none is confirmed by grep. They are format
+# state — blend mode, depth compare, shininess — not content: the same 16 bytes appear in
+# thousands of shipped meshes because there is only one sensible way to say "opaque, textured,
+# depth-tested".
+# ---------------------------------------------------------------------------------------
+
+# W3dShaderStruct, 16 uint8 fields. Read off a loading retail mesh:
+#   DepthCompare=3 (pass if nearer), DepthMask=1 (write depth), PriGradient=1 (modulate),
+#   SrcBlend=1 (one), Texturing=1 (on), everything else 0.
+W3D_SHADER_OPAQUE = bytes([3, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0])
+
+# W3dVertexMaterialStruct: Attributes, then Ambient/Diffuse/Specular/Emissive as RGB+pad,
+# then Shininess, Opacity, Translucency. White ambient and diffuse, near-white specular,
+# shininess 0.25, fully opaque.
+W3D_VMAT_PLAIN = (struct.pack("<I", 0)
+                  + bytes([0xFF, 0xFF, 0xFF, 0]) + bytes([0xFF, 0xFF, 0xFF, 0])
+                  + bytes([0xE5, 0xE5, 0xE5, 0]) + bytes([0, 0, 0, 0])
+                  + struct.pack("<3f", 0.25, 1.0, 0.0))
+
+W3D_MESH_HEADER3_VERSION = 0x00040002       # 4.2, what every shipped mesh carries
+W3D_VERTEX_CHANNEL_LOCATION_NORMAL = 3      # LOCATION | NORMAL
+W3D_FACE_CHANNEL_FACE = 1
+
+
+def _glb_read(path):
+    """Read a .glb into [{name, verts, normals, uvs, tris, texture}], in glTF's own Y-up frame.
+
+    Handles interleaved bufferViews (byteStride), because Blender's exporter emits them and a
+    reader that assumes tight packing silently produces scrambled geometry rather than an error.
+    """
+    d = open(path, "rb").read()
+    magic, ver, total = struct.unpack_from("<III", d, 0)
+    if magic != 0x46546C67 or ver != 2:
+        raise ValueError(f"{path}: not a glTF 2.0 binary container")
+    off, chunks = 12, {}
+    while off + 8 <= len(d):
+        ln, ct = struct.unpack_from("<II", d, off)
+        chunks[ct] = d[off + 8: off + 8 + ln]
+        off += 8 + ln
+    doc = json.loads(chunks[0x4E4F534A])
+    bin_ = chunks.get(0x004E4942, b"")
+
+    NCOMP = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+    FMT = {5120: ("b", 1), 5121: ("B", 1), 5122: ("h", 2), 5123: ("H", 2),
+           5125: ("I", 4), 5126: ("f", 4)}
+
+    def read(ai):
+        acc = doc["accessors"][ai]
+        n = NCOMP[acc["type"]]
+        code, width = FMT[acc["componentType"]]
+        bv = doc["bufferViews"][acc["bufferView"]]
+        base = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
+        stride = bv.get("byteStride") or n * width
+        return [struct.unpack_from(f"<{n}{code}", bin_, base + i * stride)
+                for i in range(acc["count"])]
+
+    out = []
+    for mi, m in enumerate(doc.get("meshes", [])):
+        for pi, prim in enumerate(m.get("primitives", [])):
+            at = prim["attributes"]
+            mat = doc.get("materials", [])[prim["material"]] if "material" in prim else {}
+            idx = [i[0] for i in read(prim["indices"])] if "indices" in prim else None
+            verts = read(at["POSITION"])
+            if idx is None:
+                idx = list(range(len(verts)))
+            out.append({
+                "name": m.get("name") or f"mesh{mi}_{pi}",
+                "verts": verts,
+                "normals": read(at["NORMAL"]) if "NORMAL" in at else [],
+                "uvs": read(at["TEXCOORD_0"]) if "TEXCOORD_0" in at else [],
+                "tris": [tuple(idx[i:i + 3]) for i in range(0, len(idx) - 2, 3)],
+                "texture": (mat.get("extras") or {}).get("w3dTexture") or mat.get("name"),
+            })
+    return out
+
+
+def _zup(x, y, z):
+    """glTF Y-up back to W3D Z-up — the exact inverse of `_yup`, and tested as such."""
+    return (x, -z, y)
+
+
+def _w3d_mesh_node(name, container, verts, norms, uvs, tris, texture):
+    """Build one complete MESH chunk tree from nothing.
+
+    Every chunk a loading retail mesh carries is emitted here, in the order it carries them.
+    Order is not decorative: the loader reads MATERIAL_INFO's counts and then consumes exactly
+    that many VERTEX_MATERIAL / SHADER / TEXTURE entries, so a count that disagrees with the
+    chunks following it desynchronises the parse rather than reporting anything.
+    """
+    if not norms or len(norms) != len(verts):
+        # A vertex normal per vertex is required by the header's VertexChannels. Deriving them
+        # by area-weighted face accumulation matches what a modeller would export and beats
+        # emitting zeroes, which render as unlit black.
+        acc = [[0.0, 0.0, 0.0] for _ in verts]
+        for i0, i1, i2 in tris:
+            p0, p1, p2 = verts[i0], verts[i1], verts[i2]
+            ux, uy, uz = (p1[k] - p0[k] for k in range(3))
+            vx, vy, vz = (p2[k] - p0[k] for k in range(3))
+            c = (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+            for i in (i0, i1, i2):
+                for k in range(3):
+                    acc[i][k] += c[k]
+        norms = []
+        for n in acc:
+            ln = (n[0] ** 2 + n[1] ** 2 + n[2] ** 2) ** 0.5 or 1.0
+            norms.append((n[0] / ln, n[1] / ln, n[2] / ln))
+
+    xs = [v[0] for v in verts]; ys = [v[1] for v in verts]; zs = [v[2] for v in verts]
+    mn = (min(xs), min(ys), min(zs)); mx = (max(xs), max(ys), max(zs))
+    ctr = tuple((mn[i] + mx[i]) / 2.0 for i in range(3))
+    rad = max(sum((v[i] - ctr[i]) ** 2 for i in range(3)) for v in verts) ** 0.5
+
+    hdr = bytearray(116)
+    struct.pack_into("<I", hdr, 0, W3D_MESH_HEADER3_VERSION)
+    struct.pack_into("<I", hdr, 4, 0)                                  # Attributes
+    hdr[8:24] = name.encode("latin-1")[:15].ljust(16, b"\0")
+    hdr[24:40] = container.encode("latin-1")[:15].ljust(16, b"\0")
+    struct.pack_into("<I", hdr, 40, len(tris))
+    struct.pack_into("<I", hdr, 44, len(verts))
+    struct.pack_into("<I", hdr, 48, 1)                                 # NumMaterials
+    struct.pack_into("<I", hdr, 68, W3D_VERTEX_CHANNEL_LOCATION_NORMAL)
+    struct.pack_into("<I", hdr, 72, W3D_FACE_CHANNEL_FACE)
+    struct.pack_into("<3f", hdr, 76, *mn)
+    struct.pack_into("<3f", hdr, 88, *mx)
+    struct.pack_into("<3f", hdr, 100, *ctr)
+    struct.pack_into("<f", hdr, 112, rad)
+
+    fbuf = b""
+    for i0, i1, i2 in tris:
+        # The GEOMETRIC plane normal from the winding, never a vertex normal — the two coincide
+        # only under flat shading, and this chunk feeds culling and the plane distance.
+        p0, p1, p2 = verts[i0], verts[i1], verts[i2]
+        ux, uy, uz = (p1[k] - p0[k] for k in range(3))
+        vx, vy, vz = (p2[k] - p0[k] for k in range(3))
+        cx, cy, cz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        ln = (cx * cx + cy * cy + cz * cz) ** 0.5 or 1.0
+        fn = (cx / ln, cy / ln, cz / ln)
+        fbuf += struct.pack("<3II3ff", i0, i1, i2, 0, *fn,
+                            sum(fn[k] * p0[k] for k in range(3)))
+
+    kids = [
+        (0x001F, bytes(hdr), []),                                              # MESH_HEADER3
+        (0x0002, b"".join(struct.pack("<3f", *v) for v in verts), []),         # VERTICES
+        (0x0003, b"".join(struct.pack("<3f", *n) for n in norms), []),         # VERTEX_NORMALS
+        (0x0020, fbuf, []),                                                    # TRIANGLES
+        (0x0022, b"".join(struct.pack("<I", 0) for _ in verts), []),           # SHADE_INDICES
+        (0x0028, struct.pack("<4I", 1, 1, 1, 1), []),                          # MATERIAL_INFO
+        (0x002A, None, [                                                       # VERTEX_MATERIALS
+            (0x002B, None, [
+                (0x002C, b"Material\0", []),                                   # ..._NAME
+                (0x002D, W3D_VMAT_PLAIN, []),                                  # ..._INFO
+            ]),
+        ]),
+        (0x0029, W3D_SHADER_OPAQUE, []),                                       # SHADERS
+        (0x0030, None, [                                                       # TEXTURES
+            (0x0031, None, [
+                (0x0032, (texture or "RTSGRID.tga").encode("latin-1") + b"\0", []),
+            ]),
+        ]),
+        (0x0038, None, [                                                       # MATERIAL_PASS
+            (0x0039, struct.pack("<I", 0), []),                                # VERTEX_MAT_IDS
+            (0x003A, struct.pack("<I", 0), []),                                # SHADER_IDS
+            (0x0048, None, [                                                   # TEXTURE_STAGE
+                (0x0049, struct.pack("<I", 0), []),                            # TEXTURE_IDS
+                (0x004A, b"".join(struct.pack("<2f", *t) for t in uvs), []),   # STAGE_TEXCOORDS
+            ]),
+        ]),
+    ]
+    # A mesh with no UVs must not declare a texture stage holding an empty texcoord array: the
+    # loader sizes that array from NumVertices and reads past the chunk. Drop the texture and
+    # the pass, and restate MATERIAL_INFO's counts to match what is actually left — those
+    # counts drive the loader's parse, so leaving them at 1 texture / 1 pass desynchronises it.
+    # Located by chunk type rather than by list position: a magic index here would silently
+    # rewrite whatever chunk happened to move into that slot.
+    if len(uvs) != len(verts):
+        kids = [k for k in kids if k[0] not in (0x0030, 0x0038)]
+        kids = [(0x0028, struct.pack("<4I", 0, 1, 1, 0), []) if k[0] == 0x0028 else k
+                for k in kids]
+    return (0x0000, None, kids)
+
+
+def cmd_w3dfrom(a):
+    """Build a .w3d from a .glb — the return leg that lets Blender be the modelling backend."""
+    prims = _glb_read(a.gltf)
+    if not prims:
+        print(f"{os.path.basename(a.gltf)}: no mesh primitives")
+        return 1
+    base = a.name or os.path.splitext(os.path.basename(a.out))[0].upper()
+
+    nodes, total_v, total_t = [], 0, 0
+    for i, p in enumerate(prims):
+        verts = [_zup(*v) for v in p["verts"]]
+        norms = [_zup(*n) for n in p["normals"]]
+        uvs = [(u, 1.0 - v) for u, v in p["uvs"]]
+        nm = base if len(prims) == 1 else f"{base}{i:02d}"
+        nodes.append(_w3d_mesh_node(nm, base if len(prims) > 1 else "",
+                                    verts, norms, uvs, p["tris"], a.texture or p["texture"]))
+        total_v += len(verts); total_t += len(p["tris"])
+
+    if len(prims) > 1:
+        # More than one mesh needs an HLOD to be assembled: it is what names the sub-objects
+        # and states which render object they belong to. A multi-mesh .w3d without one loads
+        # as several unrelated pieces the engine never puts together.
+        sub = b"".join(_chunk(0x0704, struct.pack("<I", 0)
+                              + f"{base}.{base}{i:02d}".encode("latin-1")[:31].ljust(32, b"\0"))
+                       for i in range(len(prims)))
+        lod = _chunk(0x0703, struct.pack("<If", len(prims), 3.4028235e38)) + sub
+        hl = (_chunk(0x0701, struct.pack("<II", 0x00010000, 1) + _name16(base) + _name16(base))
+              + _chunk(0x0702, lod, container=True))
+        nodes.append((0x0700, None, w3d_tree(hl)))
+
+    data = w3d_emit(nodes)
+    open(a.out, "wb").write(data)
+    print(f"{os.path.basename(a.gltf)} -> {a.out}  {len(data):,} bytes")
+    print(f"  {len(prims)} mesh(es), {total_v:,} vertices, {total_t:,} triangles"
+          f"{', HLOD assembled' if len(prims) > 1 else ''}")
+    print(f"  every chunk authored — no template, no retail bytes")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="zhasset", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -3385,6 +3616,12 @@ def main():
     gl = sub.add_parser("gltf", help="export a .w3d as glTF 2.0 (.glb) so it can be LOOKED AT")
     gl.add_argument("file"); gl.add_argument("--out", required=True)
     gl.set_defaults(fn=cmd_gltf)
+
+    wf = sub.add_parser("w3dfrom", help="build a .w3d from a .glb — every chunk authored, no template")
+    wf.add_argument("--gltf", required=True); wf.add_argument("--out", required=True)
+    wf.add_argument("--name", help="mesh name; defaults to the output basename")
+    wf.add_argument("--texture", help="override TEXTURE_NAME, e.g. RTSGRID.tga")
+    wf.set_defaults(fn=cmd_w3dfrom)
 
     wb = sub.add_parser("w3dbox", help="author new geometry (any topology) into a mesh template")
     wb.add_argument("--template", required=True); wb.add_argument("--out", required=True)
