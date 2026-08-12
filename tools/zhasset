@@ -4248,6 +4248,15 @@ def cmd_model(a):
             regions.append((nm, uvrects[nm], rspec or None))
         size = recipe.get("textureSize", base.get("size", 256))
         base = dict(base); base["size"] = size
+        if ao:
+            # THE MATERIAL MUST STOP APPROXIMATING WHAT THE BAKE NOW MEASURES. The procedural
+            # `ao` term is seam-distance occlusion — a guess at exactly the quantity Cycles
+            # just traced off the real geometry. Leaving both in multiplies two occlusion
+            # passes together, and in game that turned the Mangal's flanks into dark mud while
+            # the tracks (a painter that sets its own values) still read fine.
+            # `lip` stays: it is a highlight, and an AO bake adds none.
+            base["ao"] = base.get("ao", 0.45) * 0.3
+            base["wear"] = base.get("wear", 0.25) * 0.6
         size, rows = _atlas_texture(size, regions, base)
         if ao:
             # BAKED OCCLUSION over the procedural material. Multiply, because occlusion is how
@@ -4261,7 +4270,10 @@ def cmd_model(a):
                     # Floored: a fully occluded texel going to black loses the material
                     # underneath it entirely, and a 2003 renderer has no bounce light to
                     # recover it. Retail's own recesses are dark, not absent.
-                    k = 0.35 + 0.65 * k
+                    # Floored well above black. At 0.35 a deeply occluded texel — the whole
+                    # upper flank under a roof overhang — lost the material underneath it, and
+                    # a 2003 renderer has no bounce light to bring it back.
+                    k = 0.58 + 0.42 * k
                     # NOT `r, g, b` — `r` is the Blender subprocess result in this scope, and
                     # shadowing it here crashed every build that reached this line.
                     cr, cg, cb = rows[y][x]
