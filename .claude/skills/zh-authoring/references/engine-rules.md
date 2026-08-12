@@ -268,3 +268,51 @@ are emitted by `rts compile`, not hand-written.
    - *The header to cite is `Libraries/Source/WWVegas/WW3D2/w3d_file.h`. `Tools/WW3D/pluglib`
      has a stale copy that stops at chunk `0x600` and has no HLOD at all — following it would
      make a skin that silently never binds.*
+
+18. **An unknown KEY is silently ignored; an invalid enum VALUE is fatal. They are not the
+   same failure and the difference decides what "it booted" proves.** Measured with two
+   probes on the same build, one after the other:
+   - `VoiceSelekt = ...` (a misspelt Object key) — the file loads, the boot completes, the
+     game reaches the shell, and **nothing appears in the log**. The key is dropped.
+   - `Priority = URGENT` in an `AudioEvent` — the process **dies**, and the log says
+     `[INI] ERROR in load('Data/INI/SoundEffects/demo.ini') - exception caught`.
+
+   The mechanism is the parse table: an unrecognised field name hits a `DEBUG_CRASH` that is
+   compiled out of a release build and then falls through to skip, whereas `parseIndexList`
+   and `parseBitString32` **throw** on a name that is not in their C++ table. So the five
+   enum literals that have cost us boots (`NO_Z_MOTION`, `CANCELABLE`, `IS_PREREQUISITE`,
+   `SpreadFormation`, `GARRISONABLE`) were always going to be loud, and a mistyped key never
+   will be. *Consequence for verification: a clean boot IS evidence that every enum value in
+   an emitted file is legal, and is NO evidence at all that the keys are. Keys must be
+   sourced from a retail block that uses them and checked by `zhasset objectdiff`; do not
+   spend a boot trying to validate a field name.*
+
+19. **Audio: the channel is open, the format needs no encoder, and this build cannot make a
+   sound.** All three parts are load-bearing.
+   - **Emitting is additive and works.** `Data/INI/SoundEffects/` is in the scanned 42
+     (rule 16), alongside `Voice`, `Speech`, `MiscAudio`, `Eva` and `Music`. A pack file
+     there loads next to retail's — the log reports `filesRead=2` and parses every block.
+   - **The path is COMPUTED, not declared.** An `AudioEvent` never names a file.
+     `AudioEventRTS::generateFilenamePrefix` composes
+     `{AudioRoot}\{SoundsFolder}\{name}.{SoundsExtension}` out of `AudioSettings.ini` —
+     `Data\Audio\Sounds\<name>.wav` as shipped. The entries in a `Sounds`, `Attack` or
+     `Decay` line **are** base filenames. Put the wave anywhere else and the event parses,
+     resolves and is silent. Localisation is a preference, not a requirement:
+     `adjustForLocalization` tries `Sounds\{Language}\` first and keeps the unlocalised path
+     when that misses, so flat output is correct even for `voice` events.
+   - **`Type` and `Control` are `parseBitString32` — flag SETS, space-separated**
+     (`Type = world shrouded everyone`). Only `Priority` is a single value. Reading either as
+     a scalar keeps the first bit and quietly drops the rest.
+   - **No encoder is needed.** Census of all 8,638 shipped audio files (1,049.6 MB, 47% of
+     the install): 8,582 `.wav` and 56 `.mp3`, in 8 wave formats — **5,346 plain PCM
+     (`wFormatTag = 1`) against 3,236 IMA ADPCM (17)**, and the largest single bucket, 5,157
+     files, is **mono / 22,050 Hz / 16-bit PCM**. The most typical format is also the one a
+     44-byte RIFF header produces. Run `zhasset audio --census` to re-measure.
+   - **AND YET: this build has no decoder.** `OpenALAudioManager` (GeneralsX replaced Miles
+     with OpenAL on SDL3) creates a context and allocates sources, then never calls
+     `alBufferData` — there is no RIFF parsing anywhere in the tree, `addAudioEvent` forwards
+     to a queue nothing drains, and `update()` is a documented "Phase 2" no-op.
+     **Nothing you emit can be heard here, from any input.** Do not spend a session trying;
+     verify audio with `zhasset audio <packdir>` and a clean boot, and say plainly that
+     playback is unverified. This is the same shape as rule 11 (`GameData` parses and does
+     nothing) — the file being read is necessary and nowhere near sufficient.

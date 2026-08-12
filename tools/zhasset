@@ -1740,6 +1740,276 @@ def cmd_fx(a):
     return 0
 
 
+# ------------------------------------------------------------------------ audio
+#
+# The SECOND implementation. `Content/ZhAudio.cs` writes; this reads and grades, and it earns
+# that job the way the map reader did — by measuring all 8,638 SHIPPED files before it ever
+# judges one of ours. A writer checked by its own reader proves only that the two agree.
+
+# The three closed enums, from theAudioPriorityNames / theSoundTypeNames / theAudioControlNames
+# in INIAudioEventInfo.cpp. Checked against the NAME TABLE and never against a grep of the INI:
+# retail exercises a subset, and a value that is legal-but-unused reads as an error to a grep
+# while a typo that happens to be a substring of a real name reads as fine.
+AUDIO_PRIORITIES = ["LOWEST", "LOW", "NORMAL", "HIGH", "CRITICAL"]
+AUDIO_TYPES = ["UI", "WORLD", "SHROUDED", "GLOBAL", "VOICE", "PLAYER", "ALLIES", "ENEMIES",
+               "EVERYONE"]
+AUDIO_CONTROLS = ["LOOP", "RANDOM", "ALL", "POSTDELAY", "INTERRUPT"]
+
+# Priority is parseIndexList (one value); Type and Control are parseBitString32 (a flag SET).
+AUDIO_SCALAR = {"priority": AUDIO_PRIORITIES}
+AUDIO_BITSET = {"type": AUDIO_TYPES, "control": AUDIO_CONTROLS}
+
+
+def wav_probe(b):
+    """Parse a RIFF/WAVE header. Returns a dict, or {'error': ...}. Deliberately strict about
+    the two fields a player never notices and a decoder always does: the RIFF size field and the
+    data length, both of which a truncated write leaves plausible-looking and wrong."""
+    if len(b) < 44 or b[:4] != b"RIFF" or b[8:12] != b"WAVE":
+        return {"error": "not RIFF/WAVE"}
+    riff_sz = struct.unpack("<I", b[4:8])[0]
+    out = {"riffSizeOk": riff_sz == len(b) - 8}
+    p, seen = 12, {}
+    while p + 8 <= len(b):
+        cid = b[p:p + 4]
+        (csz,) = struct.unpack("<I", b[p + 4:p + 8])
+        p += 8
+        seen[cid] = (p, csz)
+        if cid == b"fmt " and csz >= 16:
+            tag, ch, sr, _br, ba, bits = struct.unpack("<HHIIHH", b[p:p + 16])
+            out.update(tag=tag, channels=ch, rate=sr, bits=bits, blockAlign=ba)
+        p += csz + (csz & 1)
+    if b"fmt " not in seen:
+        return {"error": "no fmt chunk"}
+    if b"data" not in seen:
+        return {"error": "no data chunk"}
+    doff, dsz = seen[b"data"]
+    out["dataBytes"] = dsz
+    out["dataTruncated"] = doff + dsz > len(b)
+    ba = out.get("blockAlign") or 1
+    out["seconds"] = dsz / (out.get("rate", 1) * ba) if ba else 0
+    out["samples"] = dsz // ba if ba else 0
+    return out
+
+
+def wav_pcm16(b, probe):
+    """Mono 16-bit sample list, or None. Only what the seam and clipping checks need."""
+    if probe.get("tag") != 1 or probe.get("bits") != 16 or probe.get("channels") != 1:
+        return None
+    p = 12
+    while p + 8 <= len(b):
+        cid = b[p:p + 4]
+        (csz,) = struct.unpack("<I", b[p + 4:p + 8])
+        p += 8
+        if cid == b"data":
+            n = min(csz, len(b) - p) // 2
+            return list(struct.unpack("<%dh" % n, b[p:p + n * 2]))
+        p += csz + (csz & 1)
+    return None
+
+
+def audio_census(game):
+    """Every audio file in every archive, by format. Headers only — no sample data is read and
+    nothing is extracted, which is the same provenance rule the rest of this tool follows."""
+    ext, fmts, byarc, bad = Counter(), Counter(), Counter(), []
+    total = nbytes = 0
+    for arc in all_archives(game):
+        try:
+            toc = big_toc(arc)
+        except Exception:
+            continue
+        aud = [(n, o, s) for n, o, s in toc
+               if os.path.splitext(n)[1].lower() in (".wav", ".mp3", ".ogg", ".aud")]
+        if not aud:
+            continue
+        byarc[os.path.basename(arc)] = len(aud)
+        with open(arc, "rb") as f:
+            for n, o, s in aud:
+                total += 1
+                nbytes += s
+                e = os.path.splitext(n)[1].lower()
+                ext[e] += 1
+                if e != ".wav":
+                    continue
+                f.seek(o)
+                pr = wav_probe(f.read(min(s, 256)) + b"\0" * 256)
+                if "error" in pr:
+                    bad.append(n)
+                    continue
+                fmts[(pr.get("tag"), pr.get("channels"), pr.get("rate"), pr.get("bits"))] += 1
+    return {"files": total, "bytes": nbytes, "ext": ext, "formats": fmts,
+            "byArchive": byarc, "unparsed": bad}
+
+
+def cmd_audio(a):
+    if a.census:
+        c = audio_census(a.game)
+        if not c["files"]:
+            print("  no archives found — install absent, skipping")
+            return 0
+        if a.json:
+            print(json.dumps({"files": c["files"], "bytes": c["bytes"],
+                              "ext": dict(c["ext"]),
+                              "formats": [{"tag": k[0], "channels": k[1], "rate": k[2],
+                                           "bits": k[3], "count": v}
+                                          for k, v in c["formats"].most_common()],
+                              "byArchive": dict(c["byArchive"]),
+                              "unparsed": len(c["unparsed"])}, indent=2))
+            return 0
+        print(f"  {c['files']} audio files, {c['bytes'] / 1e6:.1f} MB")
+        print("  " + ", ".join(f"{k} {v}" for k, v in c["ext"].most_common()))
+        pcm = sum(v for k, v in c["formats"].items() if k[0] == 1)
+        adpcm = sum(v for k, v in c["formats"].items() if k[0] == 17)
+        print(f"  wave formats: {len(c['formats'])} distinct — {pcm} plain PCM (tag 1), "
+              f"{adpcm} IMA ADPCM (tag 17)")
+        for k, v in c["formats"].most_common():
+            print(f"    tag={k[0]:2d} ch={k[1]} rate={k[2]:5d} bits={k[3]:2d}   {v:5d}")
+        if c["unparsed"]:
+            print(f"  NOT RIFF/WAVE: {len(c['unparsed'])}")
+        return 0
+
+    root = a.pack
+    if not root:
+        return print("  give a compiled pack directory, or --census")
+    ini_dir = os.path.join(root, "Data", "INI", "SoundEffects")
+    snd_dir = os.path.join(root, "Data", "Audio", "Sounds")
+    if not os.path.isdir(ini_dir):
+        return print(f"  no {ini_dir} — nothing to validate")
+
+    errors, warns, events, waves = [], [], {}, {}
+    for fn in sorted(os.listdir(ini_dir)):
+        if not fn.lower().endswith(".ini"):
+            continue
+        for kind, name, lines in ini_blocks(os.path.join(ini_dir, fn)):
+            if kind != "AudioEvent":
+                continue
+            ev = {"sounds": []}
+            for key, table in AUDIO_SCALAR.items():
+                v = field(lines, key)
+                if v is None:
+                    continue
+                ev[key] = v
+                if v.upper() not in table:
+                    errors.append(f"{name}: {key} = '{v}' is not in the C++ name table")
+            for key, table in AUDIO_BITSET.items():
+                v = field(lines, key)
+                if v is None:
+                    continue
+                ev[key] = v
+                for bit in v.split():
+                    if bit.upper() not in table:
+                        errors.append(f"{name}: {key} bit '{bit}' is not in the C++ name table")
+            for key in ("sounds", "soundsnight", "soundsevening", "soundsmorning",
+                        "attack", "decay"):
+                v = field(lines, key)
+                if v:
+                    ev["sounds"] += v.split()
+            if not ev["sounds"]:
+                errors.append(f"{name}: no Sounds — the event resolves to no file at all")
+            events[name] = ev
+
+    # An AudioEvent never names a path: generateFilenamePrefix composes
+    # {AudioRoot}\{SoundsFolder}\{name}.{SoundsExtension}, so a `Sounds` entry IS a base
+    # filename under Data/Audio/Sounds. A name with no file there parses cleanly and is silent.
+    on_disk = {}
+    if os.path.isdir(snd_dir):
+        for fn in sorted(os.listdir(snd_dir)):
+            stem, ext = os.path.splitext(fn)
+            if ext.lower() != ".wav":
+                continue
+            b = open(os.path.join(snd_dir, fn), "rb").read()
+            pr = wav_probe(b)
+            on_disk[stem] = pr
+            waves[stem] = (b, pr)
+            if "error" in pr:
+                errors.append(f"{fn}: {pr['error']}")
+                continue
+            if not pr["riffSizeOk"]:
+                errors.append(f"{fn}: RIFF size field disagrees with the file length")
+            if pr["dataTruncated"]:
+                errors.append(f"{fn}: data chunk runs past the end of the file")
+            # We author plain PCM only, and the arm64 build carries no decoder of any kind, so
+            # anything else in a compiled pack is either a hand-edit or a bug. tag 17 is IMA
+            # ADPCM — legal, shipped 3,236 times, and not something this project writes.
+            if pr["tag"] != 1:
+                warns.append(f"{fn}: wFormatTag {pr['tag']} — a pack should carry plain PCM "
+                             f"(tag 1); {'IMA ADPCM' if pr['tag'] == 17 else 'this'} needs a "
+                             f"decoder the target build does not have")
+
+    for name, ev in sorted(events.items()):
+        for s in ev["sounds"]:
+            if s not in on_disk:
+                errors.append(f"{name}: Sounds names '{s}' — no {snd_dir}/{s}.wav")
+
+    # The property the writer CLAIMS, checked rather than trusted: a looping wave must join
+    # end-to-start, or it ticks once per repetition.
+    #
+    # The statistic is the CURVATURE across the wrap — |s[i+1] - 2s[i] + s[i-1]| evaluated
+    # circularly at the join — compared against the 99.9th percentile of the same quantity
+    # everywhere else in the wave. Self-calibrating on purpose: an absolute threshold has to be
+    # guessed per waveform, and this one asks only whether the join looks like the rest of the
+    # signal. A plain value test (|s[0] - s[n-1]|) is NOT enough and was the first attempt —
+    # truncate a loop at a half cycle and both ends sit at zero with opposite slope, so the values
+    # agree and the derivative does not.
+    #
+    # Measured on the authored engine loop by cutting it at twelve lengths. Intact scores 0.86
+    # and whole-cycle cuts score 0.38 and 1.38 — correctly clean, since removing whole cycles
+    # leaves a seamless loop. Every partial cut lands between 2.8 and 14.7 EXCEPT the half-cycle
+    # one at 1.26, and that exception is a property rather than a hole: every harmonic of a
+    # harmonic series returns to zero at half a period, so such a loop genuinely barely clicks.
+    # Hence 4x, which sat above two real defects at 2.81 and 3.50 — dropped to 2.5, keeping ~3x
+    # headroom over the intact wave.
+    loops = [n for n, e in events.items() if "loop" in (e.get("control") or "").lower()]
+    for n in loops:
+        for s in events[n]["sounds"]:
+            if s not in waves:
+                continue
+            b, pr = waves[s]
+            pcm = wav_pcm16(b, pr)
+            if not pcm or len(pcm) < 64:
+                continue
+            m = len(pcm)
+
+            def curv(i):
+                return abs(pcm[(i + 1) % m] - 2 * pcm[i] + pcm[(i - 1) % m])
+
+            interior = sorted(curv(i) for i in range(2, m - 2))
+            base = max(interior[int(len(interior) * 0.999)], 1)
+            wrap = max(curv(0), curv(m - 1))
+            if wrap > 2.5 * base:
+                errors.append(f"{n}/{s}: loop join is {wrap / base:.1f}x as sharp as the "
+                              f"sharpest point in the wave — it will click once per repetition")
+
+    for s, (b, pr) in sorted(waves.items()):
+        pcm = wav_pcm16(b, pr)
+        if not pcm:
+            continue
+        clipped = sum(1 for v in pcm if v >= 32767 or v <= -32767)
+        if clipped > len(pcm) // 100:
+            warns.append(f"{s}: {clipped}/{len(pcm)} samples at full scale — authored too hot")
+        dc = sum(pcm) / len(pcm)
+        if abs(dc) > 1600:
+            warns.append(f"{s}: DC offset {dc:.0f} — wastes headroom and thumps on start/stop")
+
+    if a.json:
+        print(json.dumps({"events": len(events), "waves": len(waves),
+                          "loops": sorted(loops),
+                          "errors": errors, "warnings": warns}, indent=2))
+        return 0 if not errors else 1
+    print(f"  {len(events)} AudioEvents, {len(waves)} waves, {len(loops)} looping")
+    for s, (_b, pr) in sorted(waves.items()):
+        if "error" in pr:
+            continue
+        print(f"    {s:34s} tag={pr['tag']} ch={pr['channels']} rate={pr['rate']} "
+              f"bits={pr['bits']} {pr['seconds']:.3f}s")
+    for w in warns:
+        print(f"  WARN  {w}")
+    for e in errors:
+        print(f"  ERROR {e}")
+    if not errors:
+        print("  AUDIO OK")
+    return 0 if not errors else 1
+
+
 def cmd_show(a):
     cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
     q = a.thing
@@ -2771,6 +3041,12 @@ def main():
     fxp.add_argument("--stats", action="store_true")
     fxp.add_argument("--json", action="store_true")
     fxp.set_defaults(fn=cmd_fx)
+
+    au = sub.add_parser("audio", help="census the shipped audio, or validate a compiled pack's")
+    au.add_argument("pack", nargs="?", help="a compiled pack directory (rts compile --out)")
+    au.add_argument("--census", action="store_true", help="format survey of the shipped archives")
+    au.add_argument("--json", action="store_true")
+    au.set_defaults(fn=cmd_audio)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")

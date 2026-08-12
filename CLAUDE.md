@@ -215,7 +215,9 @@ the **`zh-authoring`** skill:
   bitten us: `NO_Z_MOTION` (real: `NO_Z_MOTIVE_FORCE`), `Options = CANCELABLE`,
   `IS_PREREQUISITE`, `SpreadFormation = 32` (a BOOL), and `GARRISONABLE` — which greps as
   present only because it is a substring of `GARRISONABLE_UNTIL_DESTROYED`. Each was a hard
-  load error found only by booting the engine.
+  load error found only by booting the engine. **An invalid enum VALUE kills the process and
+  names the file; an unknown KEY is silently dropped and boots clean** — measured with two
+  probes, so a clean boot validates every literal in a file and no field name.
 - **Ties break deterministically** (e.g. targeting: `(distSq, unitIdx)`).
   Every new comparison needs a total order.
 - **Terrain is CONTENT; a route is STATE.** The passability grid never changes during a
@@ -340,11 +342,10 @@ Don't "fix" these in passing — each is a deliberate slice boundary.
 **The sim roadmap is complete** (slices 0-13: name-derived identity, layered packs, schema
 hygiene, modifier semantics, faction-scoped resolution, structures, upgrades, rules engine,
 garrison/capture, powers and the science ladder, spatial index, MCP server, passability, line of
-sight). **The asset roadmap is complete bar audio** (14 pack carries its art · 15 STRUCK, art
-profiles cannot be derived · 16 map objects · 17 authored FX · 19 authored ground).
+sight). **The asset roadmap is complete** (14 pack carries its art · 15 STRUCK, art profiles
+cannot be derived · 16 map objects · 17 authored FX · 18 authored audio · 19 authored ground).
 
-Open: **audio** — the last untouched category, and 0% of the simulation. And the **lockstep
-session layer**, which was always last.
+Open: the **lockstep session layer**, which was always last.
 
 *What shipped and the measurement behind it: `docs/HISTORY.md`. What is still open:
 `docs/ROADMAP.md`. What `tools/zhasset` produces: `docs/ZERO-HOUR-MODEL.md`.*

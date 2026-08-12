@@ -1967,5 +1967,96 @@ else
   echo "== shell: skipped (no Godot at $GODOT; set GODOT=/path/to/Godot) =="
 fi
 
+gate "a pack has a VOICE, and its waves are graded by a second reader"
+# Audio was the last untouched content category: every unit was silent, and the pack emitted not
+# one line of it. The measurement that shaped the slice is the shipped census — 8,638 files,
+# 1,049.6 MB, and a format split of 5,346 plain PCM against 3,236 IMA ADPCM, with the single
+# largest bucket (5,157) mono/22,050/16-bit PCM. So the most typical format and the cheapest one
+# to produce are the same, and authoring audio needs a 44-byte header rather than an encoder.
+#
+# WHAT THIS GATE CANNOT DO, stated because the absence is otherwise invisible: the arm64 engine
+# we test on carries NO wav decoder. OpenALAudioManager creates a context, allocates sources and
+# never calls alBufferData; update() is a documented no-op. Nothing this project emits can be
+# heard on it, from any input. So the checks below are schema authority plus an independent
+# reader, and playback is not among them.
+AUD=$(mktemp -d); trap 'rm -rf "$AUD"' EXIT
+rts compile --target zh --out "$AUD/out" >/dev/null
+
+# --- 1. The pack emits events AND the files they name. ---------------------------------
+# An AudioEvent never states a path: generateFilenamePrefix composes
+# {AudioRoot}\{SoundsFolder}\{name}.{SoundsExtension} out of AudioSettings.ini. So a `Sounds`
+# entry IS a base filename under Data/Audio/Sounds, and an event whose wave is elsewhere parses
+# cleanly, resolves cleanly and plays nothing — the desertA failure class, in a new category.
+[ -f "$AUD/out/Data/INI/SoundEffects/skeleton_pack.ini" ] \
+  || { echo "  NO SoundEffects INI EMITTED"; exit 1; }
+nwav=$(find "$AUD/out/Data/Audio/Sounds" -name '*.wav' 2>/dev/null | wc -l | tr -d ' ')
+[ "$nwav" -ge 6 ] || { echo "  expected the pack's waves under Data/Audio/Sounds, found $nwav"; exit 1; }
+echo "  $nwav waves under Data/Audio/Sounds, and a SoundEffects block that names them"
+
+# --- 2. The second reader grades the writer. -------------------------------------------
+# Content/ZhAudio.cs writes; tools/zhasset audio reads. A writer checked by its own reader
+# proves only that the two agree, which is why this reader also censuses all 8,638 shipped
+# files before it is allowed to judge ours.
+python3 tools/zhasset audio "$AUD/out" > "$AUD/val.txt" 2>&1 \
+  || { echo "  THE AUDIO VALIDATOR REJECTED OUR OWN OUTPUT"; cat "$AUD/val.txt"; exit 1; }
+grep -q "AUDIO OK" "$AUD/val.txt" || { echo "  validator did not pass"; cat "$AUD/val.txt"; exit 1; }
+grep -qE 'tag=1 ch=1 rate=22050 bits=16' "$AUD/val.txt" \
+  || { echo "  emitted waves are not the plurality shipped format"; cat "$AUD/val.txt"; exit 1; }
+echo "  every wave is plain PCM mono 22,050/16 — the format 5,157 shipped files use"
+
+# --- 3. A validator that cannot fail is not a check. -----------------------------------
+# Each probe breaks exactly one property and asserts the reader says so. The enum probe uses a
+# SUBSTRING of a legal name on purpose: GARRISONABLE greps as present because it is a substring
+# of GARRISONABLE_UNTIL_DESTROYED, and that cost a boot. Checked against the C++ name table.
+probe_fails() {  # $1 = label, $2 = mutation script
+  rm -rf "$AUD/p"; cp -R "$AUD/out" "$AUD/p"
+  ( cd "$AUD/p" && eval "$2" )
+  if python3 tools/zhasset audio "$AUD/p" >/dev/null 2>&1; then
+    echo "  THE VALIDATOR ACCEPTED A BROKEN PACK: $1"; exit 1
+  fi
+}
+probe_fails "an enum value that is a substring of a legal one" \
+  "sed -i '' 's/Type = ui player/Type = ui play/' Data/INI/SoundEffects/skeleton_pack.ini"
+probe_fails "a Sounds entry with no wave on disk" \
+  "rm Data/Audio/Sounds/skeleton_pack_death.wav"
+probe_fails "a truncated wave (RIFF size and data length both lie)" \
+  "python3 -c \"f='Data/Audio/Sounds/skeleton_pack_fire.wav';b=open(f,'rb').read();open(f,'wb').write(b[:len(b)//2])\""
+echo "  three broken packs, three refusals — the reader fails when it should"
+
+# --- 4. The loop claim, checked rather than trusted. ------------------------------------
+# ZhAudio sizes the engine loop to a whole number of cycles so the wrap is silent. The test is
+# the CURVATURE at the join against the 99.9th percentile everywhere else — self-calibrating,
+# because a plain |s[0] - s[n-1]| test passes a half-cycle truncation where both ends sit at
+# zero with opposite slope. Cutting whole cycles must stay CLEAN; cutting part of one must not.
+loopcut() {
+  rm -rf "$AUD/p"; cp -R "$AUD/out" "$AUD/p"
+  python3 - "$AUD/p/Data/Audio/Sounds/skeleton_pack_engine.wav" "$1" <<'PYCUT'
+import struct, sys
+f, k = sys.argv[1], int(sys.argv[2])
+b = open(f, 'rb').read(); n = (len(b) - 44) // 2
+s = list(struct.unpack('<%dh' % n, b[44:44 + n * 2]))[:n - k]; m = len(s)
+o = bytearray(b[:44]) + struct.pack('<%dh' % m, *s)
+o[4:8] = struct.pack('<I', len(o) - 8); o[40:44] = struct.pack('<I', m * 2)
+open(f, 'wb').write(bytes(o))
+PYCUT
+  python3 tools/zhasset audio "$AUD/p" >/dev/null 2>&1 && echo clean || echo clicks
+}
+[ "$(loopcut 95)"  = clicks ] || { echo "  A QUARTER-CYCLE SEAM WENT UNDETECTED"; exit 1; }
+[ "$(loopcut 380)" = clean  ] || { echo "  cutting ONE WHOLE CYCLE was reported as a seam"; exit 1; }
+echo "  a partial-cycle loop is refused; a whole-cycle one is not"
+
+# --- 5. The census runs against the real install, when there is one. --------------------
+if [ -d "$HOME/GeneralsX/GeneralsZH" ]; then
+  cen=$(python3 tools/zhasset audio --census 2>&1)
+  case "$cen" in
+    *"plain PCM (tag 1)"*) echo "  census: $(echo "$cen" | head -1 | sed 's/^ *//')" ;;
+    *) echo "  THE SHIPPED-AUDIO CENSUS FAILED"; echo "$cen" | tail -3; exit 1 ;;
+  esac
+else
+  echo "  (no install: the shipped census can only run against one — skipped)"
+fi
+rm -rf "$AUD"; trap - EXIT
+
+
 echo
 echo "E2E PASS"

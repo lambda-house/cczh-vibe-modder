@@ -23,6 +23,7 @@ zhasset dossier <the winner>                      # EVERYTHING it is made of, tr
 zhasset techtree <faction>                        # where it would sit, what would gate it
   ... edit ...
 rts compile --target zh --out <dir>               # emit Data/INI + the art the pack ships
+zhasset audio <dir>                               # grade the emitted waves and AudioEvents
 ```
 
 `nearest` ranks by **role, not cost** — a 900-cost tank and a 900-cost jet share a number and
@@ -40,10 +41,13 @@ effects expanded into their particle systems and debris meshes. Full shapes in
   unreferenced models are free about rendering and not about behaviour.
 - **Cover does not exist in ZH.** Firing line-of-sight is checked nowhere — confirmed in a match
   by killing a target through a cliff. Never tune balance against terrain cover.
+- **Audio cannot be heard on this build, from any input.** GeneralsX's `OpenALAudioManager`
+  allocates sources and never buffers a sample. Emission is real and additively loaded; playback
+  is not. Verify with `zhasset audio` and a clean boot, and never claim more than that.
 
 ## Deeper references
 
-- **`references/engine-rules.md`** — the 17 rules measured against the RUNNING engine. Which
+- **`references/engine-rules.md`** — the 19 rules measured against the RUNNING engine. Which
   channels are additive and which are fatal, why `map.ini` is the only override channel, which
   shared leaves BREAK when patched in place, and what a new faction must emit to be playable.
   Read this before emitting anything into a retail install.
@@ -67,6 +71,8 @@ there is — check them before you look anywhere else.
 | authored unit dies invisibly | no death FX. An adopted mesh inherits its peer's; an authored one inherits nothing |
 | faction plays the wrong pack's units | **two packs installed at once.** Sides are pack-prefixed so they coexist rather than collide, the lobby lists several factions, and a match takes whichever is default. Uninstall by `MANIFEST.txt` before installing |
 | build buttons render, click does nothing | missing `ProductionUpdate`, or a door count with no door states |
+| a sound event resolves and is silent | its wave is not at `Data/Audio/Sounds/<name>.wav`. An `AudioEvent` never names a path — the engine composes it from `AudioSettings.ini`, so a `Sounds` entry IS the base filename |
+| a misspelt field does nothing, quietly | an unknown KEY is dropped without a word (a bad enum VALUE, by contrast, kills the process). A clean boot is no evidence a field name is right — check it with `zhasset objectdiff` |
 
 ## What does NOT transfer — measure here, and it will differ there
 

@@ -64,7 +64,7 @@ public static class ZhFx
     /// are reusable by construction — that is the whole lesson of 1,087 systems sharing 81
     /// textures, and a per-unit copy would multiply the INI for no visual difference.
     /// </summary>
-    public static Result Write(string pack, string spriteTexture)
+    public static Result Write(string pack, string spriteTexture, string? deathSound = null)
     {
         var r = new Result { SpriteName = spriteTexture };
         string P(string n) => $"{pack}_{n}";
@@ -123,6 +123,16 @@ public static class ZhFx
         {
             r.Ini.AppendLine("  ParticleSystem");
             r.Ini.AppendLine($"    Name = {P(n)}");
+            r.Ini.AppendLine("  End");
+        }
+
+        // The audible half of the same event. An FXList nests `Sound` exactly as it nests
+        // `ParticleSystem` — a keyword, a `Name`, an `End` — so the death is ONE authored thing
+        // with a picture and a noise, rather than two that have to be kept pointing at each other.
+        if (deathSound is not null)
+        {
+            r.Ini.AppendLine("  Sound");
+            r.Ini.AppendLine($"    Name = {deathSound}");
             r.Ini.AppendLine("  End");
         }
         r.Ini.AppendLine("End").AppendLine();

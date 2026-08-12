@@ -5,21 +5,6 @@ Only what is open. Everything shipped, and the measurement that justified it, is
 
 ## Open work
 
-### Asset slice 18 — audio  (L)
-
-The last untouched content category: not one line is emitted and every unit is silent.
-`SoundEffects`, `Speech`, `Voice` and `MiscAudio` are all in the 42 directories this build
-scans, so the channel exists.
-
-It is **0% of the simulation** — it changes no measurement — which is why it sits last rather
-than first. Split it the way icons were split, and for the same reason: weapon and death sounds
-are CONTENT and get authored; EVA and UI chrome stay borrowed, because reinventing them proves
-nothing about a unit.
-
-*Unknown worth settling first: whether an authored `.wav` is accepted, and at what sample rate
-and channel count. Retail's audio is 8,642 files — measure the shipped format before writing
-an encoder.*
-
 ### Lockstep session layer  (L)
 
 Always intended to be last. The determinism it needs is already there and gated: replay is
@@ -30,6 +15,10 @@ a past tick, and every pinned hash is verified on each build.
 
 Debts from finished work. Each is small; none blocks anything.
 
+- **Nothing this project emits can be HEARD.** Not a defect in the pack: the arm64 build carries
+  no wav decoder at all, so audio is verified against the schema and by `zhasset audio` and its
+  playback is not claimed. It becomes checkable the day GeneralsX lands its "Phase 2" audio, and
+  the check is already written.
 - **The authored explosion has never been SEEN rendering.** It is verified three ways — enums
   checked against the C++ name tables, our own reader walking the emitted `FXList` through to
   its texture, the engine loading both files — but not photographed. Five attempts failed, each

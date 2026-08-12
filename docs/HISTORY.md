@@ -50,12 +50,21 @@ Three of these carry a decision worth not relitigating:
 | 15 | Derive art profiles from the mesh | **STRUCK on measurement.** Derived `height` lands within ±20% for 26% of meshes. Gameplay geometry is a designer-chosen COLLISION size, not a property of the art. `zhasset artvalidate` is the standing proof |
 | 16 | Place objects in the emitted `.map` | confirmed in a match, and it is what made the LOS question testable |
 | 17 | Author an `FXList` and `ParticleSystem` | the last category where adopting retail art was structurally required |
-| 18 | **Audio** | open — see `docs/ROADMAP.md` |
+| 18 | A pack has a voice | 8,638 shipped audio files, 1,049.6 MB — and the plurality format (5,157 of 8,582 waves) is mono 22,050/16-bit PCM, so authoring needs a 44-byte header and no encoder |
 | 19 | Author the ground | a map's shape was already ours while its surface stayed EA's |
 
 **The line that governs the asset model, measured and unmoved: a pack on wholly authored art
 borrows 8 retail names, and all 8 are the `zh.sides` HUD.** Content is ours; UI furniture is
 borrowed on purpose.
+
+**Slice 18 ended on a negative that is worth more than the feature.** The emission is real
+and additive — `Data/INI/SoundEffects/` is scanned, our blocks parse, and an invalid enum value in
+them provably kills the process — but **the engine we test on cannot make a sound from any input**:
+GeneralsX replaced Miles with OpenAL and its manager allocates sources and never buffers a sample.
+Two probes run back to back also separated a pair of failures that had been conflated: a misspelt
+KEY is silently dropped and boots clean, while a bad enum VALUE throws and names the file. So "it
+booted" proves every enum literal and proves nothing about a field name — recorded as
+`zh-authoring` rules 18 and 19.
 
 **Slice 15 is the important one to remember**, because it closes a door: the free-art pool
 cannot be made safe by inference. Two safe paths, and inventing a third is what the measurement
@@ -79,5 +88,5 @@ prerequisite OR-expressions; slope-modulated speed; elevation damage and range; 
 content type; a DDS writer (TGA ships and needs no compressor); a `.big` writer (loose files
 shadow archives — that IS the mod mechanism); deriving art profiles from meshes.
 
-*This list used to include "art/FX/audio" wholesale. Slices 14-19 overtook it: art, FX and
-terrain are authored now, and only audio is still open.*
+*This list used to include "art/FX/audio" wholesale. Slices 14-19 overtook it in full: art, FX,
+terrain and audio are all authored now. **The asset model is complete.***

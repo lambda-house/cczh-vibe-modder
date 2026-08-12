@@ -105,7 +105,20 @@ public static class ZhCompiler
         // mesh does not supply one, which is every authored mesh and every structure — those
         // died silently and invisibly before this, the last place adopting retail art was
         // structurally required rather than merely convenient.
-        var fx = ZhFx.Write(pack, pack + "_spark.tga");
+        // The pack's own sound, on the same per-pack economy as the FX below: retail shares 743
+        // AudioEvents across 2,102 objects, so a per-unit set would multiply the INI and change
+        // nothing anyone can hear. Authored as plain PCM because the shipped census says the
+        // plurality format (5,157 of 8,582 waves) is mono 22,050 Hz 16-bit and needs no encoder.
+        // NOTE the ceiling, recorded here because it is invisible from the output: the arm64
+        // engine we test on has no wav decoder at all, so this is verified against schema and by
+        // our own reader, never by hearing it.
+        //
+        // Authored BEFORE the FX because a death is one event with two halves, and the half that
+        // is heard is carried by the FXList rather than by the object — an explosion that flashes
+        // in silence is the exact shape of defect this slice exists to close.
+        var audio = ZhAudio.Write(pack);
+
+        var fx = ZhFx.Write(pack, pack + "_spark.tga", audio.Events["Death"]);
         string packDeathFx = fx.FxLists[0];
 
         var dmg = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -165,6 +178,7 @@ public static class ZhCompiler
             }
             sb.AppendLine("  ProjectileObject = None");
             if (w.ClearsGarrison) sb.AppendLine("  AllowAttackGarrisonedBldgs = Yes");
+            sb.AppendLine($"  FireSound = {audio.Events["WeaponFire"]}");
             sb.AppendLine("  RadiusDamageAffects = ALLIES ENEMIES NEUTRALS");
             sb.AppendLine("End").AppendLine();
             r.Weapons++;
@@ -335,6 +349,21 @@ public static class ZhCompiler
             sb.AppendLine($"  BuildTime = {F(u.BuildTicks / (double)ContentDb.TicksPerSecond)}");
             sb.AppendLine($"  VisionRange = {F(weapon.Range.ToDoubleForDisplay() * zh.Scale * 1.2)}");
             sb.AppendLine($"  ShroudClearingRange = {F(weapon.Range.ToDoubleForDisplay() * zh.Scale * 1.5)}");
+
+            // Acknowledgements and ambience. These are top-level Object keys, not a module and
+            // not a `UnitSpecificSounds` entry — that block is for names the CODE looks up by a
+            // fixed key (`TurretMoveLoop`, `TruckLandingSound`), whereas these six are parsed
+            // straight into the template. Retail sets VoiceSelect on 620 objects and VoiceMove on
+            // 386, so a unit without them is the outlier, not the norm.
+            sb.AppendLine($"  VoiceSelect = {audio.Events["Select"]}");
+            sb.AppendLine($"  VoiceAttack = {audio.Events["Attack"]}");
+            if (!u.IsStructure)
+            {
+                sb.AppendLine($"  VoiceMove = {audio.Events["Move"]}");
+                // The loop belongs to things that move. Put it on a structure and it runs forever
+                // at a fixed point, which retail reserves for objects that are meant to hum.
+                sb.AppendLine($"  SoundAmbient = {audio.Events["MoveLoop"]}");
+            }
 
             var kinds = new List<string> { "SELECTABLE", "CAN_ATTACK", "SCORE" };
             kinds.AddRange(u.KindOf.Where(k => !k.StartsWith("IS_") && k != "MP_COUNT_FOR_VICTORY"));
@@ -1011,6 +1040,32 @@ public static class ZhCompiler
             r.Files.Add(sp);
         }
 
+        // ---- Audio: the pack's own sound ----------------------------------------------------
+        {
+            var ab = new StringBuilder();
+            Banner(ab, db, "SoundEffects");
+            ab.Append(audio.Ini);
+            // `Data/INI/SoundEffects/` is a directory this build's boot log shows being scanned,
+            // so the pack EXTENDS retail's 743 events instead of replacing the file that holds
+            // them. Checked against the log rather than against GameEngine.cpp, which is the
+            // standing rule: schema authority is their source, loading authority is the binary.
+            Write(r, Path.Combine(ini, "SoundEffects", pack + ".ini"), ab);
+
+            // An AudioEvent never states a path. `generateFilenamePrefix` composes
+            // {AudioRoot}\{SoundsFolder}\{name}.{SoundsExtension} out of AudioSettings.ini, so
+            // the names in a `Sounds` line ARE these filenames and the directory is fixed by
+            // settings we do not emit. Writing them anywhere else produces an event that parses,
+            // resolves, and plays nothing.
+            string snd = Path.Combine(outRoot, "Data", "Audio", "Sounds");
+            Directory.CreateDirectory(snd);
+            foreach (var (name, bytes) in audio.Waves.OrderBy(k => k.Key, StringComparer.Ordinal))
+            {
+                string wp = Path.Combine(snd, name + ".wav");
+                File.WriteAllBytes(wp, bytes);
+                r.Files.Add(wp);
+            }
+        }
+
         // ---- Art the pack SHIPS -------------------------------------------------------------
         // Until this, `rts compile` emitted INI and a single icon sheet, and every authored
         // mesh was copied into the install by hand — so the output looked complete, installed
@@ -1024,6 +1079,9 @@ public static class ZhCompiler
             {
                 ".w3d" => Path.Combine("Art", "W3D"),
                 ".tga" or ".dds" or ".jpg" or ".png" => Path.Combine("Art", "Textures"),
+                // Audio is NOT under Art/ — it is under Data/Audio/Sounds, because that path is
+                // assembled from AudioSettings.ini at play time rather than being a convention.
+                ".wav" or ".mp3" => Path.Combine("Data", "Audio", "Sounds"),
                 _ => Path.Combine("Art", "Misc"),
             };
             string dst = Path.Combine(outRoot, sub, Path.GetFileName(src));

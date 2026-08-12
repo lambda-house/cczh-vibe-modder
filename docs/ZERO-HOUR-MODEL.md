@@ -21,6 +21,7 @@ dossier <object>    everything it is made of, transitively
 techtree <faction>  where it sits, what gates it, what it unlocks
   ... edit ...
 rts compile         emit it back as Data/INI + art the engine loads
+audio <packdir>     grade what came out, against the shipped census
 ```
 
 Each step answers a question the previous one raises, and each is a separate command because
@@ -153,6 +154,31 @@ Measured: 429 FXLists, 1,087 ParticleSystems, 294 OCLs, 179 slave links — and 
 systems draw on only 81 distinct textures.** That reuse ratio is the case for authoring FX being
 cheap: 81 small additive sprites cover every explosion in the game.
 
+## `audio` — the census, and the grader
+
+Two modes, and the first is what licenses the second. `--census` walks every archive's TOC and
+reads only wave HEADERS: **8,638 audio files, 1,049.6 MB — 47% of the install and 0% of the
+simulation.** 8,582 `.wav`, 56 `.mp3`, eight distinct wave formats.
+
+| tag | ch | rate | bits | count |
+|---|---|---|---|---|
+| 1 (PCM) | 1 | 22,050 | 16 | **5,157** |
+| 17 (IMA ADPCM) | 1 | 44,100 | 4 | 2,521 |
+| 17 | 1 | 22,050 | 4 | 680 |
+| 1 | 1 | 44,100 | 16 | 111 |
+| — | | | | *4 more, 113 total* |
+
+**5,346 plain PCM against 3,236 ADPCM**, and the plurality format is the one a 44-byte RIFF
+header produces. That is the whole reason authoring audio is a small job: the most typical
+shipped format needs no encoder.
+
+Given a compiled pack directory the same command becomes the SECOND IMPLEMENTATION of
+`Content/ZhAudio.cs` — the discipline the map writer established. It checks the three closed
+enums against the C++ name tables (not against a grep), that every `Sounds` entry resolves to a
+wave under `Data/Audio/Sounds`, that RIFF sizes and data lengths agree, and that a looping wave
+actually joins: the join's CURVATURE against the 99.9th percentile everywhere else, because a
+plain value test passes a half-cycle truncation where both ends sit at zero with opposite slope.
+
 ## What the model deliberately does NOT contain
 
 Both are negative results, both measured, and both are load-bearing — a caller that assumes
@@ -165,6 +191,14 @@ barrels and wings the footprint excludes. So the 2,928 adoptable meshes are free
 *rendering* and not about *behaviour*, and the two safe paths are to adopt a mesh retail **uses**
 (inheriting its measured profile) or to **author** one (which declares its profile as written).
 
+**Audio cannot be heard on the target build, at any level of authoring effort.** GeneralsX
+replaced Miles with OpenAL, and `OpenALAudioManager` creates a context and allocates sources and
+then stops: no RIFF parsing anywhere in the tree, `alBufferData` called nowhere, `update()` a
+documented "Phase 2" no-op. Emission is nonetheless correct and additive — `Data/INI/SoundEffects/`
+is scanned, the blocks parse, and an invalid enum value in them provably kills the process, so the
+schema really is being enforced. What is unavailable is the last step. Treat "the pack has a voice"
+as verified-by-reader and never as heard.
+
 **Line of sight does not transfer.** We model cover; ZH does not check firing LOS anywhere —
 `Weapon::isClearFiringLineOfSightTerrain` is commented out at its only call site, and terrain
 LOS survives solely in the pathfinder's choice of firing position. Confirmed in a real match: a
@@ -175,6 +209,7 @@ unit killed a target through a cliff its own pathfinder will not cross, from a s
 ```
 zhasset catalogue        # first: everything else joins against it
 zhasset artprofile       # measured mesh contracts, for adopted art
+zhasset audio --census   # wave-format survey; reads headers, extracts nothing
 ```
 
 Both write to `reference/`, which is gitignored. Absence is handled everywhere: a command that
