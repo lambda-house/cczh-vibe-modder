@@ -2010,6 +2010,254 @@ def cmd_audio(a):
     return 0 if not errors else 1
 
 
+# ---------------------------------------------------------------------- strings
+#
+# The string table, and the one place this tool writes something retail-derived — INTO THE
+# PLAYER'S OWN INSTALL, from the player's own files, never into a pack and never into the repo.
+# `rts compile` emits `labels.str` holding only the labels a pack invents; the merge below adds
+# them to the 6,422 already there and writes the result where the engine will read it.
+#
+# WHY A MERGE IS THE ONLY OPTION. A faction's name is resolved at INI PARSE TIME —
+# `DisplayName` is `INI::parseAndTranslateLabel`, which calls `TheGameText->fetch` as the Object
+# files load at boot and stores the resulting string on the template. No per-map channel can
+# reach it. And `GameTextManager::init` picks `Data/Generals.str` OR `Data/<lang>/generals.csf`
+# in an if/else, with `m_useStringFile = TRUE` in release builds — so a .str does not extend the
+# table, it REPLACES it, and a partial one turns all 6,422 retail labels into MISSING.
+
+CSF_MAGIC = (b" FSC", b"CSF ")
+
+
+def csf_read(b):
+    """Decode a compiled string table. Format: a 24-byte header, then one ' LBL' record per
+    label carrying its strings. String bytes are UTF-16LE with every byte INVERTED (~x) — the
+    obfuscation is the only part that is not obvious, and reading it as plain UTF-16 yields
+    mojibake rather than an error."""
+    if b[:4] not in CSF_MAGIC:
+        raise ValueError("not a CSF (bad magic)")
+    ver, nlbl, nstr, _unused, lang = struct.unpack("<IIIII", b[4:24])
+    p, out = 24, []
+    for _ in range(nlbl):
+        while p + 4 <= len(b) and b[p:p + 4] != b" LBL":
+            p += 1
+        cnt, ln = struct.unpack("<II", b[p + 4:p + 12])
+        p += 12
+        name = b[p:p + ln].decode("latin-1")
+        p += ln
+        val = ""
+        for i in range(cnt):
+            kind = b[p:p + 4]
+            p += 4
+            (sl,) = struct.unpack("<I", b[p:p + 4])
+            p += 4
+            text = bytes(255 - x for x in b[p:p + sl * 2]).decode("utf-16-le", "replace")
+            p += sl * 2
+            if i == 0:
+                val = text
+            if kind == b"WRTS":                      # a trailing author note; skipped
+                (el,) = struct.unpack("<I", b[p:p + 4])
+                p += 4 + el
+        out.append((name, val))
+    return {"version": ver, "language": lang, "labels": out}
+
+
+# The escape contract, read off GameTextManager rather than guessed. `readToEndOfQuote` runs a
+# slash state machine and stops at an UNESCAPED quote; `translateCopy` then converts the pairs.
+# Six are recognised and everything else after a backslash is passed through.
+STR_ESCAPES = {"\\": "\\", "'": "'", '"': '"', "?": "?", "t": "\t", "n": "\n"}
+
+# COMMENTS ARE `//`, NOT `;`. parseStringFile tests `*(unsigned short*)buffer == 0x2F2F`, so a
+# semicolon line is not a comment — it is read as a LABEL, and the line after it as that label's
+# text. A `;`-commented header therefore does not annotate the file, it corrupts the first two
+# entries and shifts nothing else, which is why it produces no error.
+STR_COMMENT = "//"
+
+
+def str_read(path):
+    """Parse a .str: LABEL / "text" / END, repeating. Retail ships these beside its campaign
+    maps (MD_GLA02_CINE/Map.str and friends), so the format is theirs, not an invention here."""
+    out, label = [], None
+    for raw in open(path, encoding="latin-1"):
+        line = raw.strip()
+        if not line or line.startswith(STR_COMMENT):
+            continue
+        if label is None:
+            label = line
+        elif line.lower() == "end":
+            label = None
+        elif line.startswith('"'):
+            out.append((label, str_unescape(str_quoted(line))))
+    return out
+
+
+def str_quoted(line):
+    """The text between the opening quote and the first UNESCAPED closing one.
+
+    `line.strip('"')` is the obvious version and it is wrong: 3 of retail's 6,422 labels end in
+    an escaped quote (`... <sarcastic> \\"General.\\""`), and strip() removes BOTH trailing
+    quote characters, silently truncating the text by one. The engine does not have this bug
+    because `readToEndOfQuote` runs a slash state machine; so does this."""
+    out, slash = [], False
+    for c in line[1:]:
+        if slash:
+            out.append(c)
+            slash = False
+        elif c == "\\":
+            out.append(c)
+            slash = True
+        elif c == '"':
+            break
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def str_unescape(t):
+    out, i = [], 0
+    while i < len(t):
+        c = t[i]
+        if c == "\\" and i + 1 < len(t):
+            nxt = t[i + 1]
+            out.append(STR_ESCAPES.get(nxt, nxt))
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def str_escape(t):
+    """Inverse of translateCopy for the characters that would otherwise break the file. A real
+    newline is the one that MATTERS and the one easy to miss: 772 of retail's 6,422 labels
+    contain one, a .str is line-oriented, and an unescaped newline inside a quoted string is
+    read as a space — so the text survives looking subtly wrong rather than failing."""
+    out = []
+    for c in t:
+        if c == "\\":
+            out.append("\\\\")
+        elif c == '"':
+            out.append('\\"')
+        elif c == "\n":
+            out.append("\\n")
+        elif c == "\t":
+            out.append("\\t")
+        elif c == "\r":
+            continue
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def csf_find(game):
+    """The install's own table, wherever it lives — loose first, then the archives.
+
+    THREE copies ship and they are not interchangeable: `English.big` (base Generals, 2,806
+    labels), `W3DEnglishZH.big` and `EnglishZH.big` (Zero Hour, 6,422). ZH is a DELTA over base
+    Generals, so taking whichever the scan reached last silently halves the table and every
+    Zero Hour label reads MISSING — which looks exactly like the bug you were trying to fix.
+    Choose by CONTENT instead of by scan order: decode each candidate and keep the richest.
+    Empirical, and it cannot be broken by a change in directory ordering."""
+    loose = os.path.join(game, "Data", "English", "generals.csf")
+    if os.path.isfile(loose):
+        return open(loose, "rb").read(), loose
+    best = None
+    for arc in all_archives(game):
+        try:
+            toc = big_toc(arc)
+        except Exception:
+            continue
+        for n, o, sz in toc:
+            if not n.lower().endswith("generals.csf"):
+                continue
+            with open(arc, "rb") as f:
+                f.seek(o)
+                blob = f.read(sz)
+            try:
+                cnt = len(csf_read(blob)["labels"])
+            except Exception:
+                continue
+            if best is None or cnt > best[2]:
+                best = (blob, f"{os.path.basename(arc)}:{n}", cnt)
+    return (best[0], best[1]) if best else (None, None)
+
+
+def cmd_strings(a):
+    data, src = csf_find(a.game)
+    if data is None:
+        return print(f"  no generals.csf under {a.game} — is this an install?")
+    try:
+        csf = csf_read(data)
+    except Exception as e:
+        return print(f"  {src}: {e}")
+
+    if not a.merge:
+        print(f"  {src}: version={csf['version']} language={csf['language']} "
+              f"{len(csf['labels'])} labels")
+        if a.grep:
+            hits = [(k, v) for k, v in csf["labels"] if a.grep.lower() in k.lower()]
+            print(f"  {len(hits)} matching '{a.grep}'")
+            for k, v in hits[:a.limit]:
+                print(f"    {k} = {v!r}")
+        return 0
+
+    pack_str = os.path.join(a.merge, "labels.str")
+    if not os.path.isfile(pack_str):
+        return print(f"  no {pack_str} — compile the pack first (rts compile --target zh)")
+    ours = str_read(pack_str)
+    if not ours:
+        return print(f"  {pack_str} declares no labels")
+
+    # Retail first, ours second, ours winning a collision. A pack SHOULD NOT collide — every
+    # label it emits is pack-prefixed — so a collision is reported rather than absorbed.
+    merged, seen = [], {}
+    for k, v in csf["labels"]:
+        seen[k] = len(merged)
+        merged.append((k, v))
+    clashes = []
+    for k, v in ours:
+        if k in seen:
+            clashes.append(k)
+            merged[seen[k]] = (k, v)
+        else:
+            merged.append((k, v))
+
+    # Every label's text must survive latin-1: translateCopy widens BYTES to WideChar, so the
+    # file's encoding is effectively latin-1 and a character above U+00FF cannot be represented.
+    # Measured on this install: 244 of 6,422 labels are non-ASCII and NONE exceed U+00FF, so the
+    # table round-trips exactly — but check rather than assume, because a silent substitution
+    # here would corrupt a credit line nobody reads until someone does.
+    lossy = [k for k, v in merged if any(ord(c) > 255 for c in v)]
+    if lossy:
+        print(f"  {len(lossy)} labels contain characters a .str cannot hold: {lossy[:3]}")
+        return 1
+
+    out = a.out or os.path.join(a.game, "Data", "Generals.str")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="latin-1") as f:
+        f.write(f"{STR_COMMENT} Generals.str - MERGED LOCALLY by `zhasset strings --merge`.\n")
+        f.write(f"{STR_COMMENT} {len(csf['labels'])} labels from this install's own {src}\n")
+        f.write(f"{STR_COMMENT} + {len(ours)} authored by the pack.\n")
+        f.write(f"{STR_COMMENT} DERIVED FROM YOUR INSTALL. Not distributable.\n")
+        f.write(f"{STR_COMMENT} Delete it to fall back to the shipped generals.csf.\n\n")
+        for k, v in merged:
+            f.write(f"{k}\n\"{str_escape(v)}\"\nEND\n\n")
+
+    # Read our own output back and compare. A writer verified by nothing is how 772 newline-
+    # bearing labels would ship subtly wrong; this costs milliseconds and closes the loop.
+    back = dict(str_read(out))
+    bad = [k for k, v in merged if back.get(k) != v]
+    if bad:
+        print(f"  ROUND-TRIP FAILED for {len(bad)} labels, e.g. {bad[:3]}")
+        return 1
+
+    print(f"  {out}")
+    print(f"  {len(csf['labels'])} retail + {len(ours)} authored = {len(merged)} labels, "
+          f"round-tripped")
+    if clashes:
+        print(f"  {len(clashes)} OVERRODE a retail label: {', '.join(clashes[:5])}")
+    print("  (delete Data/Generals.str to revert to the shipped generals.csf)")
+    return 0
+
+
 def cmd_show(a):
     cat = json.load(open(os.path.join(a.out, "zh-catalogue.json")))
     q = a.thing
@@ -3047,6 +3295,14 @@ def main():
     au.add_argument("--census", action="store_true", help="format survey of the shipped archives")
     au.add_argument("--json", action="store_true")
     au.set_defaults(fn=cmd_audio)
+
+    stg = sub.add_parser("strings", help="inspect the string table, or merge a pack's labels into it")
+    stg.add_argument("--merge", metavar="PACKDIR",
+                     help="a compiled pack directory; writes <game>/Data/Generals.str")
+    stg.add_argument("--out", help="write somewhere else instead of into the install")
+    stg.add_argument("--grep", help="list labels whose name contains this")
+    stg.add_argument("--limit", type=int, default=20)
+    stg.set_defaults(fn=cmd_strings)
 
     sh = sub.add_parser("show", help="explain one unit/weapon/faction/terrain type")
     sh.add_argument("thing")

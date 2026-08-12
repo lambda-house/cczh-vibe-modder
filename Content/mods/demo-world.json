@@ -1,0 +1,56 @@
+{
+  // A playable world for the demo pack: ground to stand on, and a wall to walk around.
+  //
+  // Layered as its OWN pack rather than folded into demo-attach.json, because that file is an
+  // e2e fixture — adding a map to it changes `contentHash`, and gates that pin a number would
+  // start failing for a reason that has nothing to do with what they test. Layering is what
+  // this content model is for: `--mod demo-attach.json --mod demo-world.json` composes the two
+  // in ordinal order, and neither knows about the other.
+  //
+  // The pack NAME is what makes the map coherent. A compiled map references its terrain class
+  // as `<pack>_ground`, and the Terrain block that declares it is emitted by the same compile
+  // — so the two always agree as long as the map and the INI come from ONE compile. They stop
+  // agreeing the moment an old pack's map is left behind in the user-data Maps directory while
+  // a new pack's INI is installed over the game directory: the map then names a terrain class
+  // nothing declares, and the ground renders BLACK with no error anywhere. That is exactly the
+  // desertA failure class, arriving by a route the MANIFEST does not cover, because maps live
+  // outside the install root.
+  "meta": { "name": "demo" },
+
+  "map": {
+    // 2.0 world units per cell, so 48x36 cells is a comfortable skirmish field once scaled.
+    "cellSize": 2.0,
+    "legend": { ".": "clear", "#": "impassable" },
+    "outside": "clear",
+
+    // Row 0 is the LOWEST world y — rows are oriented to the renderer, not to a compass.
+    // A central wall with a gap at each end: enough to make pathing visible without turning
+    // the match into a single chokepoint.
+    "rows": [
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "..............########....########..............",
+      "..............########....########..............",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "..............########....########..............",
+      "..............########....########..............",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................",
+      "................................................"
+    ]
+  }
+}

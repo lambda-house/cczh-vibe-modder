@@ -19,9 +19,12 @@ namespace RtsSkeleton.Content;
 /// subdirectory cannot.
 ///
 /// Deliberately NOT emitted:
-///   - <c>Data/Generals.str</c>. Release builds prefer the .str over the compiled .csf, so
-///     writing one shadows all 6,422 retail strings and every label in the game becomes
-///     MISSING. Opt in with --with-strings when the pack is a full conversion.
+///   - <c>Data/Generals.str</c>. <c>GameTextManager::init</c> picks the .str OR the .csf in an
+///     if/else, so writing one shadows all 6,422 retail strings and every label in the game
+///     becomes MISSING. Opt in with --with-strings only for a full conversion.
+///     <b>The additive channel is <c>&lt;mapdir&gt;/map.str</c> instead</b> — <c>fetch()</c>
+///     searches the main table first and falls back to the map table, so a pack names its own
+///     content without displacing anything and without carrying a byte of EA's text.
 ///   - art of any kind. Units reference models that already exist; see ZhTargetDto.Models.
 /// </summary>
 public static class ZhCompiler
@@ -1153,6 +1156,47 @@ public static class ZhCompiler
                 r.Files.Add(Path.Combine(mapDir, "map.ini"));
             }
 
+            // ---- Labels, ADDITIVELY -----------------------------------------------------
+            // `Data/Generals.str` is the wrong channel and always was: GameTextManager::init
+            // picks the .str OR the .csf in an if/else, so writing one shadows all 6,422 retail
+            // strings and every label in the game reads MISSING. That is why --with-strings is
+            // opt-in, and it left ordinary packs with no way to name anything.
+            //
+            // There IS an additive channel and it is next to the map. `fetch()` bsearches the
+            // main table first and, ONLY on a miss, falls back to m_mapStringLUT — the table
+            // filled by initMapStringFile from <mapdir>/map.str. So retail's strings win where
+            // they exist and ours fill the holes, which is exactly the composition a pack wants,
+            // and the file contains nothing of EA's.
+            //
+            // Two callers load it, and between them they cover both places a pack's names show:
+            // MapUtil.cpp when the map list is built (so the map's own MAP: label resolves in
+            // the menu) and GameLogic.cpp at match start (so every CONTROLBAR:/OBJECT: label
+            // resolves in play).
+            //
+            // What it CANNOT reach is the shell before a map is chosen — the faction names in
+            // the skirmish dropdown are fetched with no map loaded. Those stay MISSING unless
+            // the pack is a full conversion. Emitting a partial fix and calling it done would
+            // be worse than the gap.
+            {
+                var ms = new StringBuilder();
+                void L(string tag, string text) =>
+                    ms.AppendLine(tag).AppendLine($"\"{text}\"").AppendLine("END").AppendLine();
+
+                L("MAP:" + mapName, Title(db.PackName) + " Map");
+                foreach (var fid in db.FactionOrder) L($"SIDE:{Side(fid)}", Title(fid));
+                foreach (var u in db.Units)
+                {
+                    L($"OBJECT:{P(u.Id)}", Title(u.Id));
+                    L($"CONTROLBAR:{P(u.Id)}", Title(u.Id));
+                    // Name and tooltip are separate labels; supply one and hovering the button
+                    // still says MISSING, which looks more broken than no label at all.
+                    L($"CONTROLBAR:ToolTip{P(u.Id)}", Title(u.Id));
+                }
+                string strPath = Path.Combine(mapDir, "map.str");
+                File.WriteAllText(strPath, ms.ToString());
+                r.Files.Add(strPath);
+            }
+
             r.Warnings.Add($"map '{mapName}': {m.Width}x{m.Height} cells " +
                            $"({m.PlayableWidth}x{m.PlayableHeight} playable, {m.BlockedCells} raised), " +
                            $"install to <userdata>/Maps/{mapName}/ — MapCache picks it up on boot.");
@@ -1173,6 +1217,58 @@ public static class ZhCompiler
                 r.Warnings.Add($"mesh '{m}' has no measured profile: no retail object uses it, so " +
                                $"geometry, bones, turret and muzzle flash are GUESSED. Declare them with " +
                                $"zh.artRig / zh.turreted, or adopt a mesh that retail uses.");
+        }
+
+        // ---- labels.str: OUR labels, for a local merge --------------------------------------
+        // The shell resolves a faction's name at INI PARSE TIME — `DisplayName` is
+        // `INI::parseAndTranslateLabel`, which calls `TheGameText->fetch` while the Object files
+        // load at boot and stores the resulting UnicodeString on the template. So no per-map
+        // channel can ever reach it: by the time a map exists the name has already been decided,
+        // and the army dropdown shows `MISSING:'INI:Factiondemo_hellfire'` for the rest of the
+        // session. Only the MAIN table can name a faction.
+        //
+        // The main table is `Data/English/generals.csf` (6,422 labels) unless `Data/Generals.str`
+        // exists, in which case `GameTextManager::init` takes the .str INSTEAD — release builds
+        // set `m_useStringFile = TRUE`, so the .str really does win. Writing a partial one is
+        // therefore catastrophic rather than incomplete.
+        //
+        // The way out is a MERGE, and it has to happen on the player's machine against the
+        // player's own files: `zhasset strings --merge` reads their csf, overlays this file, and
+        // writes `Data/Generals.str` straight into their install. THIS file holds only the labels
+        // the pack invents, so nothing retail-derived is ever produced here or carried in a pack.
+        // It sits at the pack ROOT rather than under Data/ precisely so an `rsync -a Data Art`
+        // cannot install it by accident — a stray Generals.str is the failure it exists to avoid.
+        {
+            var ls = new StringBuilder();
+            void L(string tag, string text) =>
+                ls.AppendLine(tag).AppendLine($"\"{text}\"").AppendLine("END").AppendLine();
+
+            // TWO labels per faction, and the one that is easy to miss is the one the player
+            // actually reads. `INI:Faction<side>` feeds `DisplayName`, which is what the INI
+            // states — but the skirmish army dropdown formats its own key, `SIDE:<side>`
+            // (`WOLGameSetupMenu.cpp:451` and three sibling menus), and fetches THAT. Emit only
+            // the first and every slot reads `MISSING:'SIDE:demo_hellfire'` while the INI looks
+            // completely correct. Found by screenshotting the menu, not by reading the INI.
+            foreach (var fid in db.FactionOrder)
+            {
+                L($"INI:Faction{Side(fid)}", Title(fid));
+                L($"SIDE:{Side(fid)}", Title(fid));
+            }
+            foreach (var u in db.Units)
+            {
+                L($"OBJECT:{P(u.Id)}", Title(u.Id));
+                L($"CONTROLBAR:{P(u.Id)}", Title(u.Id));
+                L($"CONTROLBAR:ToolTip{P(u.Id)}", Title(u.Id));
+            }
+            foreach (var up in upgradeFor.Values.Distinct(StringComparer.Ordinal)
+                                         .OrderBy(x => x, StringComparer.Ordinal))
+                L($"UPGRADE:{up.Substring("Upgrade_".Length)}", Title(up.Substring("Upgrade_".Length)));
+            // The map's own name is cached: MapUtil resolves it once and stores the RESULT in
+            // MapCache.ini, so a stale cache keeps showing MISSING even after the label exists.
+            // The installer deletes the cache for that reason.
+            if (db.Map is not null) L("MAP:" + pack + "_map", Title(db.PackName) + " Map");
+
+            Write(r, Path.Combine(outRoot, "labels.str"), ls);
         }
 
         if (withStrings)
@@ -1203,8 +1299,16 @@ public static class ZhCompiler
         }
         else
         {
-            r.Warnings.Add("no strings emitted: labels render as MISSING:'...' in game. " +
-                           "Cosmetic only; --with-strings replaces the whole retail string table.");
+            // Not the whole story since map.str landed: a pack that authors a map names its
+            // own content additively and only the pre-map shell is left bare.
+            r.Warnings.Add(db.Map is null
+                ? "no strings emitted: labels render as MISSING:'...'. A pack that authors a map "
+                  + "gets additive labels for free via <mapdir>/map.str; --with-strings is only "
+                  + "for a full conversion, and REPLACES the whole retail string table."
+                : "faction names in the pre-match shell need the MAIN string table — they are "
+                  + "resolved at INI parse time, before any map exists. Run "
+                  + "`zhasset strings --merge <outdir>` to add labels.str to your OWN install's "
+                  + "6,422; map.str already covers everything in-match.");
         }
 
         return r;

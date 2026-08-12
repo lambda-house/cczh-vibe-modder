@@ -2058,5 +2058,78 @@ fi
 rm -rf "$AUD"; trap - EXIT
 
 
+gate "a pack NAMES itself — additively where it can, by local merge where it cannot"
+# Every label a pack invents rendered as MISSING:'...', and the compiler offered only a choice
+# between that and --with-strings, which writes Data/Generals.str and thereby REPLACES retail's
+# 6,422 labels rather than extending them. Both halves of the dichotomy were wrong.
+#
+# There are two channels and they cover different screens:
+#   IN-MATCH  <mapdir>/map.str, genuinely additive. fetch() bsearches the main table first and
+#             falls back to the map table, so ours fill holes and displace nothing. Retail ships
+#             these itself, beside its campaign maps.
+#   THE SHELL the MAIN table only. A faction's name is resolved at INI PARSE TIME —
+#             `DisplayName` is INI::parseAndTranslateLabel — so no per-map file can ever reach
+#             it. That is what `zhasset strings --merge` is for, and it runs against the
+#             player's OWN install, never producing anything distributable.
+STR=$(mktemp -d); trap 'rm -rf "$STR"' EXIT
+rts compile --target zh --out "$STR/out" --mod content/mods/demo-attach.json \
+                                         --mod content/mods/demo-world.json >/dev/null
+
+# --- 1. BOTH faction labels, because the visible one is not the one the INI states. ---
+# `DisplayName = INI:Faction<side>` is what the file says, and the skirmish army dropdown
+# ignores it: WOLGameSetupMenu.cpp formats its own key, "SIDE:%s". Emitting only the first
+# leaves every slot reading MISSING:'SIDE:demo_hellfire' while the INI looks perfect. Found by
+# screenshotting the menu; no log line mentions it.
+# NOTE the `tr -d`: a .str is CRLF, like every other text file the engine reads and like
+# retail's own map.str files. grep -x against a bare label fails on the trailing CR.
+# NOTE two shell traps, both of which this file has been bitten by before. `grep -q` after a
+# pipe exits on its first hit, SIGPIPEs the writer, and `set -o pipefail` turns that into a
+# failed test — so count instead of short-circuiting. And LC_ALL=C, because a .str is latin-1.
+haslabel() { [ "$(LC_ALL=C tr -d '\r' < "$1" | grep -cxF "$2")" -ge 1 ]; }
+for tag in "INI:Factiondemo_hellfire" "SIDE:demo_hellfire"; do
+  haslabel "$STR/out/labels.str" "$tag" \
+    || { echo "  labels.str is missing $tag"; exit 1; }
+done
+haslabel "$STR/out/Maps/demo_map/map.str" "MAP:demo_map" \
+  || { echo "  map.str does not name the map"; exit 1; }
+echo "  labels.str carries INI:Faction AND SIDE; map.str names the map"
+
+# --- 2. labels.str must NOT be installable by accident. ------------------------------
+# A bare Generals.str under Data/ would be picked up by `rsync -a Data Art` and replace the
+# whole retail table with 37 labels. It lives at the pack root for exactly that reason.
+[ ! -e "$STR/out/Data/Generals.str" ] \
+  || { echo "  A BARE Generals.str WAS EMITTED — it would shadow all 6,422 retail labels"; exit 1; }
+grep -q "^labels.str$" "$STR/out/MANIFEST.txt" \
+  && { echo "  labels.str is in the MANIFEST — it is a merge INPUT, not an installed file"; exit 1; }
+echo "  no installable Generals.str, and labels.str is not manifested"
+
+# --- 3. The merge is lossless over the real table. -----------------------------------
+if [ -d "$HOME/GeneralsX/GeneralsZH" ]; then
+  out=$(python3 tools/zhasset strings --merge "$STR/out" --out "$STR/merged.str" 2>&1) \
+    || { echo "  THE MERGE FAILED"; echo "$out"; exit 1; }
+  case "$out" in *round-tripped*) : ;; *) echo "  merge did not round-trip"; echo "$out"; exit 1 ;; esac
+  echo "  $(echo "$out" | sed -n '2p' | sed 's/^ *//')"
+
+  # The two cases a naive writer corrupts, checked against the ENGINE's rules rather than
+  # against intuition. 772 of 6,422 retail labels contain a real newline and a .str is
+  # line-oriented; 3 end in an ESCAPED quote, which `line.strip('"')` silently truncates by one
+  # character. Both were live bugs in this tool before the round-trip check existed.
+  haslabel "$STR/merged.str" 'GUI:UnitsBuilt' \
+    || { echo "  a newline label vanished"; exit 1; }
+  [ "$(LC_ALL=C grep -ac 'sarcastic> \\"General\.\\""' "$STR/merged.str")" -ge 1 ] \
+    || { echo "  an ESCAPED-QUOTE label was mangled"; exit 1; }
+  echo "  newline-bearing and escaped-quote labels survive the round trip"
+
+  # A comment in a .str is `//` — parseStringFile tests for 0x2F2F. A `;` line is read as a
+  # LABEL and the line after it as its text, corrupting two entries with no error.
+  [ "$(LC_ALL=C grep -ac '^;' "$STR/merged.str")" -eq 0 ] \
+    || { echo "  the merged file uses ';' comments, which parse as LABELS"; exit 1; }
+  echo "  comments are // — a ';' line would be parsed as a label"
+else
+  echo "  (no install: the merge needs one to read generals.csf from — skipped)"
+fi
+rm -rf "$STR"; trap - EXIT
+
+
 echo
 echo "E2E PASS"

@@ -214,7 +214,14 @@ public static class Program
         // plays whichever is default, which silently tests the wrong pack. That cost an hour
         // twice: once chasing a model override that was never broken, once a build bar that was
         // never missing.
+        // labels.str is listed as OUTPUT but excluded from the MANIFEST, because the manifest
+        // means "files this pack put into the game directory" and drives the uninstall. It is a
+        // merge INPUT that never gets installed — `zhasset strings --merge` reads it and writes
+        // Data/Generals.str instead. Listing it would have the uninstall try to delete a file
+        // that was never there, and imply the install step should copy it, which is the one
+        // thing that must not happen.
         var rel = r.Files.Select(f => Path.GetRelativePath(outRoot, f))
+                         .Where(f => f != "labels.str")
                          .OrderBy(x => x, StringComparer.Ordinal).ToList();
         File.WriteAllLines(Path.Combine(outRoot, "MANIFEST.txt"), rel);
 
@@ -232,6 +239,17 @@ public static class Program
         Console.WriteLine("  rsync -a " + outRoot + "/Data " + outRoot + "/Art ~/GeneralsX/GeneralsZH/");
         if (hasMap)
             Console.WriteLine($"  rsync -a {outRoot}/Maps/ {userMaps}/     # user data, NOT the install");
+        // labels.str is deliberately NOT rsynced. It is an INPUT to a local merge: the shell
+        // resolves a faction's name at INI parse time, so only the main string table can carry
+        // it, and that table is all-or-nothing — a bare Generals.str replaces retail's 6,422
+        // labels instead of extending them. The merge reads the player's own csf and writes the
+        // union, which is why it runs here and not at compile time.
+        if (File.Exists(Path.Combine(outRoot, "labels.str")))
+            Console.WriteLine($"  python3 tools/zhasset strings --merge {outRoot}"
+                              + "     # names factions in the army dropdown");
+        if (hasMap)
+            Console.WriteLine($"  rm -f {userMaps}/MapCache.ini"
+                              + "     # a map's NAME is cached, so a stale cache keeps MISSING");
         Console.WriteLine("play:     cd ~/GeneralsX/GeneralsZH && ./run-logged.sh -win -quickstart");
         return 0;
     }
