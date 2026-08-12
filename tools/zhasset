@@ -4111,11 +4111,19 @@ def cmd_model(a):
 
     with tempfile.TemporaryDirectory() as tmp:
         glb = os.path.join(tmp, "model.glb")
-        r = subprocess.run([blender, "--background", "--python", script, "--", a.recipe, glb],
+        aopng = os.path.join(tmp, "ao.png")
+        r = subprocess.run([blender, "--background", "--python", script, "--",
+                            a.recipe, glb, aopng],
                            capture_output=True, text=True)
         parts = [l.split() for l in r.stdout.splitlines() if l.startswith("ZHPART ")]
         uvrects = {l.split()[1]: tuple(float(v) for v in l.split()[2:6])
                    for l in r.stdout.splitlines() if l.startswith("ZHUV ")}
+        ao = None
+        if any(l.startswith("ZHAO ") for l in r.stdout.splitlines()) and os.path.exists(aopng):
+            ao = png_read(aopng)
+        for l in r.stdout.splitlines():
+            if l.startswith("ZHAOFAIL"):
+                print(f"  AO bake failed, falling back to the approximation: {l[9:]}")
         tot = next((l.split() for l in r.stdout.splitlines() if l.startswith("ZHTOTAL ")), None)
         if not os.path.exists(glb) or tot is None:
             print("BLENDER FAILED to produce geometry:")
@@ -4157,8 +4165,26 @@ def cmd_model(a):
         size = recipe.get("textureSize", base.get("size", 256))
         base = dict(base); base["size"] = size
         size, rows = _atlas_texture(size, regions, base)
+        if ao:
+            # BAKED OCCLUSION over the procedural material. Multiply, because occlusion is how
+            # much light fails to arrive — it darkens what is there rather than replacing it,
+            # so the panels, rivets and bands all survive and simply acquire real shadow.
+            aw, ah, arows, _ = ao
+            for y in range(size):
+                sy = y * ah // size
+                for x in range(size):
+                    k = arows[sy][x * aw // size][0] / 255.0
+                    # Floored: a fully occluded texel going to black loses the material
+                    # underneath it entirely, and a 2003 renderer has no bounce light to
+                    # recover it. Retail's own recesses are dark, not absent.
+                    k = 0.35 + 0.65 * k
+                    # NOT `r, g, b` — `r` is the Blender subprocess result in this scope, and
+                    # shadowing it here crashed every build that reached this line.
+                    cr, cg, cb = rows[y][x]
+                    rows[y][x] = (int(cr * k), int(cg * k), int(cb * k))
         tga_write(os.path.join(outdir, atlas), size, size, rows)
-        print(f"  atlas {atlas}: {size}x{size}, {len(regions)} region(s) packed by surface area")
+        print(f"  atlas {atlas}: {size}x{size}, {len(regions)} region(s) packed by surface area"
+              + (", AO baked from geometry" if ao else ""))
         specs = {atlas: base}
     else:
         for texname, spec in sorted(specs.items()):

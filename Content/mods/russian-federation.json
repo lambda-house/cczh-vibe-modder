@@ -83,9 +83,9 @@
       // the roof is now a REGION of mangal.tga rather than a separate file. Leaving the old
       // name here was a dangling reference the pack gate caught immediately.
       "build/models/mangal.tga",
-      "build/models/rfbase.tga",
-      "build/models/rfbase_dome.tga",
-      "build/models/rfbase_stack.tga"
+      // One sheet for the base too, same as the Mangal: the dome and stack materials are now
+      // REGIONS of rfbase.tga rather than separate files.
+      "build/models/rfbase.tga"
     ],
 
     // artRig is EMPTY on purpose. It exists because ADOPTED art brings bones and sub-objects

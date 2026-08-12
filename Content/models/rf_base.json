@@ -312,5 +312,7 @@
       ],
       "mirror": "y"
     }
-  ]
+  ],
+  "atlas": true,
+  "textureSize": 512
 }

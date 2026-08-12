@@ -334,6 +334,66 @@ def pack_atlas(parts, fill=0.92):
     return rects
 
 
+def bake_ao(parts, size, path, samples=16):
+    """Bake ambient occlusion from the ACTUAL geometry into the packed atlas.
+
+    The last approximation to go. Until now occlusion was inferred from distance-to-nearest-
+    seam in TEXTURE space — a guess about geometry made without looking at the geometry. It
+    cannot know about the underside of a roof overhang, the inside of a boolean cut-out, or
+    where a dome meets the drum it stands on. Cycles traces the real mesh and knows all three.
+
+    Comparing a retail vehicle sheet against ours settled that this is the whole difference:
+    theirs is not more colourful or higher frequency, it has dark occlusion in every recess and
+    a bright lip on every top edge, and that is what makes a flat polygon read as a panelled
+    one.
+
+    Requires the atlas (non-overlapping UVs) — two parts sharing a texel cannot each bake their
+    own shadow into it. That is why this lands after packing and not before.
+
+    DETERMINISM: a bake is a sampled integration, so the seed and sample count are pinned. The
+    output is hashed like any other content and the same recipe must give the same bytes.
+    """
+    img = bpy.data.images.new("AO", width=size, height=size)
+    img.filepath_raw = path
+    img.file_format = "PNG"
+
+    # Every part needs the SAME image as its bake target, so they all get a material carrying
+    # one image-texture node, selected. Bake writes into whichever node is active.
+    mat = bpy.data.materials.new("BAKE_AO")
+    mat.use_nodes = True
+    node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+    node.image = img
+    mat.node_tree.nodes.active = node
+    saved = []
+    for ob in parts:
+        saved.append(list(ob.data.materials))
+        ob.data.materials.clear()
+        ob.data.materials.append(mat)
+
+    sc = bpy.context.scene
+    sc.render.engine = "CYCLES"
+    sc.cycles.samples = samples
+    sc.cycles.seed = 0
+    sc.cycles.use_animated_seed = False
+    sc.render.bake.use_clear = True
+    # A margin bleeds each island's edge outward, so bilinear filtering and the mip chain do
+    # not sample the empty gutter and draw a dark line around every part.
+    sc.render.bake.margin = max(2, size // 64)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    for ob in parts:
+        ob.select_set(True)
+    bpy.context.view_layer.objects.active = parts[0]
+    bpy.ops.object.bake(type="AO")
+    img.save()
+
+    for ob, mats in zip(parts, saved):
+        ob.data.materials.clear()
+        for m in mats:
+            ob.data.materials.append(m)
+    return True
+
+
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:]
     recipe = json.load(open(argv[0]))
@@ -374,6 +434,15 @@ def main():
         for ob in parts:
             rx, ry, rw, rh = rects[ob.name]
             print(f"ZHUV {ob.name} {rx:.6f} {ry:.6f} {rw:.6f} {rh:.6f}")
+        if recipe.get("ao", True) and len(argv) > 2:
+            size = recipe.get("textureSize", 256)
+            try:
+                bake_ao(parts, size, argv[2], recipe.get("aoSamples", 16))
+                print(f"ZHAO {argv[2]} {size}")
+            except Exception as e:
+                # A failed bake must not lose the model. The material still carries its own
+                # approximated occlusion, so the result is the previous quality, not nothing.
+                print(f"ZHAOFAIL {e}")
 
     bpy.ops.export_scene.gltf(
         filepath=out,
