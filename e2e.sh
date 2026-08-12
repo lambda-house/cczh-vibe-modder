@@ -3142,5 +3142,75 @@ PYINI
 fi
 
 
+gate "a SECOND implementation of W3D reads what we wrote"
+# THE ONE GRADER THAT SHARES NONE OF OUR ASSUMPTIONS. Everything else that checks the W3D
+# writer is downstream of our own code: `zhasset w3d` reads with the same chunk table that
+# wrote the file, `w3dround` compares us to ourselves, and the glTF round-trip leaves through
+# our own exporter before Blender sees anything. Three checks, one opinion — and a writer
+# checked only by its own reader proves the two AGREE, not that either is right.
+#
+# OpenSAGE's Blender plugin was written by other people, from the same shipped files, sharing
+# no code with us. It is held to the standard CLAUDE.md already sets for authored maps: a
+# reader earns the right to grade our writer by first decoding RETAIL, so this checks a
+# shipped mesh before it checks ours.
+#
+# Author-time only. Not vendored, not a dependency, and the gate skips when it is absent:
+#   git clone https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin ~/work/oss/OpenSAGE.BlenderPlugin
+#   (cd ~/work/oss/OpenSAGE.BlenderPlugin && git submodule update --init --depth 1)
+BL=/Applications/Blender.app/Contents/MacOS/Blender
+PLUG=$HOME/work/oss/OpenSAGE.BlenderPlugin
+if [ ! -x "$BL" ] || [ ! -d "$PLUG/io_mesh_w3d" ]; then
+  echo "  (no Blender or no OpenSAGE.BlenderPlugin — the second reader cannot run; skipped)"
+elif [ ! -d "$PLUG/io_mesh_w3d/blender_addon_updater" ]; then
+  # Named separately because the symptom lies: the addon imports its updater at module scope,
+  # so a clone without the submodule fails as a Blender-VERSION incompatibility.
+  echo "  (OpenSAGE.BlenderPlugin is missing its submodule — run git submodule update; skipped)"
+else
+  GR=$(mktemp -d); trap 'rm -rf "$GR"' EXIT
+
+  # --- 1. IT MUST READ RETAIL FIRST. -----------------------------------------------------
+  # Without this the gate says only "two implementations agree about a file one of them made".
+  ./tools/zhasset archives extract --glob 'Art/W3D/NVGattTank.W3D' --dest "$GR" >/dev/null 2>&1
+  RETAIL=$(find "$GR" -iname 'NVGattTank.W3D' | head -1)
+  if [ -z "$RETAIL" ]; then
+    echo "  (no retail archives on this machine — grading ours without the retail baseline)"
+  else
+    ./tools/zhasset w3dgrade "$RETAIL" > "$GR/retail.txt" 2>&1 || {
+      echo "  THE SECOND READER DISAGREES WITH US ABOUT A SHIPPED MESH"
+      cat "$GR/retail.txt"; exit 1; }
+    grep -q "agrees:" "$GR/retail.txt" || {
+      echo "  the second reader produced no verdict on retail"; cat "$GR/retail.txt"; exit 1; }
+    echo "  reads a SHIPPED mesh and agrees with us about it: $(grep -o 'agrees:.*' "$GR/retail.txt")"
+  fi
+
+  # --- 2. AND THEN OURS, WHICH WERE BUILT FROM NOTHING. ----------------------------------
+  ./tools/zhasset models --out "$GR/models" >/dev/null 2>&1 \
+    || { echo "  THE ART BUILD FAILED"; ./tools/zhasset models --out "$GR/models"; exit 1; }
+  for m in "$GR"/models/*.W3D; do
+    ./tools/zhasset w3dgrade "$m" > "$GR/one.txt" 2>&1 || {
+      echo "  AN AUTHORED MESH DID NOT SURVIVE AN INDEPENDENT READER:"
+      cat "$GR/one.txt"; exit 1; }
+    grep -q "agrees:" "$GR/one.txt" || {
+      echo "  no verdict on $(basename "$m")"; cat "$GR/one.txt"; exit 1; }
+    echo "  $(basename "$m"): $(grep -o 'agrees:.*' "$GR/one.txt")"
+  done
+
+  # --- 3. THE NEGATIVE. A reader that accepts anything grades nothing. -------------------
+  # Truncated mid-chunk: the header still says how much geometry follows and it is not there.
+  python3 - "$GR/models" "$GR/broken.w3d" <<'PYCUT'
+import glob, os, sys
+src = sorted(glob.glob(os.path.join(sys.argv[1], "*.W3D")))[0]
+d = open(src, "rb").read()
+open(sys.argv[2], "wb").write(d[:int(len(d) * 0.6)])
+PYCUT
+  if ./tools/zhasset w3dgrade "$GR/broken.w3d" >/dev/null 2>&1; then
+    echo "  A TRUNCATED MESH PASSED — the second reader accepts anything and grades nothing"
+    exit 1
+  fi
+  echo "  a truncated mesh is refused, so the agreement above is worth something"
+  rm -rf "$GR"; trap - EXIT
+fi
+
+
 echo
 echo "E2E PASS"

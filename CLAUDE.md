@@ -94,6 +94,14 @@ Sources on disk:
   archives in two layers (ZH is a delta over base Generals in `ZH_Generals/`):
   26,264 files, 2.23 GB, 9,000 models, 7,891 textures.
   `~/GeneralsX/content-mode.sh stock|104p|status` toggles the loose-file overlay.
+- `~/work/oss/OpenSAGE.BlenderPlugin` — **a second, independent implementation of W3D**, LGPL-3.0,
+  written by other people from the same shipped files and sharing no code with us. It is the only
+  grader of our mesh writer that does not share its assumptions: `zhasset w3d` reads with the same
+  chunk table that wrote the file, `w3dround` compares us to ourselves, and the glTF check leaves
+  through our own exporter first. `zhasset w3dgrade <f.w3d>` drives it and diffs the two readings.
+  Author-time only, never vendored, and its gate skips when absent — but note the clone needs
+  `git submodule update --init`, because the addon imports its updater at module scope and a
+  plain clone fails as a *Blender-version* incompatibility instead of a missing file.
 - `scratchpad/bigtool.py` — `.big` reader/extractor (`list|tree|names|extract`).
 
 **Legal, settled: the GPL covers the engine source only.** `Data/INI`, the `.big`

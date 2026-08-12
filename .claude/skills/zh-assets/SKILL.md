@@ -53,10 +53,25 @@ zhasset gltf <f.w3d> --out x.glb        # EXPORT so it can be LOOKED AT
 zhasset w3dfrom --gltf x.glb --out y.w3d  # BUILD one back, every chunk authored
 zhasset model --recipe r.json --out y.w3d # a parametric recipe, via Blender's kernel
 
+zhasset w3dgrade <f.w3d>       # grade it with OpenSAGE's INDEPENDENT reader, and diff
 zhasset w3dround <f>           # parse and re-emit; byte-identity proves the reader
 zhasset w3dbox|w3dskel|w3danim # older direct generators (w3dbox needs a retail --template)
 zhasset tga --out t.tga        # a texture from nothing: 18-byte header, then BGR
 ```
+
+**`w3dgrade` is the only check on the mesh writer that is not downstream of our own code.**
+`zhasset w3d` reads with the chunk table that wrote the file, `w3dround` compares us to
+ourselves, and the glTF round-trip goes out through our exporter before Blender sees anything —
+three checks, one opinion. OpenSAGE's plugin was written by other people from the same shipped
+files. It earns the right to grade ours by reading RETAIL first, exactly as `zhasset map` does.
+
+```
+git clone https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin ~/work/oss/OpenSAGE.BlenderPlugin
+cd ~/work/oss/OpenSAGE.BlenderPlugin && git submodule update --init --depth 1
+```
+
+The submodule step is **not** optional and its absence lies: the addon imports its updater
+package at module scope, so a plain clone reports a *Blender-version incompatibility*.
 
 `w3dfrom` is the one that makes "authored" literally true: `w3dbox --template` copies
 MATERIAL_INFO, SHADERS, VERTEX_MATERIALS and the MATERIAL_PASS scaffolding out of a **retail
