@@ -1,0 +1,112 @@
+{
+  // A FACTION THAT BORROWS NO CONTENT ART. Every mesh and every texture below was authored
+  // from a recipe in Content/models/ and is carried by this pack; nothing points into the
+  // retail install except the UI chrome, which is deliberate and explained at zh.sides.
+  //
+  //   python3 tools/zhasset models                    # build the art (needs Blender)
+  //   rts lint --target zh --mod Content/mods/russian-federation.json
+  //   rts compile --target zh --out /tmp/rf --mod Content/mods/russian-federation.json
+  //
+  // A SEPARATE PACK, not an edit to demo-attach.json, and that is forced: demo-attach is an
+  // e2e fixture whose contentHash several gates pin, so folding a faction into it would fail
+  // tests for a reason unrelated to what they test. Layering is what the content model is for.
+  //
+  // It is also a NEW FACTION rather than an addition to an existing one, which is likewise
+  // forced rather than chosen: on this runtime, redeclaring any existing INI block is a FATAL
+  // load error — ThingFactory::parseObjectDefinition and ControlBar::parseCommandSetDefinition
+  // both guard the duplicate with a DEBUG_CRASH that is compiled in. Emission is strictly
+  // add-new-names.
+  "meta": { "name": "rf", "version": 1 },
+
+  "weapons": {
+    // A tank gun: slow, hard-hitting, long reach. Deliberately the opposite shape to the
+    // demo pack's flamer, so the two factions are distinguishable by how they FIGHT and not
+    // merely by what they look like.
+    "mangal_cannon": {
+      "damageType": "cannon", "damage": 120, "range": 8.5, "cooldownTicks": 40,
+      "spread": 0.10
+    }
+  },
+
+  "units": {
+    // THE MANGAL. A tank wearing a welded shed — see Content/models/mangal.json for the
+    // reference read and what the render cost it.
+    //
+    // The carapace cannot rotate, and that is the unit's character rather than a modelling
+    // shortcut: heavy frontal protection, no turret. We do not yet HAVE a firing-arc field to
+    // express it with, so today it is armour and slow traverse standing in for a fixed gun.
+    // Do not quietly add an arc field to make this comment true — either model it properly or
+    // leave the gap stated.
+    "mangal": {
+      "faction": "russian_federation", "cost": 1400, "buildSeconds": 18,
+      "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],
+      "components": {
+        "Health": { "max": 900, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 3.2 },
+        "WeaponBearer": { "weapon": "mangal_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    },
+
+    // The construction base. A structure is a unit with speed 0 and role flags — ZH's model
+    // exactly. FS_FACTORY is what gives it a build menu, and the menu is what makes the
+    // Mangal reachable at all.
+    "rf_base": {
+      "faction": "russian_federation", "cost": 2500, "buildSeconds": 25,
+      "kindOf": ["STRUCTURE", "FS_FACTORY", "SELECTABLE", "IMMOBILE", "MP_COUNT_FOR_VICTORY"],
+      "buildCompletion": "PLACED_BY_PLAYER",
+      "components": {
+        "Health": { "max": 5000, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 0 },
+        // Mandatory: the content model requires a WeaponBearer on EVERY unit, and a structure
+        // is just a unit with speed 0. This one never fires — there is no CAN_ATTACK in its
+        // kindOf — so the weapon is inert and named only to satisfy the component contract.
+        "WeaponBearer": { "weapon": "mangal_cannon" }
+      }
+    }
+  },
+
+  "zh": {
+    // The model NAMES are the `name` field of each recipe, and the FILES are what
+    // `zhasset models` builds from them. Both halves matter: lint refuses a model that
+    // resolves to no file, because the alternative is a unit that moves, shoots, dies and
+    // cannot be seen or clicked — with no error from the engine.
+    "models": { "mangal": "MANGAL", "rf_base": "RFBASE" },
+
+    // Carried by the pack and copied into the compiled output, routed by extension: .w3d to
+    // Art/W3D/, images to Art/Textures/. These paths are BUILD OUTPUT — run
+    // `python3 tools/zhasset models` first. The recipes are the source; build/ is gitignored.
+    "art": [
+      "build/models/MANGAL.W3D",
+      "build/models/RFBASE.W3D",
+      "build/models/mangal.tga",
+      "build/models/mangal_roof.tga",
+      "build/models/rfbase.tga",
+      "build/models/rfbase_dome.tga",
+      "build/models/rfbase_stack.tga"
+    ],
+
+    // artRig is EMPTY on purpose. It exists because ADOPTED art brings bones and sub-objects
+    // that must be declared — adopting AVCrusader without naming its muzzle-flash sub-object
+    // left a flame permanently welded to the gun. Our meshes have no turret bone and no flash
+    // sub-object to hide, because we authored them and chose not to. Authored art is the one
+    // case where the empty rig is the correct rig rather than an omission.
+
+    // "Whose UI chrome do we borrow", NOT "whose faction do we join". The faction keeps its
+    // own Side and inherits China's score screen, watermark and medallions BY NAME from assets
+    // already installed. We reference that art; we ship none of it, and none of it is content.
+    // China rather than USA because the palette is closer — this is the one deliberate
+    // borrow in the pack.
+    "sides": { "russian_federation": "China" }
+  },
+
+  "factions": {
+    // Startable: it owns a producer at t=0, so there is something to build FROM.
+    "russian_federation": {
+      "units": ["mangal", "rf_base"],
+      "startingBuilding": "rf_base",
+      "startingUnits": ["mangal"],
+      "startMoney": 10000
+    }
+  }
+}

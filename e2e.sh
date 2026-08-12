@@ -2742,5 +2742,112 @@ fi
 rm -rf "$TX"; trap - EXIT
 
 
+gate "a LAYERED PACK whose faction borrows no content art"
+# The end of the vertical's second milestone: two authored models, five authored textures, and
+# a faction that references them. Everything before this proved a mesh could be built and
+# looked at; this proves a PACK can be built out of them.
+#
+# Needs Blender, because the art is a build step and there is deliberately no committed copy —
+# the recipes are the source and build/ is derived.
+BL=/Applications/Blender.app/Contents/MacOS/Blender
+if [ ! -x "$BL" ]; then
+  echo "  (no Blender: the pack's art is a build step that cannot run — skipped)"
+else
+  RF=$(mktemp -d); trap 'rm -rf "$RF"' EXIT
+  ./tools/zhasset models --out "$RF/models" >/dev/null 2>&1 \
+    || { echo "  THE ART BUILD FAILED"; ./tools/zhasset models --out "$RF/models"; exit 1; }
+
+  # Point a copy of the pack at the freshly built art, so the gate never depends on whatever
+  # happens to be sitting in build/ from an earlier run.
+  python3 - Content/mods/russian-federation.json "$RF/models" "$RF/rf.json" <<'PYRF'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+open(sys.argv[3], "w").write(src.replace("build/models/", sys.argv[2].rstrip("/") + "/"))
+PYRF
+
+  rts lint --target zh --mod "$RF/rf.json" >/dev/null 2>&1 \
+    || { echo "  THE PACK DOES NOT LINT"; rts lint --target zh --mod "$RF/rf.json" | tail -6
+         exit 1; }
+  rts compile --target zh --out "$RF/out" --mod "$RF/rf.json" >/dev/null
+
+  # --- 1. THE FACTION'S OWN OBJECTS MUST NAME ONLY AUTHORED ART. ----------------------
+  # Scoped to the faction on purpose, and the distinction is the finding: `rts compile` emits
+  # the WHOLE content db, so the base sim's demo units come along and they DO adopt retail
+  # meshes. "Zero borrowed bytes" is therefore a property of a faction, not of a compiled
+  # directory — which is what the zero-borrow lint will have to check.
+  python3 - "$RF/out" "$RF/models" <<'PYART2'
+import glob, os, re, sys
+out, built = sys.argv[1], sys.argv[2]
+authored = {os.path.splitext(f)[0].upper() for f in os.listdir(built) if f.upper().endswith(".W3D")}
+ours, foreign = {}, {}
+for f in glob.glob(f"{out}/Data/INI/Object/*.ini"):
+    t = open(f, encoding="latin-1").read().replace("\r", "")
+    for m in re.finditer(r"^Object (\S+)(.*?)^End", t, re.S | re.M):
+        name = m.group(1)
+        mdl = re.search(r"Model\s*=\s*(\S+)", m.group(2))
+        if not mdl:
+            continue
+        # The faction's own units, by the ids the pack declares.
+        if name in ("rf_mangal", "rf_rf_base"):
+            ours[name] = mdl.group(1)
+        else:
+            foreign[name] = mdl.group(1)
+borrowed = {k: v for k, v in ours.items() if v.upper() not in authored}
+if borrowed:
+    print(f"  THE FACTION BORROWS CONTENT ART: {borrowed}")
+    sys.exit(1)
+print(f"  the faction's {len(ours)} objects name only authored meshes "
+      f"({', '.join(sorted(ours.values()))})")
+print(f"  ({len(foreign)} base-sim objects also emitted, and those DO adopt retail meshes — "
+      f"zero-borrow is a property of a FACTION, not of a directory)")
+PYART2
+
+  # --- 2. Every authored file must be CARRIED, byte-identically. ----------------------
+  # A mesh the INI names and the pack does not ship is the desertA failure class: the object
+  # moves, shoots, dies and cannot be seen or clicked, with no error from the engine.
+  for f in MANGAL.W3D RFBASE.W3D; do
+    cmp -s "$RF/models/$f" "$RF/out/Art/W3D/$f" \
+      || { echo "  $f WAS NOT CARRIED byte-identically"; exit 1; }
+  done
+  n=0
+  for f in "$RF"/models/*.tga; do
+    b=$(basename "$f")
+    cmp -s "$f" "$RF/out/Art/Textures/$b" \
+      || { echo "  texture $b was not carried byte-identically"; exit 1; }
+    n=$((n + 1))
+  done
+  echo "  2 meshes and $n textures carried byte-identically into the pack"
+
+  # --- 3. Every texture a carried mesh NAMES must also be carried. --------------------
+  # The pairing is what a texture-less render looks like in game, and neither half reports it.
+  python3 - "$RF/out" <<'PYPAIR'
+import glob, os, struct, sys
+out = sys.argv[1]
+have = {f.lower() for f in os.listdir(f"{out}/Art/Textures")}
+missing = []
+for w in glob.glob(f"{out}/Art/W3D/*.W3D"):
+    buf = open(w, "rb").read()
+    def walk(off, end):
+        while off + 8 <= end:
+            t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+            if raw & 0x80000000: yield from walk(body, body + sz)
+            else: yield t, buf[body:body + sz]
+            off = body + sz
+    for t, p in walk(0, len(buf)):
+        if t == 0x0032:
+            nm = p.split(b"\0")[0].decode("latin-1")
+            if nm.lower() not in have:
+                missing.append(f"{os.path.basename(w)} -> {nm}")
+if missing:
+    print("  A CARRIED MESH NAMES A TEXTURE THE PACK DOES NOT SHIP:")
+    for m in missing:
+        print("    " + m)
+    sys.exit(1)
+print(f"  every texture the carried meshes name is shipped beside them")
+PYPAIR
+  rm -rf "$RF"; trap - EXIT
+fi
+
+
 echo
 echo "E2E PASS"

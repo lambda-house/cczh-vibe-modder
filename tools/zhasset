@@ -3965,6 +3965,39 @@ def cmd_model(a):
     if orphan and specs:
         print(f"  WARNING: mesh names {', '.join(orphan)} but no such texture was written")
 
+    # AN AUTHORED MESH DECLARES ITS OWN CONTRACT. Slice 15 was STRUCK on measurement — an art
+    # profile cannot be derived from geometry (`height` within 20% for only 26% of meshes) — so
+    # without this `rts compile` warns that geometry is guessed and falls back to
+    # AmericaWarFactory's numbers, which is how a unit ends up standing inside its own building.
+    # We chose these dimensions, so we are the authority on them; the catalogue is MEASURED for
+    # adopted art and DECLARED for authored art, and the compiler gets one answer either way.
+    # Measured off the BUILT .w3d rather than off the glTF, so the numbers are already in the
+    # game's own Z-up frame and there is no axis convention left to get wrong.
+    verts = []
+    for _d, cname, _t, _sz, p in w3d_walk(open(a.out, "rb").read()):
+        if cname == "VERTICES":
+            verts += [struct.unpack_from("<3f", p, i * 12) for i in range(len(p) // 12)]
+    lo = [min(v[i] for v in verts) for i in range(3)]
+    hi = [max(v[i] for v in verts) for i in range(3)]
+    major = max(abs(lo[0]), abs(hi[0]))
+    minor = max(abs(lo[1]), abs(hi[1]))
+    height = hi[2] - lo[2]
+    cat = os.path.join(a.profiles or outdir, "art-profiles.json")
+    data = {"models": {}}
+    if os.path.exists(cat):
+        data = json.load(open(cat))
+    data.setdefault("models", {})[name] = {
+        "model": name, "geometry": "BOX",
+        "majorRadius": f"{major:.1f}", "minorRadius": f"{minor:.1f}", "height": f"{height:.1f}",
+        "isSmall": None, "turret": False,
+        "launchBone": None, "fireFXBone": None, "muzzleFlash": None,
+        "unitCreatePoint": None, "naturalRallyPoint": None,
+        "kind": "authored", "usedBy": [f"(authored from {os.path.basename(a.recipe)})"],
+    }
+    os.makedirs(os.path.dirname(cat) or ".", exist_ok=True)
+    json.dump(data, open(cat, "w"), indent=1, sort_keys=True)
+    print(f"  profile declared: BOX {major:.1f} x {minor:.1f} x {height:.1f}")
+
     print(f"  recipe {os.path.basename(a.recipe)} -> {len(parts)} part(s), "
           f"{tot[2]} triangles, Blender {tot[3]}")
     for p in parts:
@@ -3987,6 +4020,38 @@ def cmd_model(a):
             verdict = "within" if int(tot[2]) <= budget else "decimated to fit"
             print(f"  budget {budget}: {verdict} (retail median 169 tris, p90 619)")
     return 0
+
+
+def cmd_models(a):
+    """Build EVERY recipe under a directory into one output directory.
+
+    A pack's `zh.art` names files that must exist before `rts lint` will accept it — an
+    unresolvable model is a cap error, not a warning, precisely because the alternative is a
+    unit that moves, shoots, dies and cannot be seen or clicked. So the art is a BUILD STEP
+    that runs ahead of compile, and this is it. Output is derived, and therefore gitignored:
+    the recipes are the source.
+    """
+    recipes = sorted(f for f in os.listdir(a.dir) if f.endswith(".json"))
+    if not recipes:
+        print(f"no recipes in {a.dir}")
+        return 1
+    os.makedirs(a.out, exist_ok=True)
+    prof = os.path.join(a.out, "art-profiles.json")
+    # Rebuilt from nothing each time. Left in place, a profile for a recipe that has since been
+    # renamed or deleted lingers and keeps answering for a mesh nobody builds any more.
+    if os.path.exists(prof):
+        os.remove(prof)
+    rc = 0
+    for r in recipes:
+        recipe = json.load(open(os.path.join(a.dir, r)))
+        name = recipe.get("name") or os.path.splitext(r)[0].upper()
+        ns = argparse.Namespace(recipe=os.path.join(a.dir, r),
+                                out=os.path.join(a.out, f"{name}.W3D"),
+                                name=name, texture=None, blender=a.blender, profiles=a.out)
+        print(f"== {r} ==")
+        rc |= cmd_model(ns)
+    print(f"built {len(recipes)} recipe(s) into {a.out}")
+    return rc
 
 
 def main():
@@ -4045,8 +4110,14 @@ def main():
     md = sub.add_parser("model", help="build a .w3d from a parametric recipe via Blender's kernel")
     md.add_argument("--recipe", required=True); md.add_argument("--out", required=True)
     md.add_argument("--name"); md.add_argument("--texture")
+    md.add_argument("--profiles", help="directory for art-profiles.json (default: beside --out)")
     md.add_argument("--blender", help=f"path to Blender (default {BLENDER})")
     md.set_defaults(fn=cmd_model)
+
+    ms = sub.add_parser("models", help="build EVERY recipe in a directory — the pack's art step")
+    ms.add_argument("--dir", default="Content/models"); ms.add_argument("--out", default="build/models")
+    ms.add_argument("--blender", help=f"path to Blender (default {BLENDER})")
+    ms.set_defaults(fn=cmd_models)
 
     wf = sub.add_parser("w3dfrom", help="build a .w3d from a .glb — every chunk authored, no template")
     wf.add_argument("--gltf", required=True); wf.add_argument("--out", required=True)
