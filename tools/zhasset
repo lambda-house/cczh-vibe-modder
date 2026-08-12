@@ -3781,8 +3781,13 @@ def _panel_texture(spec):
     accent = spec.get("accent")
     bands = spec.get("bands", [])
 
-    vx = _cuts(size, panel, seed)
-    vy = _cuts(size, panel, seed + 17)
+    # `panel` may be one number (a grid) or [x, y] (anisotropic). Corrugation is the case that
+    # forces this: ribs run in ONE direction, and cutting both axes at 18px gives a fine grid
+    # that reads as woven mesh rather than as sheet metal. A large value in an axis means
+    # effectively no cuts there.
+    px_, py_ = (panel, panel) if isinstance(panel, (int, float)) else (panel[0], panel[1])
+    vx = _cuts(size, px_, seed)
+    vy = _cuts(size, py_, seed + 17)
     vxs, vys = set(vx), set(vy)
 
     def panel_idx(x, y):
@@ -3792,36 +3797,87 @@ def _panel_texture(spec):
         j = sum(1 for c in vy if c <= y)
         return i, j
 
+    # Distance from each pixel to the nearest seam, per axis. This is what makes BAKED SHADING
+    # possible, and baked shading is the whole difference between our textures and retail's.
+    # Compared side by side, a retail 256x256 vehicle sheet is not more colourful than ours and
+    # not higher frequency — it has dark occlusion in every recess and a bright lip on every
+    # top edge, so a flat polygon reads as a panelled surface. A uniform seam multiplier, which
+    # is what this used to be, reads as a grid drawn on a flat wall.
+    def dist_to(cuts, v):
+        best = size
+        for c in cuts:
+            d = abs(v - c)
+            best = min(best, d, size - d)          # wrap: the tile repeats
+        return best
+
+    dx = [dist_to(vx, x) for x in range(size)]
+    dy = [dist_to(vy, y) for y in range(size)]
+
+    ao = spec.get("ao", 0.45)                      # depth of the occlusion in the recess
+    lip = spec.get("lip", 0.35)                    # brightness of the lit top edge
+    hatches = spec.get("hatches", 0)               # painted circular hatches per tile
+    grilles = spec.get("grilles", 0)               # painted slatted vents per tile
+
+    # Feature placement is derived from the seed alone, so it tiles and stays deterministic.
+    feats = []
+    for n in range(hatches + grilles):
+        fx = int(_hf(seed, n, 41) * size)
+        fy = int(_hf(seed, n, 43) * size)
+        fr = 6 + int(_hf(seed, n, 47) * 10)
+        feats.append(("hatch" if n < hatches else "grille", fx, fy, fr))
+
     rows = []
     for y in range(size):
         row = []
         for x in range(size):
             i, j = panel_idx(x, y)
-            tone = 0.88 + 0.24 * _hf(seed, i, j, 7)              # per-plate tone
-            grain = 0.94 + 0.12 * _hf(seed, x >> 1, y >> 1, 3)   # fine surface grain
-            blotch = 1.0 - wear * _hf(seed, x >> 4, y >> 4, 11)  # broad grime mottling
-            k = tone * grain * blotch
+            # Per-plate tone, halved. At its old strength it was the loudest thing in the
+            # texture and read as blotching — big flat squares of slightly different grey —
+            # which is exactly what a close-up in game showed on the concrete.
+            tone = 0.94 + 0.12 * _hf(seed, i, j, 7)
+            grain = 0.93 + 0.14 * _hf(seed, x, y, 3)             # per-PIXEL, not per 2x2
+            blotch = 1.0 - wear * 0.6 * _hf(seed, x >> 4, y >> 4, 11)
 
+            # BAKED SHADING. Occlusion rises as a pixel approaches a seam from either side;
+            # the lit lip is applied only BELOW a horizontal seam, which fixes a light
+            # direction (from above) and is what stops the panels reading as flat.
+            d = min(dx[x], dy[y])
+            shade = 1.0
+            if d <= 3:
+                shade -= ao * (1.0 - d / 4.0)
+            if 0 < dy[y] <= 2 and y > 0 and (y - dy[y]) in vys:
+                shade += lip * (1.0 - dy[y] / 3.0)
+
+            k = tone * grain * blotch * shade
             r, g, b = (c * k for c in base)
 
-            for by in bands:                                     # horizontal painted bands
+            for by in bands:                                     # painted bands
                 if by["from"] <= y < by["to"]:
-                    r, g, b = (c * (0.55 + 0.45 * grain) for c in by["rgb"])
+                    r, g, b = (c * k for c in by["rgb"])
 
-            if x in vxs or y in vys:                              # the seam itself
-                r, g, b = (c * seam for c in (r, g, b))
-            elif (x + 1) in vxs or (y + 1) in vys:                # a highlight beside it
-                r, g, b = (min(255, c * 1.12) for c in (r, g, b))
+            for kind, fx, fy, fr in feats:
+                ddx = min(abs(x - fx), size - abs(x - fx))
+                ddy = min(abs(y - fy), size - abs(y - fy))
+                if kind == "hatch":
+                    rad = (ddx * ddx + ddy * ddy) ** 0.5
+                    if rad < fr:
+                        # A ring, not a disc: an outline plus its own shadow is what reads as
+                        # a raised hatch cover at 64 pixels on screen.
+                        edge = 1.0 - abs(rad - fr + 1.5) / 1.6
+                        m = 0.55 if edge > 0 else 0.92 + 0.10 * grain
+                        r, g, b = (c * m for c in (r, g, b))
+                elif ddx < fr and ddy < fr // 2:
+                    # A grille: alternating dark slats inside a recessed frame.
+                    m = 0.34 if (y % 3) else 0.78
+                    r, g, b = (c * m for c in (r, g, b))
 
-            if rivets and (x in vxs or y in vys):
-                # Rivets ride the seams at a fixed pitch. Bright, because a rivet reads as a
-                # raised highlight; a dark dot reads as a hole.
-                along = y if x in vxs else x
+            if rivets and (dx[x] <= 1 or dy[y] <= 1):
+                along = y if dx[x] <= 1 else x
                 if along % 11 == 0:
-                    r, g, b = (min(255, c * 1.9) for c in (r, g, b))
+                    r, g, b = (min(255, c * 1.7) for c in (r, g, b))
 
-            if accent and _hf(seed, x >> 3, y >> 3, 29) > 0.93:   # sparse accent flecks
-                r, g, b = accent
+            if accent and _hf(seed, x >> 3, y >> 3, 29) > 0.95:
+                r, g, b = (c * 0.5 + a * 0.5 for c, a in zip((r, g, b), accent))
 
             row.append((int(max(0, min(255, r))),
                         int(max(0, min(255, g))),

@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "The Russian Federation's construction base — a Soviet-industrial pile with a dome.",
+    "The Russian Federation's construction base \u2014 a Soviet-industrial pile with a dome.",
     "Authored from the four-view turnaround at incoming/factions/russian-federation/",
     "structures/base/ (gitignored: third-party rights, and it informs PARAMETERS only).",
     "A front/rear/left/right sheet is the ideal modelling reference, because massing and",
@@ -10,7 +10,7 @@
     "565 triangles, the war factory 100 x 58 x 122 at 684.",
     "",
     "WHAT THE BUDGET BUYS IS THE SILHOUETTE, NOT THE PIPEWORK. The reference is dense with",
-    "gantry cranes, rail spurs, pipe runs and crates — all of it scene dressing around the",
+    "gantry cranes, rail spurs, pipe runs and crates \u2014 all of it scene dressing around the",
     "building rather than the building. At ~650 triangles the things that must read are the",
     "dome, the drum it sits on, the entrance portico and the stacks. Everything else is a",
     "texture's job.",
@@ -19,21 +19,19 @@
     "sit at the rear. Z is up and z = 0 is the ground, so `at` is the CENTRE of a part.",
     "",
     "The drum is 12-sided ON PURPOSE. The reference has vertical ribs around it, and a radial",
-    "array is not something this recipe format has — but a 12-gon already reads as ribbed at",
+    "array is not something this recipe format has \u2014 but a 12-gon already reads as ribbed at",
     "RTS camera distance, and it costs 44 triangles instead of a rib array's several hundred."
   ],
-
   "name": "RFBASE",
   "texture": "rfbase.tga",
   "budget": 650,
   "uvScale": 24.0,
-
   "_texture": [
     "Three materials. Cold grey concrete for the mass, a darker ribbed metal for the dome,",
     "and banded stacks.",
     "",
     "THE STACK BANDS ARE THE INTERESTING ONE. A band lives in texture V, and under cube",
-    "projection V maps to world Z on any vertical surface — so on a standing cylinder a",
+    "projection V maps to world Z on any vertical surface \u2014 so on a standing cylinder a",
     "texture band IS a horizontal band at a real height, which is exactly the red-and-white",
     "banding the reference has. The same feature was WRONG on the Mangal, where it crossed the",
     "hull, the tracks and the gun barrel at one height. The lesson is not that bands are bad,",
@@ -45,108 +43,254 @@
   ],
   "textures": {
     "rfbase.tga": {
-      "_": "Poured concrete. Large panels, low wear, almost no rivets — it is cast, not welded.",
-      "size": 256, "seed": 3,
-      "base": [124, 126, 122], "panel": 84, "seam": 0.72, "wear": 0.18,
-      "rivets": false, "accent": [104, 106, 100]
+      "_": "Poured concrete. Large panels, low wear, almost no rivets \u2014 it is cast, not welded.",
+      "size": 256,
+      "seed": 3,
+      "base": [
+        124,
+        126,
+        122
+      ],
+      "panel": 56,
+      "seam": 0.72,
+      "wear": 0.16,
+      "rivets": false,
+      "accent": [
+        104,
+        106,
+        100
+      ],
+      "ao": 0.5,
+      "lip": 0.35,
+      "hatches": 2,
+      "grilles": 3
     },
     "rfbase_dome.tga": {
       "_": "Ribbed sheet metal, darker and cooler than the concrete so the dome separates from",
       "__": "the drum it stands on. Narrow panels read as ribs at this distance.",
-      "size": 256, "seed": 12,
-      "base": [98, 104, 110], "panel": 12, "seam": 0.66, "wear": 0.22,
-      "rivets": true, "accent": [78, 84, 92]
+      "size": 256,
+      "seed": 12,
+      "base": [
+        98,
+        104,
+        110
+      ],
+      "panel": [
+        14,
+        400
+      ],
+      "seam": 0.66,
+      "wear": 0.22,
+      "rivets": true,
+      "accent": [
+        78,
+        84,
+        92
+      ],
+      "ao": 0.5,
+      "lip": 0.4
     },
     "rfbase_stack.tga": {
       "_": "Banded stacks: two red bands on dirty white. See the note above about why this works",
       "__": "here and not on a tank.",
-      "size": 256, "seed": 21,
-      "base": [188, 186, 178], "panel": 64, "seam": 0.74, "wear": 0.40,
+      "size": 256,
+      "seed": 21,
+      "base": [
+        188,
+        186,
+        178
+      ],
+      "panel": 64,
+      "seam": 0.74,
+      "wear": 0.4,
       "rivets": false,
       "bands": [
-        { "from": 54, "to": 104, "rgb": [150, 52, 40] },
-        { "from": 168, "to": 218, "rgb": [150, 52, 40] }
-      ]
+        {
+          "from": 54,
+          "to": 104,
+          "rgb": [
+            150,
+            52,
+            40
+          ]
+        },
+        {
+          "from": 168,
+          "to": 218,
+          "rgb": [
+            150,
+            52,
+            40
+          ]
+        }
+      ],
+      "ao": 0.4,
+      "lip": 0.3
     }
   },
-
   "parts": [
     {
       "_": "Battered podium. taper < 1 leans the walls inward, which is what reads as poured",
       "__": "concrete mass rather than a box sitting on grass.",
       "name": "PODIUM",
       "shape": "box",
-      "size": [108, 96, 8],
-      "at": [0, 0, 4],
+      "size": [
+        108,
+        96,
+        8
+      ],
+      "at": [
+        0,
+        0,
+        4
+      ],
       "taper": 0.96,
-      "bevel": { "width": 1.4, "segments": 1 }
+      "bevel": {
+        "width": 1.4,
+        "segments": 1
+      }
     },
     {
       "_": "The drum the dome sits on. See the note above about 12 sides standing in for ribs.",
       "name": "DRUM",
       "shape": "cylinder",
-      "size": [63, 63, 24],
+      "size": [
+        63,
+        63,
+        24
+      ],
       "segments": 12,
-      "at": [0, 0, 20],
-      "bevel": { "width": 0.8, "segments": 1 }
+      "at": [
+        0,
+        0,
+        20
+      ],
+      "bevel": {
+        "width": 0.8,
+        "segments": 1
+      }
     },
     {
       "_": "THE DOME. The whole reason `dome` exists as a shape. 3 rings is enough at this",
-      "__": "size — the silhouette is a half-circle and extra rings buy interior shading",
+      "__": "size \u2014 the silhouette is a half-circle and extra rings buy interior shading",
       "___": "nobody sees. Its base sits exactly on the drum's top at z = 32.",
       "name": "DOME",
       "texture": "rfbase_dome.tga",
       "shape": "dome",
-      "size": [58, 58, 26],
+      "size": [
+        58,
+        58,
+        26
+      ],
       "segments": 12,
       "rings": 3,
-      "at": [0, 0, 45]
+      "at": [
+        0,
+        0,
+        45
+      ]
     },
     {
       "_": "Entrance portico, projecting forward, with the archway cut clean through its front",
-      "__": "face. NOTE the cut is in the PART's local frame — the part is still at the origin",
+      "__": "face. NOTE the cut is in the PART's local frame \u2014 the part is still at the origin",
       "___": "when a boolean runs, so this is x +6 of the portico's own centre, not of the",
       "____": "world's. A doorway is the one thing a texture genuinely cannot fake, because the",
       "_____": "silhouette has to have a hole in it.",
       "name": "PORTICO",
       "shape": "box",
-      "size": [24, 46, 24],
-      "at": [42, 0, 20],
-      "bevel": { "width": 1.0, "segments": 1 },
+      "size": [
+        24,
+        46,
+        24
+      ],
+      "at": [
+        42,
+        0,
+        20
+      ],
+      "bevel": {
+        "width": 1.0,
+        "segments": 1
+      },
       "cuts": [
-        { "shape": "box", "size": [16, 24, 16], "at": [6, 0, -4] }
+        {
+          "shape": "box",
+          "size": [
+            16,
+            24,
+            16
+          ],
+          "at": [
+            6,
+            0,
+            -4
+          ]
+        }
       ]
     },
     {
-      "_": "The sign band over the entrance — СОВЕТСКАЯ КОНСТРУКЦИОННАЯ БАЗА in the",
+      "_": "The sign band over the entrance \u2014 \u0421\u041e\u0412\u0415\u0422\u0421\u041a\u0410\u042f \u041a\u041e\u041d\u0421\u0422\u0420\u0423\u041a\u0426\u0418\u041e\u041d\u041d\u0410\u042f \u0411\u0410\u0417\u0410 in the",
       "__": "reference. Geometry, not just painted on, because the reference's band stands",
       "___": "proud of the wall and catches its own shadow line. The lettering is the",
       "____": "texture's job.",
       "name": "SIGNBAND",
       "shape": "box",
-      "size": [3, 42, 5],
-      "at": [54, 0, 28],
-      "bevel": { "width": 0.3, "segments": 1 }
+      "size": [
+        3,
+        42,
+        5
+      ],
+      "at": [
+        54,
+        0,
+        28
+      ],
+      "bevel": {
+        "width": 0.3,
+        "segments": 1
+      }
     },
     {
       "_": "Flanking halls, one authored and mirrored across Y. Taller than the podium and",
       "__": "lower than the dome, which is what keeps the dome reading as the centrepiece.",
       "name": "WINGS",
       "shape": "box",
-      "size": [34, 24, 22],
-      "at": [-4, 36, 19],
+      "size": [
+        34,
+        24,
+        22
+      ],
+      "at": [
+        -4,
+        36,
+        19
+      ],
       "taper": 0.94,
       "mirror": "y",
-      "bevel": { "width": 1.0, "segments": 1 }
+      "bevel": {
+        "width": 1.0,
+        "segments": 1
+      }
     },
     {
-      "_": "Rear machine hall — the block the stacks stand on.",
+      "_": "Rear machine hall \u2014 the block the stacks stand on.",
       "name": "REARBLOCK",
       "shape": "box",
-      "size": [22, 40, 26],
-      "at": [-42, 0, 21],
+      "size": [
+        22,
+        40,
+        26
+      ],
+      "at": [
+        -42,
+        0,
+        21
+      ],
       "taper": 0.95,
-      "bevel": { "width": 1.0, "segments": 1 }
+      "bevel": {
+        "width": 1.0,
+        "segments": 1
+      }
     },
     {
       "_": "Stacks, mirrored across Y. Deliberately TALLER than the dome: in the reference",
@@ -155,9 +299,17 @@
       "name": "STACKS",
       "texture": "rfbase_stack.tga",
       "shape": "cylinder",
-      "size": [10, 10, 34],
+      "size": [
+        10,
+        10,
+        34
+      ],
       "segments": 6,
-      "at": [-42, 12, 42],
+      "at": [
+        -42,
+        12,
+        42
+      ],
       "mirror": "y"
     }
   ]

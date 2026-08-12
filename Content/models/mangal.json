@@ -1,127 +1,235 @@
 {
   "_comment": [
-    "The 'Mangal' — a tank wearing a shed. Authored from reference photographs at",
+    "The 'Mangal' \u2014 a tank wearing a welded shed. Authored from reference photographs at",
     "incoming/factions/russian-federation/units/mangal/ (gitignored: third-party rights, and",
-    "they inform PARAMETERS only — silhouette, proportion, palette — never pixels).",
+    "they inform PARAMETERS only \u2014 silhouette, proportion, palette \u2014 never pixels).",
     "",
-    "The side-profile still is the frame that matters. Everything about this vehicle is one",
-    "shape: a pitched-roof carapace covering the whole hull, overhanging forward, with the",
-    "barrel emerging from under its front edge. That is why `ridge` had to exist — `taper`",
-    "narrows both non-axis dimensions equally and so makes a pyramid where a roof is wanted.",
+    "SECOND PASS, after seeing it in game and against a better reference frame. Three things",
+    "the first pass got wrong, all of them shape rather than detail:",
     "",
-    "+X is FORWARD, matching how retail vehicles are laid out: AVLeopard's long axis is X.",
-    "Z is up, and z = 0 is the ground, so a part's `at` is the CENTRE of its box.",
+    "  1. IT IS WIDE. The shed is nearly as wide as it is tall and only about 1.5x longer than",
+    "     wide \u2014 a squat box, not the long narrow wedge the side-on still suggested.",
+    "  2. THE ROOF IS FLAT, or very nearly. The sides are VERTICAL and the top is a shallow",
+    "     pitch of corrugated sheet. The first pass read the side profile as a triangular prism",
+    "     and set ridgeWidth 0.18, which is a tent; the truth is a box with a lid on it, so the",
+    "     ridge is now a separate shallow part at ridgeWidth 0.78.",
+    "  3. THERE IS A TURRET. It traverses only a little, but it exists and it is visible",
+    "     through the open front. The first pass asserted the carapace was welded solid and",
+    "     that there was deliberately no TURRET sub-object \u2014 that was wrong, and it was wrong",
+    "     in the direction of making a limitation sound like a design decision.",
     "",
-    "THREE THINGS ARE DELIBERATELY NOT GEOMETRY. The cope-cage grid and the camo netting are",
-    "wire and mesh; at a 245-triangle peer budget (AVLeopard) they are a texture with alpha,",
-    "not vertices. Modelling them would spend the entire model on something invisible at RTS",
-    "camera distance.",
+    "+X is FORWARD, matching how retail vehicles are laid out. Z is up, z = 0 is the ground,",
+    "so a part's `at` is the CENTRE of its box.",
     "",
-    "AND NEITHER ARE THE ROAD WHEELS, which is the lesson this recipe cost. They were authored",
-    "first — six cylinders arrayed and mirrored, 240 of 436 triangles, 55% of the model — and",
-    "the render showed exactly none of them: a wheel 3 units thick at y = 8.5 sits INSIDE a",
-    "track box 5 units thick at the same y. Invisible, and more than half the budget. Retail",
-    "reaches the same conclusion by a different route: AVLeopard carries flat TREADSL01 /",
-    "TREADSR01 strips and puts the links and wheels in a scrolling texture. So the wheels go",
-    "to the texture and the triangles go to the bow, where they can be seen.",
-    "",
-    "AND THE CARAPACE IS NOT A TURRET. It is welded on and cannot rotate. That is a real trait",
-    "— a forward-only firing arc the sim can express — rather than a modelling shortcut, and",
-    "the part names below say so: there is no TURRET for an INI Draw module to bind."
+    "STILL DELIBERATELY NOT GEOMETRY: the cope-cage grid, the camo netting, and the road",
+    "wheels. All three are wire, mesh or repetition \u2014 texture work at a 245-triangle peer",
+    "budget. The wheels cost 55% of the first pass's triangles and were invisible inside the",
+    "track boxes; retail reaches the same conclusion, carrying flat tread strips with the links",
+    "painted on."
   ],
-
   "name": "MANGAL",
   "texture": "mangal.tga",
-  "budget": 420,
+  "budget": 520,
   "uvScale": 12.0,
-
-  "_texture": [
-    "TWO materials, not one texture with a stripe in it. Under cube projection a band in",
-    "texture space becomes a band at a fixed WORLD height, and crosses the tracks and the gun",
-    "barrel at that height too — which is what the first attempt did. An olive hull and a rust",
-    "roof are two surfaces on two parts, so each part names its own.",
-    "",
-    "Both TILE, and that is measured rather than assumed: 61.9% of the 3,790 retail meshes",
-    "carrying texcoords have UVs outside 0..1, so the engine wraps and a texture here is a",
-    "MATERIAL rather than an unwrapped atlas. Which is exactly what cube projection produces.",
-    "",
-    "Emitted by the same `zhasset model` run, under exactly the names the TEXTURE_NAME chunks",
-    "ask for, so mesh and texture cannot drift apart."
-  ],
   "textures": {
     "mangal.tga": {
-      "_": "Weathered olive drab. Small panels, because the reference's hull is slab armour",
-      "__": "and applique blocks rather than one pressed sheet.",
-      "size": 256, "seed": 4,
-      "base": [86, 92, 66], "panel": 40, "seam": 0.52, "wear": 0.34,
-      "rivets": true, "accent": [58, 62, 44]
+      "_": "Weathered olive drab for the hull and the shed's flanks. `ao` and `lip` are the",
+      "__": "two that matter: a retail 256x256 vehicle sheet is not more colourful than ours",
+      "___": "and not higher frequency \u2014 it has dark occlusion in every recess and a bright lip",
+      "____": "on every top edge, and that is what makes a flat polygon read as a panelled one.",
+      "size": 256,
+      "seed": 4,
+      "base": [
+        86,
+        92,
+        66
+      ],
+      "panel": 34,
+      "seam": 0.52,
+      "wear": 0.3,
+      "rivets": true,
+      "accent": [
+        58,
+        62,
+        44
+      ],
+      "ao": 0.5,
+      "lip": 0.4,
+      "hatches": 3,
+      "grilles": 2
     },
     "mangal_roof.tga": {
-      "_": "The corrugated shed roof: rust-brown, and NARROW panels at a strong seam contrast,",
-      "__": "which is what corrugation reads as once it is a texture rather than geometry.",
-      "size": 256, "seed": 9,
-      "base": [124, 72, 46], "panel": 14, "seam": 0.62, "wear": 0.42,
-      "rivets": false, "accent": [92, 50, 34]
+      "_": "Corrugated rust sheet. Narrow panels at strong occlusion IS corrugation once it is",
+      "__": "texture rather than geometry \u2014 the ribs are the shadow between the sheets.",
+      "size": 256,
+      "seed": 9,
+      "base": [
+        124,
+        72,
+        46
+      ],
+      "panel": [
+        16,
+        400
+      ],
+      "seam": 0.55,
+      "wear": 0.35,
+      "rivets": false,
+      "accent": [
+        92,
+        50,
+        34
+      ],
+      "ao": 0.55,
+      "lip": 0.45
     }
   },
-
   "parts": [
     {
-      "_": "Track runs. Boxes, not modelled links: the links AND the road wheels live in the",
-      "__": "texture, which is what AVLeopard's flat TREADSL01/TREADSR01 strips do. Mirrored",
-      "___": "across Y so one authored run gives both sides.",
+      "_": "Track runs, pushed out to the new width. Links and road wheels are painted, not",
+      "__": "modelled \u2014 see the note above.",
       "name": "TRACKS",
       "shape": "box",
-      "size": [47, 6, 8],
-      "at": [0, 10, 4],
+      "size": [
+        48,
+        7,
+        9
+      ],
+      "at": [
+        0,
+        13.5,
+        4.5
+      ],
       "mirror": "y",
-      "bevel": { "width": 0.6, "segments": 1 }
+      "bevel": {
+        "width": 0.6,
+        "segments": 1
+      }
     },
     {
-      "_": "The hull proper, mostly swallowed by the carapace — but it has to exist, or the",
-      "__": "shed floats between two track runs the moment the camera drops.",
+      "_": "The hull under the shed. Visible through the open front and whenever the camera",
+      "__": "drops, so it cannot be omitted however well the carapace hides it from above.",
       "name": "HULL",
       "shape": "box",
-      "size": [42, 19, 7],
-      "at": [0, 0, 9],
-      "taper": 0.9,
-      "bevel": { "width": 0.8, "segments": 1 }
+      "size": [
+        44,
+        24,
+        8
+      ],
+      "at": [
+        0,
+        0,
+        10
+      ],
+      "taper": 0.92,
+      "bevel": {
+        "width": 0.8,
+        "segments": 1
+      }
     },
     {
-      "_": "THE CARAPACE — the entire silhouette. The ridge runs along X so the roof slopes",
-      "__": "to both flanks, and ridgeWidth 0.18 leaves the narrow flat the reference shows",
-      "___": "instead of a knife edge. Lowered to sit ON the track line: the first attempt put",
-      "____": "it 13 units tall starting at z=13.5, which rendered as a tent on skis. The",
-      "_____": "reference is LONG and LOW — roughly 3:1 length to height, not 2:1.",
+      "_": "THE CARAPACE \u2014 a box with VERTICAL sides, not a prism. The front is cut clean",
+      "__": "through so the turret inside is visible, which is the single most recognisable",
+      "___": "thing about this vehicle and the one feature a texture genuinely cannot fake:",
+      "____": "the silhouette has to have a hole in it. Cut coordinates are LOCAL to the part.",
       "name": "CARAPACE",
+      "shape": "box",
+      "size": [
+        46,
+        34,
+        13
+      ],
+      "at": [
+        0,
+        0,
+        20
+      ],
+      "bevel": {
+        "width": 0.6,
+        "segments": 1
+      },
+      "cuts": [
+        {
+          "shape": "box",
+          "size": [
+            18,
+            26,
+            12
+          ],
+          "at": [
+            16,
+            0,
+            -2
+          ]
+        }
+      ]
+    },
+    {
+      "_": "The lid: a SHALLOW pitched roof of corrugated sheet, overhanging the box on every",
+      "__": "side. ridgeWidth 0.78 leaves a broad flat top \u2014 the reference's roof is barely",
+      "___": "peaked, and 0.18 (the first pass) made a tent.",
+      "name": "ROOF",
       "texture": "mangal_roof.tga",
       "shape": "ridge",
-      "size": [52, 21, 15],
-      "at": [2, 0, 16.5],
+      "size": [
+        50,
+        37,
+        6
+      ],
+      "at": [
+        0,
+        0,
+        29
+      ],
       "ridgeAxis": "x",
-      "ridgeWidth": 0.18,
-      "bevel": { "width": 0.5, "segments": 1 }
+      "ridgeWidth": 0.78,
+      "bevel": {
+        "width": 0.4,
+        "segments": 1
+      }
     },
     {
-      "_": "Bow plate. A wedge under the carapace's front overhang, where the reference has",
-      "__": "the sloped glacis and the mine plough mount. This is where the wheels' triangles",
-      "___": "went, and unlike the wheels it is visible from every angle the game uses.",
-      "name": "BOW",
-      "shape": "wedge",
-      "size": [12, 22, 9],
-      "at": [22, 0, 6],
-      "bevel": { "width": 0.5, "segments": 1 }
+      "_": "TURRET. Its own named sub-object, because that is how the engine finds something",
+      "__": "to rotate \u2014 a merged mesh cannot traverse however good it looks. Sitting in the",
+      "___": "carapace's cut-out where the reference shows it.",
+      "name": "TURRET",
+      "shape": "box",
+      "size": [
+        18,
+        20,
+        8
+      ],
+      "at": [
+        14,
+        0,
+        17
+      ],
+      "taper": 0.82,
+      "bevel": {
+        "width": 0.6,
+        "segments": 1
+      }
     },
     {
-      "_": "Gun. Emerges from under the carapace lip rather than from a turret face, and low",
-      "__": "— in the reference it clears the bow by very little. rot [0,90,0] swings the",
-      "___": "cylinder's Z onto X so it points forward.",
+      "_": "Gun, out of the turret and through the opening.",
       "name": "BARREL",
       "shape": "cylinder",
-      "size": [3.4, 3.4, 24],
+      "size": [
+        3.2,
+        3.2,
+        26
+      ],
       "segments": 6,
-      "at": [32, 0, 13],
-      "rot": [0, 90, 0]
+      "at": [
+        34,
+        0,
+        17
+      ],
+      "rot": [
+        0,
+        90,
+        0
+      ]
     }
   ]
 }
