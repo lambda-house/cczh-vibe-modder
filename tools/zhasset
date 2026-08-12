@@ -4122,14 +4122,21 @@ def _paint_tread(w, h, spec):
                           0.40 if d > 0.62 else
                           1.10 if d > 0.28 else 0.55)
 
-            # Link plates: a bright edge and its own shadow, repeated along the belt.
+            # Link plates: a bright lip, the plate, and the shadowed gap it falls into.
+            #
+            # EVERY FEATURE IS A FRACTION OF THE PITCH, not a fixed pixel count. A one-pixel
+            # gap is 11% of a nine-pixel link and 3% of a thirty-two-pixel one, so coarsening
+            # the pitch to make the belt readable made each link's edges finer instead — which
+            # is precisely the complaint, a pattern too fine to tell whether it is moving.
             m = u % pitch
-            if m == 0:
-                k *= 0.42                                # the gap between links
-            elif m == 1:
-                k *= 1.28                                # the lit lip of the next link
-            elif m == pitch - 1:
-                k *= 0.78                                # the plate falling away into the gap
+            gap = max(1, pitch // 5)
+            lip = max(1, pitch // 6)
+            if m < gap:
+                k *= 0.38                                # the shadowed gap between links
+            elif m < gap + lip:
+                k *= 1.34                                # the lit leading edge of the next link
+            elif m > pitch - 1 - lip:
+                k *= 0.74                                # the plate falling away into the gap
             # The belt's own edges, in shadow. Scaled to the sheet rather than a fixed 2 px:
             # at 128 across, two pixels was 1.5% of the belt and invisible.
             edge = max(2, across // 12)

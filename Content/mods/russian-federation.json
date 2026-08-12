@@ -32,11 +32,23 @@
     // THE MANGAL. A tank wearing a welded shed — see Content/models/mangal.json for the
     // reference read and what the render cost it.
     //
-    // The carapace cannot rotate, and that is the unit's character rather than a modelling
-    // shortcut: heavy frontal protection, no turret. We do not yet HAVE a firing-arc field to
-    // express it with, so today it is armour and slow traverse standing in for a fixed gun.
-    // Do not quietly add an arc field to make this comment true — either model it properly or
-    // leave the gap stated.
+    // THE GUN IS FIXED, and that is now literally true rather than approximated. The earlier
+    // note here said the unit was "armour and slow traverse standing in for a fixed gun" and
+    // warned against inventing an arc field to make itself true. The resolution was neither:
+    // it was reading TurretAIData::buildFieldParse and finding that ZH HAS NO ARC AT ALL.
+    // Eighteen keys, none bounding azimuth — MinIdleScanAngle/MaxIdleScanAngle cover the idle
+    // wander only, TurretFireAngleSweep is a sweep while firing, and the weapon's
+    // MinTargetPitch/MaxTargetPitch are elevation. A gun is 360 degrees or it is fixed.
+    //
+    // So the Mangal has no turret. It slews its hull to aim, at 60 deg/sec — the Overlord's
+    // rate, the heaviest thing retail ships, against 180 for a Crusader. That is the whole
+    // character of the unit: brutal to anything in front of it and helpless the moment
+    // something gets on its flank, because bringing the gun round means committing the tank.
+    //
+    // None of it is declared here. The MODEL carries it: the geometry behind the opening is
+    // named CASEMATE rather than TURRET, so no tool infers a turret from it, and the compiler
+    // derives the hull rate from belts-and-no-turret exactly as it derives W3DTankDraw from
+    // belts. Renaming that part back to TURRET would silently restore the 360 gun.
     "mangal": {
       "faction": "russian_federation", "cost": 1400, "buildSeconds": 18,
       "kindOf": ["VEHICLE", "SELECTABLE", "CAN_ATTACK"],

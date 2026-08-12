@@ -246,7 +246,29 @@ public static class ZhCompiler
             // was copied from LocomotorSet.h precisely so this mapping needs no table.
             sb.AppendLine($"  Surfaces = {SurfacesOf(u)}");
             sb.AppendLine($"  Speed = {F(spd)}");
-            sb.AppendLine("  TurnRate = 180");
+
+            // A TRACKED VEHICLE WITH NO TURRET AIMS BY TURNING ITS WHOLE BODY, so for that one
+            // shape the hull's turn rate stops being handling and becomes the weapon's traverse
+            // speed. At 180 deg/sec — half a rotation a second — a casemate gun bears on a new
+            // target as fast as a turret would, and the entire trade-off it exists to express
+            // disappears.
+            //
+            // 60 is retail's, not ours: it is the Overlord's, the heaviest thing they ship,
+            // against 180 for a Crusader or a Scorpion.
+            //
+            // Derived from the mesh for the same reason W3DTankDraw is — belts and no turret is
+            // a fact about the model, and an author restating it in content is an author who
+            // can contradict it. Narrow on purpose: it cannot reach infantry, and it cannot
+            // reach a wheeled gun truck, because neither has belts.
+            // The locomotor pass runs ahead of the object pass, so it resolves the model name
+            // itself. A variant inherits its parent's model, exactly as the object pass has it.
+            if (!zh.Models.TryGetValue(u.Id, out var lm)
+                && !(u.IsVariant && zh.Models.TryGetValue(u.RosterId, out lm)))
+                lm = "";
+            var lsubs = SubObjects(lm);
+            bool casemate = lsubs.Any(n => n.StartsWith("TREADS", StringComparison.OrdinalIgnoreCase))
+                            && !lsubs.Any(n => n.Equals("TURRET", StringComparison.OrdinalIgnoreCase));
+            sb.AppendLine($"  TurnRate = {(casemate ? 60 : 180)}");
             sb.AppendLine("  Acceleration = 1000");
             sb.AppendLine("  Braking = 1000");
             sb.AppendLine("  MinTurnSpeed = 0");
@@ -260,7 +282,8 @@ public static class ZhCompiler
             // the Crusader drops 30 -> 25. Without these the engine has nothing to slow down
             // to, so damage is invisible in how a unit handles.
             sb.AppendLine($"  SpeedDamaged = {F(spd * 0.83)}");
-            sb.AppendLine("  TurnRateDamaged = 180");
+            // Retail leaves both equal on every tank it ships, the Overlord included.
+            sb.AppendLine($"  TurnRateDamaged = {(casemate ? 60 : 180)}");
             sb.AppendLine("  AccelerationDamaged = 1000");
 
             // THE SUSPENSION, and it is a VISUAL system we had simply never emitted.

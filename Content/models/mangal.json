@@ -18,6 +18,17 @@
     "     that there was deliberately no TURRET sub-object \u2014 that was wrong, and it was wrong",
     "     in the direction of making a limitation sound like a design decision.",
     "",
+    "THIRD PASS, one correction and it is again the SILHOUETTE rather than any detail: the",
+    "shed is built AROUND the tank, not perched on top of it. Its walls come down past the",
+    "hull and hang over the tracks to about their mid-height — which is the whole visual",
+    "idea of the thing, an armoured box with a vehicle somewhere inside it. Two passes had",
+    "the carapace floor at z = 13.5, clear of tracks that stop at z = 9, so the tank read as",
+    "a shed sitting on a chassis with daylight between them.",
+    "",
+    "The wall is now 36 wide against tracks 34 across their outer faces. That one unit of",
+    "overhang per side is not styling: coplanar faces Z-FIGHT, and a skirt flush with the",
+    "track it covers flickers between the two surfaces as the camera moves.",
+    "",
     "+X is FORWARD, matching how retail vehicles are laid out. Z is up, z = 0 is the ground,",
     "so a part's `at` is the CENTRE of its box.",
     "",
@@ -109,7 +120,13 @@
         60,
         52
       ],
-      "linkPitch": 16,
+      "_______________": "COARSE ON PURPOSE. At uvScale 16 this sheet repeats three times",
+      "________________": "along the 48-long run and a pitch of 32 gives four links per",
+      "_________________": "repeat — twelve links on the vehicle, each four world units. The",
+      "__________________": "earlier thirty-two were a fine hatch: correct as a surface, and",
+      "___________________": "impossible to tell apart from a stationary one when it scrolled.",
+      "____________________": "A moving texture has to be legible at the speed it moves.",
+      "linkPitch": 32,
       "wheels": 0
     },
     "mangal_house.tga": {
@@ -150,6 +167,7 @@
       "name": "TREADSL",
       "shape": "box",
       "texture": "mangal_tread.tga",
+      "uvScale": 16,
       "size": [
         48,
         7,
@@ -170,6 +188,7 @@
       "name": "TREADSR",
       "shape": "box",
       "texture": "mangal_tread.tga",
+      "uvScale": 16,
       "size": [
         48,
         7,
@@ -207,22 +226,30 @@
       }
     },
     {
-      "_": "THE CARAPACE \u2014 a box with VERTICAL sides, not a prism. The front is cut clean",
-      "__": "through so the turret inside is visible, which is the single most recognisable",
-      "___": "thing about this vehicle and the one feature a texture genuinely cannot fake:",
-      "____": "the silhouette has to have a hole in it. Cut coordinates are LOCAL to the part.",
+      "_": "THE CARAPACE \u2014 a box with VERTICAL sides, not a prism, and it goes DOWN. It spans",
+      "__": "z 4.5 to 26.5: from the middle of the track runs to the eaves, so the hull and the",
+      "___": "inner half of each track are inside it and the outer half is behind a skirt. That",
+      "____": "is what 'a tank wearing a welded shed' has to look like from the side \u2014 two passes",
+      "_____": "left its floor at 13.5, above tracks that stop at 9, and the daylight between them",
+      "______": "read as two separate objects.",
+      "_______": "",
+      "________": "The front is cut clean through so the turret inside is visible, which is the one",
+      "_________": "feature a texture genuinely cannot fake: the silhouette has to have a hole in it.",
+      "__________": "Cut coordinates are LOCAL to the part, so the cut's z tracks the part's centre \u2014",
+      "___________": "it moved with the box rather than staying where it was.",
       "name": "CARAPACE",
       "shape": "box",
       "size": [
         46,
-        34,
-        13
+        36,
+        22
       ],
       "at": [
         0,
         0,
-        20
+        15.5
       ],
+      "taper": 0.58,
       "bevel": {
         "width": 0.6,
         "segments": 1
@@ -231,34 +258,38 @@
         {
           "shape": "box",
           "size": [
-            18,
-            26,
-            12
+            13,
+            22,
+            11
           ],
           "at": [
-            16,
+            20,
             0,
-            -2
+            0.5
           ]
         }
       ]
     },
     {
-      "_": "The lid: a SHALLOW pitched roof of corrugated sheet, overhanging the box on every",
-      "__": "side. ridgeWidth 0.78 leaves a broad flat top \u2014 the reference's roof is barely",
-      "___": "peaked, and 0.18 (the first pass) made a tent.",
+      "_": "The lid, and it now CAPS A TAPER rather than sitting on a vertical box. The video",
+      "__": "reference settles an argument the first two passes both got wrong in opposite",
+      "___": "directions: the shed is neither a tent (pass one, ridgeWidth 0.18) nor a flat-",
+      "____": "sided crate (pass two). It is a truncated pyramid \u2014 big flat panels sloping down",
+      "_____": "and OUTWARD from a narrow ridge to a skirt wider than the tracks, which is what",
+      "______": "makes the front view a trapezoid. The slope is the CARAPACE's taper; this part is",
+      "_______": "only the shallow peak sitting on its narrow top (27 x 21 after tapering).",
       "name": "ROOF",
       "texture": "mangal_roof.tga",
       "shape": "ridge",
       "size": [
-        50,
-        37,
-        6
+        30,
+        24,
+        5
       ],
       "at": [
         0,
         0,
-        29
+        28.4
       ],
       "ridgeAxis": "x",
       "ridgeWidth": 0.78,
@@ -268,10 +299,19 @@
       }
     },
     {
-      "_": "TURRET. Its own named sub-object, because that is how the engine finds something",
-      "__": "to rotate \u2014 a merged mesh cannot traverse however good it looks. Sitting in the",
-      "___": "carapace's cut-out where the reference shows it.",
-      "name": "TURRET",
+      "_": "THE CASEMATE, and the name is the decision. It was called TURRET, and that name is",
+      "__": "read: `zhasset artprofile` declares a turret when a part is called exactly TURRET,",
+      "___": "and the compiler then emits both an AIUpdateInterface Turret block and a",
+      "____": "`Turret = TURRET` draw line off the back of it.",
+      "_____": "",
+      "______": "ZH HAS NO TURRET ARC. TurretAIData::buildFieldParse carries eighteen keys and not",
+      "_______": "one bounds azimuth \u2014 MinIdleScanAngle/MaxIdleScanAngle limit the idle wander only,",
+      "________": "TurretFireAngleSweep is a sweep while firing, and the weapon's MinTargetPitch /",
+      "_________": "MaxTargetPitch are elevation. A gun is 360 degrees or it is fixed. So a vehicle",
+      "__________": "whose gun is welded inside a box of armour has to be FIXED, and the piece of",
+      "___________": "geometry behind the opening must not be called TURRET \u2014 a part named for a thing",
+      "____________": "it cannot do is a lie in the exact place four different tools go looking.",
+      "name": "CASEMATE",
       "shape": "box",
       "size": [
         18,
@@ -279,9 +319,9 @@
         8
       ],
       "at": [
-        14,
+        4,
         0,
-        17
+        16
       ],
       "taper": 0.82,
       "bevel": {
@@ -306,10 +346,14 @@
         1.4,
         3.6
       ],
+      "_x": "The wall SLOPES now, so a flat plate's standoff is a function of its height: the",
+      "_y": "half-width runs 18 at the skirt to 10.4 at the ridge. At z = 13 the wall is at",
+      "_z": "15.1, and a 1.4-thick plate centred on 15.4 sits roughly flush across its own",
+      "_w": "3.6 of rise. Left at the old y = 18.3 it floated five units clear in mid-air.",
       "at": [
         -11,
-        17.3,
-        18.5
+        15.4,
+        13
       ],
       "mirror": "y",
       "bevel": {
@@ -328,9 +372,9 @@
       ],
       "segments": 6,
       "at": [
-        34,
+        27,
         0,
-        17
+        16
       ],
       "rot": [
         0,

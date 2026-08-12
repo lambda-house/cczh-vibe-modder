@@ -183,6 +183,12 @@ def _cut(ob, spec):
 
 
 def build_part(spec, uv_scale):
+    # A PART MAY SET ITS OWN UV SCALE, which is how many times its sheet repeats across it.
+    # The model-wide value keeps texel density uniform between parts and that is still the
+    # default and still the right thing for panelled surfaces — but a tread is not sampling a
+    # generic material, it is sampling a PATTERN whose features have to stay legible while it
+    # scrolls. At the shared scale the links came out finer than the eye can track.
+    uv_scale = float(spec.get("uvScale", uv_scale))
     ob = _prim(spec)
     ob.name = spec["name"]
     ob.data.name = spec["name"]

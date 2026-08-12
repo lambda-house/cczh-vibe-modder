@@ -3101,6 +3101,33 @@ if "OkToChangeModelColor = Yes" not in tank:
     fail.append("rf_mangal has HOUSECOLOR submeshes but did not opt into recolouring")
 if "W3DTankDraw" in base:
     fail.append("the base got a TANK draw module — the choice is not coming from the mesh")
+
+# THE GUN IS FIXED, and it is fixed because the geometry behind the opening is named CASEMATE
+# rather than TURRET. ZH has no arc field at all — TurretAIData::buildFieldParse bounds pitch
+# and the idle scan and nothing else — so 360 or nothing is the whole choice, and renaming
+# that one part is what makes it. Without this the rename is silent in both directions.
+if re.search(r"^\s*Turret\s*$", tank, re.M):
+    fail.append("rf_mangal got an AI Turret block — its gun is meant to be fixed")
+if re.search(r"^\s*Turret\s*=", tank, re.M):
+    fail.append("rf_mangal got a Turret draw bone — the casemate would spin")
+if not re.search(r"WeaponLaunchBone\s*=\s*PRIMARY\s+BARREL", tank):
+    fail.append("rf_mangal lost its launch bone along with the turret — it fires from nowhere")
+# A turretless hull aims by slewing, so the hull rate IS the traverse rate. 60 is the
+# Overlord's; 180 (a Crusader's) would give a casemate gun a turret's response for free.
+loco = "".join(open(f, encoding="latin-1").read().replace("\r", "")
+               for f in glob.glob(f"{sys.argv[1]}/Data/INI/Locomotor/*.ini"))
+m = re.search(r"^Locomotor rf_mangalLoco\b(.*?)^End", loco, re.S | re.M)
+if not m:
+    fail.append("no locomotor emitted for rf_mangal")
+elif not re.search(r"TurnRate\s*=\s*60\b", m.group(1)):
+    fail.append("rf_mangal turns at a turreted tank's rate although it has no turret")
+
+# NOT VACUOUS: the same compile emits units that DO have turrets, and they must still get one.
+# A check that only ever reports absence cannot tell "correctly fixed" from "turrets broke".
+turreted = [n for n, b in objs.items() if re.search(r"^\s*Turret\s*$", b, re.M)]
+if not turreted:
+    fail.append("NOTHING in this pack got a turret — the fixed-gun checks above prove nothing")
+
 if fail:
     print("  THE EMITTED INI DOES NOT MATCH THE MESH:")
     for f in fail:
@@ -3108,6 +3135,8 @@ if fail:
     sys.exit(1)
 print("  the compiler read the mesh: tank draw + tread rate + track marks on the vehicle, "
       "plain model draw on the structure")
+print(f"  CASEMATE not TURRET: no turret block, no turret bone, hull slews at 60 "
+      f"({len(turreted)} turreted object(s) in the same pack still get theirs)")
 PYINI
   rm -rf "$TR" "$RFT"; trap - EXIT
 fi
