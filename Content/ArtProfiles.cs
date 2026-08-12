@@ -62,13 +62,45 @@ public sealed class ArtProfiles
     /// state, not an error: the catalogue is generated from a local retail install that a
     /// given checkout may not have.
     /// </summary>
-    public static ArtProfiles Load(string? path)
+    /// <summary>
+    /// Load, then fold in any profile catalogues sitting beside a pack's own art.
+    ///
+    /// <para>Profiles are MEASURED for adopted retail art and DECLARED for authored art, and
+    /// the two live in different places: the measured catalogue is generated once into
+    /// <c>reference/</c>, while <c>zhasset models</c> writes a declared one beside every mesh
+    /// it builds. Loading only the first means an authored model has no profile at all — the
+    /// compiler falls back to guessed geometry and emits no turret, no launch bone and no
+    /// muzzle flash, so a correctly rigged model arrives completely static.</para>
+    ///
+    /// <para>Later files win, so a pack's declaration overrides a measurement of the same
+    /// name — which is the right way round: we chose those dimensions.</para>
+    /// </summary>
+    public static ArtProfiles Load(string? path, IEnumerable<string>? alsoBeside = null)
     {
         var a = new ArtProfiles();
-        if (path is null || !File.Exists(path)) return a;
+        foreach (var p in Paths(path, alsoBeside)) a.Merge(p);
+        return a;
+    }
+
+    private static IEnumerable<string> Paths(string? path, IEnumerable<string>? alsoBeside)
+    {
+        if (path is not null) yield return path;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var art in alsoBeside ?? Enumerable.Empty<string>())
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(art));
+            if (dir is null || !seen.Add(dir)) continue;
+            yield return Path.Combine(dir, "art-profiles.json");
+        }
+    }
+
+    private void Merge(string? path)
+    {
+        var a = this;
+        if (path is null || !File.Exists(path)) return;
 
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        if (!doc.RootElement.TryGetProperty("models", out var models)) return a;
+        if (!doc.RootElement.TryGetProperty("models", out var models)) return;
 
         foreach (var m in models.EnumerateObject())
         {
@@ -94,7 +126,6 @@ public sealed class ArtProfiles
                 Kind = S("kind"),
             };
         }
-        return a;
     }
 
     /// <summary>

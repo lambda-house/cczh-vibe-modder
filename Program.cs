@@ -189,7 +189,8 @@ public static class Program
         // Measured contracts for adopted meshes. Generated locally by `zhasset artprofile`
         // and gitignored, so absence is normal — the compiler falls back to defaults and
         // reports which meshes it had to guess for.
-        var art = ArtProfiles.Load(Opt(args, "--art-profiles", "reference/art-profiles.json"));
+        var art = ArtProfiles.Load(Opt(args, "--art-profiles", "reference/art-profiles.json"),
+                ContentDb.LoadZhTarget(contentPath).Art);
         if (art.Count > 0) Console.WriteLine($"art profiles: {art.Count} adoptable meshes measured");
         else Console.WriteLine("art profiles: none loaded — run `tools/zhasset artprofile` " +
                                "or geometry, bones and turrets fall back to guesses");

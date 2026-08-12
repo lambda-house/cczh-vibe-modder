@@ -3218,6 +3218,32 @@ def _w3d_meshes(buf):
     which is exactly the association a renderer needs. (`cmd_w3d` sums them on purpose; it is
     reporting totals, not rebuilding geometry.)
     """
+    # THE BONE TRANSFORMS, and the exporter must apply them or it shows a lie. A rigged model
+    # stores each mesh's vertices in ITS BONE's space; the engine composes
+    # world = boneTransform * vertex. A reader that takes the vertices raw draws every part
+    # collapsed onto its own pivot — the same class of mistake as ignoring a glTF node
+    # transform, arriving from the other direction now that we emit hierarchies ourselves.
+    pivots, bone_of = [], {}
+    for ctype, payload, kids in w3d_tree(buf):
+        if ctype == 0x0100:                                        # HIERARCHY
+            def scanh(ns):
+                for t, p, k in ns:
+                    if t == 0x0102:                                # PIVOTS, 60 bytes each
+                        for i in range(len(p) // 60):
+                            b = i * 60
+                            pivots.append(struct.unpack_from("<3f", p, b + 20))
+                    scanh(k)
+            scanh(kids)
+        elif ctype == 0x0700:                                      # HLOD
+            def scanl(ns):
+                for t, p, k in ns:
+                    if t == 0x0704:                                # HLOD_SUB_OBJECT
+                        idx = struct.unpack_from("<I", p, 0)[0]
+                        nm = p[4:].split(b"\0")[0].decode("latin-1")
+                        bone_of[nm.split(".")[-1].upper()] = idx
+                    scanl(k)
+            scanl(kids)
+
     out = []
     for ctype, _payload, kids in w3d_tree(buf):
         if ctype != 0x0000:                                        # MESH
@@ -3251,6 +3277,10 @@ def _w3d_meshes(buf):
 
         scan(kids)
         if m["verts"] and m["tris"]:
+            bi = bone_of.get(m["name"].upper(), 0)
+            if 0 <= bi < len(pivots) and pivots[bi] != (0.0, 0.0, 0.0):
+                ox, oy, oz = pivots[bi]
+                m["verts"] = [(v[0] + ox, v[1] + oy, v[2] + oz) for v in m["verts"]]
             out.append(m)
     return out
 
@@ -3700,10 +3730,32 @@ def cmd_w3dfrom(a):
     if len(set(names)) != len(names):                  # collisions would make the HLOD ambiguous
         names = [base if len(prims) == 1 else f"{base}{i:02d}" for i in range(len(prims))]
 
+    # Each part's centroid, in W3D space. Used twice and they must agree: as the pivot's
+    # translation, and as the offset the mesh is rebased BY. The loader composes
+    # world = boneTransform * vertex, so a mesh left in model space under a translated bone is
+    # displaced by exactly that translation — the part ends up twice as far from the origin as
+    # the recipe asked for, which reads as a scale bug rather than a rigging one.
+    # MODEL-space bounds, captured before any rebasing, and handed back on the namespace.
+    # The art profile has to be stated in model space; once vertices are rebased into their
+    # bones, measuring the file gives each part's local extent instead and the profile
+    # collapses to roughly the size of the largest single part.
+    _mv = [_zup(*v) for p in prims for v in p["verts"]]
+    a.bounds = ([min(v[k] for v in _mv) for k in range(3)],
+                [max(v[k] for v in _mv) for k in range(3)])
+
+    rigged = len(prims) > 1
+    centres = []
+    for p in prims:
+        vs = [_zup(*v) for v in p["verts"]]
+        centres.append(tuple(
+            (min(v[k] for v in vs) + max(v[k] for v in vs)) / 2.0 for k in range(3))
+            if rigged else (0.0, 0.0, 0.0))
+
     nodes, total_v, total_t = [], 0, 0
     for i, p in enumerate(prims):
-        verts = [_zup(*v) for v in p["verts"]]
-        norms = [_zup(*n) for n in p["normals"]]
+        c = centres[i]
+        verts = [tuple(a - b for a, b in zip(_zup(*v), c)) for v in p["verts"]]
+        norms = [_zup(*n) for n in p["normals"]]          # directions: unaffected by translation
         uvs = [(u, 1.0 - v) for u, v in p["uvs"]]
         # A part's own material wins; the recipe- or CLI-level texture is the fallback for
         # parts that name none. The other precedence would make a two-tone model impossible to
@@ -3713,12 +3765,42 @@ def cmd_w3dfrom(a):
         total_v += len(verts); total_t += len(p["tris"])
 
     if len(prims) > 1:
-        # More than one mesh needs an HLOD to be assembled: it is what names the sub-objects
-        # and states which render object they belong to. A multi-mesh .w3d without one loads
-        # as several unrelated pieces the engine never puts together.
-        sub = b"".join(_chunk(0x0704, struct.pack("<I", 0)
+        # A MULTI-PART MODEL NEEDS A HIERARCHY, NOT JUST AN HLOD. *This was live and it is why
+        # nothing on our models could move:* the HLOD named a hierarchy that was never emitted
+        # and hung every sub-object off bone 0, so the whole model was one rigid lump. A
+        # retail tank carries its own HIERARCHY in the same file — AVLeopard has 21 pivots —
+        # and `Turret = Turret` in the INI names one of them. Without a pivot per part there
+        # is nothing for the engine to rotate, however correctly the parts are named.
+        #
+        # Each part gets a pivot at its own CENTROID, parented to the root. The centroid is
+        # what makes rotation look right: a turret pivoting about the model origin swings
+        # through the hull, while one pivoting about its own centre spins in place.
+        piv = (_name16("ROOTTRANSFORM") + struct.pack("<I", 0xFFFFFFFF)
+               + struct.pack("<3f", 0, 0, 0) + struct.pack("<3f", 0, 0, 0)
+               + struct.pack("<4f", 0, 0, 0, 1))
+        for nm, c in zip(names, centres):
+            # Parent 0 across the board: a flat tree. A real articulated chain (barrel
+            # parented to turret, so it swings with it) is a later refinement and wants the
+            # recipe to state the parenting rather than have it guessed from geometry.
+            piv += (_name16(nm) + struct.pack("<I", 0)
+                    + struct.pack("<3f", *c) + struct.pack("<3f", 0, 0, 0)
+                    + struct.pack("<4f", 0, 0, 0, 1))
+        hier = (_chunk(W3D_HIER_HEADER,
+                       struct.pack("<I", 0x00040001) + _name16(base)
+                       + struct.pack("<I", len(names) + 1) + struct.pack("<3f", 0, 0, 0))
+                + _chunk(W3D_PIVOTS, piv))
+        nodes.append((W3D_HIERARCHY, None, w3d_tree(hier)))
+
+        # The HLOD assembles the pieces and now binds each to ITS OWN pivot — index i+1,
+        # because pivot 0 is ROOTTRANSFORM. Emitting 0 for every sub-object, which is what
+        # this did before, is what made the hierarchy pointless even once it existed.
+        #
+        # A mesh's vertices are already in model space, so a pivot with a non-zero translation
+        # would DOUBLE the offset unless the mesh is re-centred into its bone. That is why the
+        # vertices are rebased below and not here.
+        sub = b"".join(_chunk(0x0704, struct.pack("<I", i + 1)
                               + f"{base}.{n}".encode("latin-1")[:31].ljust(32, b"\0"))
-                       for n in names)
+                       for i, n in enumerate(names))
         lod = _chunk(0x0703, struct.pack("<If", len(prims), 3.4028235e38)) + sub
         hl = (_chunk(0x0701, struct.pack("<II", 0x00010000, 1) + _name16(base) + _name16(base))
               + _chunk(0x0702, lod, container=True))
@@ -4042,12 +4124,15 @@ def cmd_model(a):
     # adopted art and DECLARED for authored art, and the compiler gets one answer either way.
     # Measured off the BUILT .w3d rather than off the glTF, so the numbers are already in the
     # game's own Z-up frame and there is no axis convention left to get wrong.
-    verts = []
-    for _d, cname, _t, _sz, p in w3d_walk(open(a.out, "rb").read()):
-        if cname == "VERTICES":
-            verts += [struct.unpack_from("<3f", p, i * 12) for i in range(len(p) // 12)]
-    lo = [min(v[i] for v in verts) for i in range(3)]
-    hi = [max(v[i] for v in verts) for i in range(3)]
+    if getattr(ns, "bounds", None):
+        lo, hi = ns.bounds
+    else:
+        verts = []
+        for _d, cname, _t, _sz, p in w3d_walk(open(a.out, "rb").read()):
+            if cname == "VERTICES":
+                verts += [struct.unpack_from("<3f", p, i * 12) for i in range(len(p) // 12)]
+        lo = [min(v[i] for v in verts) for i in range(3)]
+        hi = [max(v[i] for v in verts) for i in range(3)]
     major = max(abs(lo[0]), abs(hi[0]))
     minor = max(abs(lo[1]), abs(hi[1]))
     height = hi[2] - lo[2]
@@ -4055,11 +4140,19 @@ def cmd_model(a):
     data = {"models": {}}
     if os.path.exists(cat):
         data = json.load(open(cat))
+    # DECLARE THE RIG. A part named TURRET now has a pivot of its own (see the hierarchy the
+    # writer emits), so the engine has something to rotate — but only if the INI says to, and
+    # the compiler learns that from here. Same for the gun: a BARREL part is what recoils and
+    # what a shot launches from. Without these the model is correctly rigged and completely
+    # static, which looks exactly like not being rigged at all.
+    partnames = {(p.get("name") or "").upper() for p in recipe.get("parts", [])}
+    turret = "TURRET" if "TURRET" in partnames else None
+    gun = "BARREL" if "BARREL" in partnames else turret
     data.setdefault("models", {})[name] = {
         "model": name, "geometry": "BOX",
         "majorRadius": f"{major:.1f}", "minorRadius": f"{minor:.1f}", "height": f"{height:.1f}",
-        "isSmall": None, "turret": False,
-        "launchBone": None, "fireFXBone": None, "muzzleFlash": None,
+        "isSmall": None, "turret": turret is not None, "turretBone": turret,
+        "launchBone": gun, "fireFXBone": gun, "muzzleFlash": None,
         "unitCreatePoint": None, "naturalRallyPoint": None,
         "kind": "authored", "usedBy": [f"(authored from {os.path.basename(a.recipe)})"],
     }

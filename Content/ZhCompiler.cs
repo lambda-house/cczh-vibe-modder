@@ -234,6 +234,34 @@ public static class ZhCompiler
             // Values here are ones retail actually uses, not ones that read correctly.
             sb.AppendLine("  ZAxisBehavior = NO_Z_MOTIVE_FORCE");
             sb.AppendLine("  Appearance = TREADS");
+
+            // DAMAGED VARIANTS. A damaged vehicle moves worse, and the ratio is theirs:
+            // the Crusader drops 30 -> 25. Without these the engine has nothing to slow down
+            // to, so damage is invisible in how a unit handles.
+            sb.AppendLine($"  SpeedDamaged = {F(spd * 0.83)}");
+            sb.AppendLine("  TurnRateDamaged = 180");
+            sb.AppendLine("  AccelerationDamaged = 1000");
+
+            // THE SUSPENSION, and it is a VISUAL system we had simply never emitted.
+            //
+            // The chassis rides a simulated spring: it lifts under power, noses down under
+            // braking, and leans into corners, all damped. That is a large part of why a
+            // retail tank reads as a heavy object rather than a sliding sprite — and it costs
+            // no art, no triangles and no new asset. Measured off CrusaderLocomotor rather
+            // than invented; these are the numbers a shipped tank actually uses.
+            //
+            // Emitted for every mobile unit because everything we can currently author is a
+            // ground vehicle (Appearance is hardcoded TREADS just above). The day infantry or
+            // aircraft arrive, this block and that line move together — a walking man with
+            // suspension would pitch and roll like a car.
+            sb.AppendLine("  AccelerationPitchLimit = 5");
+            sb.AppendLine("  DecelerationPitchLimit = 5");
+            sb.AppendLine("  PitchStiffness = 0.05");
+            sb.AppendLine("  RollStiffness = 0.025");
+            sb.AppendLine("  PitchDamping = 0.8");
+            sb.AppendLine("  RollDamping = 0.3");
+            sb.AppendLine("  ForwardAccelerationPitchFactor = 0.3");
+            sb.AppendLine("  LateralAccelerationRollFactor = 0.33");
             sb.AppendLine("End").AppendLine();
             r.Locomotors++;
         }
