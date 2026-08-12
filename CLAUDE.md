@@ -346,8 +346,8 @@ profiles cannot be derived · 16 map objects · 17 authored FX · 19 authored gr
 Open: **audio** — the last untouched category, and 0% of the simulation. And the **lockstep
 session layer**, which was always last.
 
-*Per-slice evidence, and what each cost to learn, is in `docs/ROADMAP.md`. The extracted model
-`tools/zhasset` produces is specified in `docs/ZERO-HOUR-MODEL.md`.*
+*What shipped and the measurement behind it: `docs/HISTORY.md`. What is still open:
+`docs/ROADMAP.md`. What `tools/zhasset` produces: `docs/ZERO-HOUR-MODEL.md`.*
 
 **Deliberately out, on evidence:** terrain types as content (ZH's are inert — 291 blocks, one
 call site, a flag nothing sets); prerequisite OR-expressions; slope-modulated speed; elevation
