@@ -3760,8 +3760,14 @@ def cmd_w3dfrom(a):
         # A part's own material wins; the recipe- or CLI-level texture is the fallback for
         # parts that name none. The other precedence would make a two-tone model impossible to
         # express, since one --texture would flatten every part to the same surface.
+        # In ATLAS mode every part samples the one sheet, so the recipe-level name wins; the
+        # per-part name has stopped meaning a separate file and now selects which material
+        # fills that part's rectangle. Outside atlas mode the per-part material still wins,
+        # because that is what makes a two-tone vehicle expressible.
+        tex = (a.texture if getattr(a, "force_texture", False)
+               else (p["texture"] or a.texture))
         nodes.append(_w3d_mesh_node(names[i], base if len(prims) > 1 else "",
-                                    verts, norms, uvs, p["tris"], p["texture"] or a.texture))
+                                    verts, norms, uvs, p["tris"], tex))
         total_v += len(verts); total_t += len(p["tris"])
 
     if len(prims) > 1:
@@ -3981,6 +3987,39 @@ def _panel_texture(spec):
     return size, rows
 
 
+def _atlas_texture(size, regions, base_spec):
+    """Paint one atlas: each part's rectangle gets its own material.
+
+    The point of the whole exercise. A tiling material cannot know where it is on the model,
+    so it makes generic surface everywhere; a region knows it is the roof, and can be given
+    corrugation, or tread links, or a hatch. Retail's sheets read for exactly this reason.
+
+    Rectangles come from Blender's packer, which sized them by surface area — so a region's
+    pixel size already tracks how much of the model it covers, and the same material spec
+    yields the same texel density in every one.
+    """
+    # Ground the whole sheet first. Gaps between rectangles are never sampled by the mesh, but
+    # a mip chain averages across them, so leaving them black bleeds dark fringes into every
+    # part's edges at distance.
+    fill = [tuple(int(c * 0.55) for c in base_spec.get("base", [96, 100, 92]))] * size
+    rows = [list(fill) for _ in range(size)]
+
+    for name, (rx, ry, rw, rh), spec in regions:
+        px0, py0 = int(rx * size), int(ry * size)
+        pw, ph = max(1, int(rw * size)), max(1, int(rh * size))
+        s = dict(base_spec)
+        s.update(spec or {})
+        # Generate at the region's own size so the material's feature scale is in ATLAS
+        # pixels — a panel width of 34 means 34 pixels here as it did across the whole sheet.
+        s["size"] = max(pw, ph)
+        _, tile = _panel_texture(s)
+        for y in range(ph):
+            for x in range(pw):
+                if py0 + y < size and px0 + x < size:
+                    rows[py0 + y][px0 + x] = tile[y][x]
+    return size, rows
+
+
 def cmd_texture(a):
     """Author a tiling panel texture from a recipe or from flags."""
     spec = {}
@@ -4075,6 +4114,8 @@ def cmd_model(a):
         r = subprocess.run([blender, "--background", "--python", script, "--", a.recipe, glb],
                            capture_output=True, text=True)
         parts = [l.split() for l in r.stdout.splitlines() if l.startswith("ZHPART ")]
+        uvrects = {l.split()[1]: tuple(float(v) for v in l.split()[2:6])
+                   for l in r.stdout.splitlines() if l.startswith("ZHUV ")}
         tot = next((l.split() for l in r.stdout.splitlines() if l.startswith("ZHTOTAL ")), None)
         if not os.path.exists(glb) or tot is None:
             print("BLENDER FAILED to produce geometry:")
@@ -4086,7 +4127,8 @@ def cmd_model(a):
             return 1
 
         ns = argparse.Namespace(gltf=glb, out=a.out, name=name,
-                                texture=a.texture or recipe.get("texture"))
+                                texture=a.texture or recipe.get("texture"),
+                                force_texture=bool(recipe.get("atlas")))
         rc = cmd_w3dfrom(ns)
         if rc:
             return rc
@@ -4098,12 +4140,33 @@ def cmd_model(a):
     if recipe.get("textureRecipe"):                       # single-texture shorthand
         specs[a.texture or recipe.get("texture")] = recipe["textureRecipe"]
     outdir = os.path.dirname(os.path.abspath(a.out))
-    for texname, spec in sorted(specs.items()):
-        if not texname:
-            continue
-        size, rows = _panel_texture(dict(spec))
-        tga_write(os.path.join(outdir, texname), size, size, rows)
-        print(f"  texture {texname}: {size}x{size} tiling, seed {spec.get('seed', 1)}")
+
+    if uvrects and recipe.get("atlas"):
+        # ONE sheet for the whole model. Per-part `texture` names stop meaning separate files
+        # and start meaning which material fills that part's rectangle — which is strictly
+        # more expressive, since a region can also carry content a tiling material never
+        # could (a hatch in one place, tread links in another).
+        atlas = a.texture or recipe.get("texture")
+        base = specs.get(atlas) or next(iter(specs.values()), {})
+        regions = []
+        for p in recipe.get("parts", []):
+            nm = (p.get("name") or "").upper()
+            if nm not in uvrects:
+                continue
+            regions.append((nm, uvrects[nm], specs.get(p.get("texture")) if p.get("texture") else None))
+        size = recipe.get("textureSize", base.get("size", 256))
+        base = dict(base); base["size"] = size
+        size, rows = _atlas_texture(size, regions, base)
+        tga_write(os.path.join(outdir, atlas), size, size, rows)
+        print(f"  atlas {atlas}: {size}x{size}, {len(regions)} region(s) packed by surface area")
+        specs = {atlas: base}
+    else:
+        for texname, spec in sorted(specs.items()):
+            if not texname:
+                continue
+            size, rows = _panel_texture(dict(spec))
+            tga_write(os.path.join(outdir, texname), size, size, rows)
+            print(f"  texture {texname}: {size}x{size} tiling, seed {spec.get('seed', 1)}")
 
     # Every texture a mesh NAMES must be one the recipe actually WROTE. This is the same class
     # of failure as a model resolving to no file: the object appears, untextured or white, and

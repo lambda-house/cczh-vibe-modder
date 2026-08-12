@@ -231,5 +231,7 @@
         0
       ]
     }
-  ]
+  ],
+  "atlas": true,
+  "textureSize": 512
 }

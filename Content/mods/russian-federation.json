@@ -79,8 +79,10 @@
     "art": [
       "build/models/MANGAL.W3D",
       "build/models/RFBASE.W3D",
+      // ONE sheet for the Mangal since it went to atlas mode: mangal_roof.tga is gone, and
+      // the roof is now a REGION of mangal.tga rather than a separate file. Leaving the old
+      // name here was a dangling reference the pack gate caught immediately.
       "build/models/mangal.tga",
-      "build/models/mangal_roof.tga",
       "build/models/rfbase.tga",
       "build/models/rfbase_dome.tga",
       "build/models/rfbase_stack.tga"

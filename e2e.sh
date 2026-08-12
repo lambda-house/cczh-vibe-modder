@@ -2922,14 +2922,17 @@ PYPAIR
 import sys
 # Only the zh.art LINE is removed. The texture is still built, and the mesh still names it
 # inside its own binary — which is precisely the reference this case exists to catch.
+# It targets the ATLAS, because that is the name the meshes actually carry: atlas mode
+# consolidated the Mangal's two sheets into one, and this check quietly stopped testing
+# anything the moment its old target ceased to exist.
 s = open(sys.argv[1]).read()
 kept = [l for l in s.splitlines(True)
-        if "mangal_roof.tga" not in l or not l.strip().startswith('"')]
+        if "mangal.tga" not in l or not l.strip().startswith('"')]
 open(sys.argv[2], "w").write("".join(kept))
 PYDROP
   deep=$(rts lint --target zh --no-borrow russian_federation --mod "$RF/droptex.json" 2>&1 || true)
   case "$deep" in
-    *"names texture 'mangal_roof.tga', which this pack does not carry"*) : ;;
+    *"names texture 'mangal.tga', which this pack does not carry"*) : ;;
     *) echo "  A TEXTURE NAMED INSIDE THE .w3d WENT UNCHECKED — the deep reference is invisible"
        echo "$deep" | tail -6; exit 1 ;;
   esac

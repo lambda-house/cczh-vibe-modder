@@ -261,6 +261,79 @@ def tri_count(ob):
     return len(ob.data.loop_triangles)
 
 
+def uv_bounds(ob):
+    uvs = ob.data.uv_layers.active.data
+    xs = [d.uv[0] for d in uvs]; ys = [d.uv[1] for d in uvs]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def pack_atlas(parts, fill=0.92):
+    """Give every part its own rectangle of one shared atlas, sized by SURFACE AREA.
+
+    This is the structural change the whole texture story was waiting on. Cube projection
+    produces a tiling MATERIAL — it cannot know where it is on the model, so it can only make
+    generic surface everywhere. An atlas gives each part a known rectangle, and a generator
+    that knows the rectangle can paint the roof AS a roof and the tread AS a tread. That is
+    what retail's hand-painted sheets do and the reason they read.
+
+    AREA-PROPORTIONAL, not a uniform grid, and that is not a refinement — a uniform grid gives
+    the barrel the same texels as the roof, which is exactly the non-uniform texel density this
+    project already gates against after a cylinder's side cells came out 3.1x its cap cells.
+    Rect area tracks surface area, and cube projection already gives UV area proportional to
+    surface area, so the fit scale lands nearly equal for every part.
+
+    A shelf packer, deliberately: simple, deterministic, and its waste is bounded and visible.
+    Anything cleverer is a bin-packing heuristic whose output would be harder to reason about
+    than the thing it saves.
+    """
+    import math as _m
+    # UV-space area from the projection, which is world surface area scaled by cube_size.
+    items = []
+    for ob in parts:
+        x0, y0, x1, y1 = uv_bounds(ob)
+        w, h = max(x1 - x0, 1e-6), max(y1 - y0, 1e-6)
+        items.append({"ob": ob, "bb": (x0, y0, w, h), "area": w * h})
+
+    total = sum(i["area"] for i in items) or 1.0
+    # Scale so the parts fill `fill` of the unit square, then lay them out largest-first.
+    s = _m.sqrt(fill / total)
+    for i in items:
+        _, _, w, h = i["bb"]
+        i["rw"], i["rh"] = w * s, h * s
+    items.sort(key=lambda i: -i["rh"])
+
+    # Shelves: fill a row until it would overflow, then start the next above it.
+    rects, x, y, shelf_h = {}, 0.0, 0.0, 0.0
+    for i in items:
+        if x + i["rw"] > 1.0 and x > 0.0:
+            x, y, shelf_h = 0.0, y + shelf_h, 0.0
+        rects[i["ob"].name] = (x, y, i["rw"], i["rh"])
+        x += i["rw"]
+        shelf_h = max(shelf_h, i["rh"])
+
+    # RECLAIM THE SLACK. Shelf packing leaves the far column and the top row unused, and on a
+    # six-part model that was half the sheet — half the resolution paid for and thrown away.
+    # Scaling every rect by the same factor to fill the square is free density: it changes no
+    # layout, no aspect and no relative area, so texel density stays uniform and simply gets
+    # finer. The same correction shrinks an overflowing pack, which is what it was doing before.
+    used_w = max((rx + rw for rx, _, rw, _ in rects.values()), default=1.0)
+    used_h = y + shelf_h
+    k = 1.0 / max(used_w, used_h, 1e-6)
+    if abs(k - 1.0) > 1e-6:
+        rects = {n: (rx * k, ry * k, rw * k, rh * k) for n, (rx, ry, rw, rh) in rects.items()}
+
+    # Move each part's UVs into its rectangle, preserving aspect so density stays uniform.
+    for i in items:
+        ob = i["ob"]
+        rx, ry, rw, rh = rects[ob.name]
+        x0, y0, w, h = i["bb"]
+        k = min(rw / w, rh / h)
+        for d in ob.data.uv_layers.active.data:
+            d.uv[0] = rx + (d.uv[0] - x0) * k
+            d.uv[1] = ry + (d.uv[1] - y0) * k
+    return rects
+
+
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:]
     recipe = json.load(open(argv[0]))
@@ -292,6 +365,15 @@ def main():
                 m.ratio = ratio
                 _apply(ob, m)
             total = sum(tri_count(o) for o in parts)
+
+    # ATLAS. Opt-in per recipe, because a tiling material is still the right answer for a
+    # large flat surface and switching every existing recipe at once would be a change nobody
+    # asked for. When on, each part owns a rectangle and the generator paints into it.
+    if recipe.get("atlas"):
+        rects = pack_atlas(parts)
+        for ob in parts:
+            rx, ry, rw, rh = rects[ob.name]
+            print(f"ZHUV {ob.name} {rx:.6f} {ry:.6f} {rw:.6f} {rh:.6f}")
 
     bpy.ops.export_scene.gltf(
         filepath=out,
