@@ -1,6 +1,6 @@
 ---
 name: zh-assets
-description: Explain and query the Command & Conquer Generals Zero Hour asset set — archives, models, textures, maps, audio, and how INI content references art. Use when asked what an asset is, where something lives, how big the art burden is, or to inspect/extract from the .big archives.
+description: Query the Command & Conquer Generals Zero Hour asset set — archives, models, textures, maps, audio, how INI references art — AND author new art: build a .w3d from nothing, model it parametrically through Blender, and render it to look at. Use when asked what an asset is, where something lives, how big the art burden is, to inspect/extract from the .big archives, or to create or view a model, texture or recipe.
 ---
 
 # The Zero Hour asset set
@@ -46,7 +46,82 @@ zhasset artprofile             # the contract an adoptable mesh carries
 zhasset artvalidate            # proof that contract CANNOT be derived from the mesh
 ```
 
+**The art pipeline — read a model, and write one back:**
+
+```
+zhasset gltf <f.w3d> --out x.glb        # EXPORT so it can be LOOKED AT
+zhasset w3dfrom --gltf x.glb --out y.w3d  # BUILD one back, every chunk authored
+zhasset model --recipe r.json --out y.w3d # a parametric recipe, via Blender's kernel
+
+zhasset w3dround <f>           # parse and re-emit; byte-identity proves the reader
+zhasset w3dbox|w3dskel|w3danim # older direct generators (w3dbox needs a retail --template)
+zhasset tga --out t.tga        # a texture from nothing: 18-byte header, then BGR
+```
+
+`w3dfrom` is the one that makes "authored" literally true: `w3dbox --template` copies
+MATERIAL_INFO, SHADERS, VERTEX_MATERIALS and the MATERIAL_PASS scaffolding out of a **retail
+mesh**, so what it produces is our geometry in their container. `w3dfrom` writes every chunk
+from spec.
+
 Generated output lands in `reference/` and is **gitignored** — see Licence below.
+
+## Authoring a model: the numbers that decide everything
+
+Model to the **measured** budget, not to taste:
+
+| | measured |
+|---|---|
+| triangles | median **169**, p75 298, p90 619, p99 1,015 (3,794 models) |
+| textures | **256²** is 44% of 3,748; then 128², 64², 512² |
+| a real building | GLA barracks 110×51×88 at 565 tris; war factory 100×58×122 at 684 |
+| a real vehicle | AVLeopard 44×17×15 at 245 tris, in **10 named sub-objects** |
+
+Three consequences that are not obvious:
+
+- **Text-to-3D generation is the wrong tool.** It emits 50k–500k triangles of organic
+  surface; retopologising that to 169 is harder than authoring 169. And the engine consumes
+  **structure**, not surface — a turret must be its own named sub-object to rotate, house
+  colour its own submesh to be tinted.
+- **Spend triangles where they can be SEEN.** The Mangal's road wheels were 55% of the model
+  and completely invisible — a wheel 3 units thick inside a track box 5 units thick. Retail
+  reaches the same conclusion from the other end: flat tread strips, with links and wheels in
+  a scrolling texture.
+- **Sub-object NAMES are load-bearing.** An INI Draw module shows and hides a piece by name,
+  and the engine finds a turret the same way. `w3dfrom` carries recipe names through; a
+  merged single mesh cannot animate however good it looks.
+
+## Recipes (`Content/models/*.json`)
+
+`tools/zhblender.py` runs **inside Blender**, never under system Python. Shapes: `box`,
+`cylinder`, `cone`, `wedge`, `ridge`, `dome`. Per part: `size`, `at` (centre of the box),
+`rot`, `taper`, `bevel`, `cuts` (boolean), `array`, `mirror`. Each part becomes one named
+W3D sub-object.
+
+- **`ridge` is not `taper`.** A ridge collapses the top to a LINE; taper scales both non-axis
+  dimensions equally and so makes a pyramid. A pitched roof is an entire silhouette on its own.
+- **`cuts` are LOCAL to the part**, because the part is still at the origin when they are
+  applied — it has to be, or a bevel width scales with wherever the part happens to stand.
+- **`mirror` is about the MODEL's centreline**, and therefore runs after placement.
+- **Over budget REPORTS and names the heaviest parts.** It does not decimate unless
+  `"decimate": true`, because collapse decimation eats exactly the bevel loops that made the
+  thing read as built, while the count lands neatly on target.
+
+## Looking at it
+
+**There is no substitute for rendering and looking.** Structural checks — counts, byte-identical
+round-trips, even Blender's own importer — all pass happily on a model whose parts are in the
+wrong place. Three transform bugs in one session were caught this way and by nothing else.
+
+```
+blender --background --python-expr "...import_scene.gltf(filepath=...)..."
+```
+
+- the render engine enum is **`BLENDER_EEVEE`**, not `BLENDER_EEVEE_NEXT`
+- `read_factory_settings(use_empty=True)` first, or the default cube is in the shot
+- frame from the union of `obj.matrix_world @ Vector(c) for c in obj.bound_box`
+- **macOS Quick Look does NOT open `.glb`** — `qlmanage` hangs. Blender or a browser.
+- `bpy.ops.object.transform_apply` acts on the **selection**, not the active object, and
+  reports success either way
 
 ## What lives where
 

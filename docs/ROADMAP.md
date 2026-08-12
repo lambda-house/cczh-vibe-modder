@@ -5,6 +5,23 @@ Only what is open. Everything shipped, and the measurement that justified it, is
 
 ## Open work
 
+### The art pipeline  (L)
+
+Tracked in Linear as **A faction from nothing** — one building, one unit, zero borrowed bytes,
+every asset authored and viewable. The asset roadmap proved a pack can CARRY art; this is about
+AUTHORING it and being able to SEE it.
+
+Landed: glTF export (`zhasset gltf`), a from-nothing W3D writer (`zhasset w3dfrom` — every
+chunk from spec, so no retail template), and a parametric recipe driven through Blender's
+geometry kernel (`zhasset model` + `tools/zhblender.py`).
+
+Open: textures on the meshes, skinning and motion, the contact sheet that previews a whole
+pack, and the zero-borrow lint that would make the claim enforceable rather than asserted.
+
+**Nothing authored this way has been loaded by the engine yet.** A clean boot validates every
+literal in a file and no field name, so it still wants a witness in a real match — which is
+blocked on macOS TCC granting Accessibility and Screen Recording to the session's host app.
+
 ### Lockstep session layer  (L)
 
 Always intended to be last. The determinism it needs is already there and gated: replay is
@@ -19,7 +36,11 @@ Debts from finished work. Each is small; none blocks anything.
   no wav decoder at all, so audio is verified against the schema and by `zhasset audio` and its
   playback is not claimed. It becomes checkable the day GeneralsX lands its "Phase 2" audio, and
   the check is already written.
-- **The authored explosion has never been SEEN rendering.** It is verified three ways — enums
+- **The authored explosion has never been SEEN rendering *in the engine*.** Note what changed
+  and what did not: `zhasset gltf` now renders authored *geometry* outside the game, which is
+  how three transform bugs were caught, but an `FXList` is the engine's own particle system and
+  no external renderer can stand in for it. This debt is unmoved. It is verified three ways —
+  enums
   checked against the C++ name tables, our own reader walking the emitted `FXList` through to
   its texture, the engine loading both files — but not photographed. Five attempts failed, each
   derailed by a genuine bug the attempt uncovered (a stale-pack faction, `GeometryIsSmall`, two

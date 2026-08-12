@@ -293,6 +293,34 @@ the **`zh-authoring`** skill:
   maps before it grades ours. A writer checked by its own reader proves only that the two
   agree. e2e asserts the two-sided result: the same authored shapes that measure 27.4s and a
   timeout draw here come out CONNECTED and SEPARATED under their cliff rule there.
+- **A TRANSFORM THAT SILENTLY DID NOTHING is the asset pipeline's characteristic bug, and no
+  structural check catches it. Render it and LOOK.** *Three landed in one session, all one
+  shape:* a glTF node transform the importer ignored (every positioned part collapsed to the
+  origin); `bpy.ops.object.transform_apply` acting on the SELECTION rather than the active
+  object, so a part whose boolean cutter had stolen the selection never moved; and a `mirror`
+  applied while the part still sat at the origin, where the mirror plane passes through the
+  part itself and reflecting a symmetric box lands it exactly on top of itself. Every one
+  produced a PLAUSIBLE model: counts matched, `w3dround` was byte-identical, Blender's own
+  importer read it back happily, and a building asking for louvres down both flanks got one
+  flank with an entirely reasonable triangle count. All three were obvious in a single
+  render — a building with its hall fifteen units below where the recipe put it and its roof
+  floating over a gap. This is the standing argument for `zhasset gltf` existing at all, and
+  the reason a new geometry feature is not done until it has been photographed.
+  *Corollary: a W3D mesh has nowhere to put a transform* — position lives in its vertices —
+  so any importer must bake the source's node graph in, and any author-side step must apply
+  transforms before export.
+- **Model to the MEASURED budget, and spend the triangles where they can be seen.** Retail is
+  median **169 triangles** (p75 298, p90 619, p99 1,015 over 3,794 models) and **256×256**
+  textures (44% of 3,748). That is a 2003 hard-surface budget, and it is why text-to-3D
+  generation is the wrong tool: those arrive at 50k-500k triangles of organic surface, and
+  retopologising one to 169 is harder than authoring 169. *The engine consumes STRUCTURE, not
+  surface* — a turret must be its own named sub-object to rotate, house colour its own submesh
+  to be tinted. *Measured against that budget, the Mangal's road wheels were 55% of the model
+  and invisible*, a wheel 3 units thick sitting inside a track box 5 units thick; retail
+  reaches the same conclusion from the other end, carrying flat tread strips and putting links
+  and wheels in a scrolling texture. **Over-budget REPORTS and names the heaviest parts; it
+  never silently decimates.** Collapse decimation is an organic-mesh tool that eats exactly the
+  bevel loops which made a thing read as built, while the count lands neatly on target.
 - **New randomness gets its own `Pcg32` stream id** (next free integer in
   `Sim`'s constructor). Never share a stream between systems; never reuse an id.
 - **Every new sim-state field must be added to the state hash**
@@ -342,6 +370,17 @@ the **`zh-authoring`** skill:
   scenarios (`RunEconSeries`; specs like `"war_factory,crusader*"`),
   determinism verification
 - `Program.cs` — CLI verbs; `--json` output is the future MCP tool seam
+- `tools/zhasset` — the extractor, and now also the ART PIPELINE, both directions.
+  `gltf` exports a `.w3d` to glTF 2.0 (`.glb`) so it can be LOOKED AT; `w3dfrom` builds a
+  `.w3d` back from glTF with **every chunk authored** — no template, which is what makes the
+  from-nothing claim literally true, since `w3dbox --template` copies material state out of a
+  retail mesh; `model` drives a parametric recipe through Blender. Ship the extractor, never
+  the extract: generated output is gitignored.
+- `tools/zhblender.py` — **runs inside Blender, never under system Python.** The geometry
+  kernel: box/cylinder/cone/wedge/ridge/dome, taper, bevel, boolean cuts, array, mirror.
+  Blender is an AUTHOR-TIME tool, not a dependency of anything that runs — the sim never sees
+  it and its gates skip cleanly when it is absent. Recipes live in `Content/models/*.json`.
+  Same recipe must give the same bytes; nothing in it may use a random seed.
 - `godot/` — Godot 4 presentation shell, its own csproj referencing the sim.
   `SimHost` (fixed-step accumulator + snapshot pair, no Godot types) and
   `Main` (Godot Node2D: draws, HUD, input). Excluded from the sim csproj.
@@ -375,6 +414,15 @@ hygiene, modifier semantics, faction-scoped resolution, structures, upgrades, ru
 garrison/capture, powers and the science ladder, spatial index, MCP server, passability, line of
 sight). **The asset roadmap is complete** (14 pack carries its art · 15 STRUCK, art profiles
 cannot be derived · 16 map objects · 17 authored FX · 18 authored audio · 19 authored ground).
+
+**A new track is open: THE ART PIPELINE** (Linear project *A faction from nothing* — one
+building, one unit, zero borrowed bytes). The asset roadmap above proved a pack can CARRY art;
+this one is about AUTHORING it and being able to SEE it. Landed so far: glTF export, a
+from-nothing W3D writer, and a parametric recipe driven through Blender's geometry kernel.
+Not yet landed: textures on the meshes, skinning and motion, the contact sheet, and the
+zero-borrow lint that would make the claim enforceable rather than asserted.
+**Nothing authored this way has yet been loaded by the engine** — a clean boot validates every
+literal in a file and no field name, so that still wants a witness in a real match.
 
 Open: the **lockstep session layer**, which was always last.
 
