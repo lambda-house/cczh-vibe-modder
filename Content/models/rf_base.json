@@ -1,0 +1,120 @@
+{
+  "_comment": [
+    "The Russian Federation's construction base — a Soviet-industrial pile with a dome.",
+    "Authored from the four-view turnaround at incoming/factions/russian-federation/",
+    "structures/base/ (gitignored: third-party rights, and it informs PARAMETERS only).",
+    "A front/rear/left/right sheet is the ideal modelling reference, because massing and",
+    "proportion can be read straight off it instead of guessed from one oblique photograph.",
+    "",
+    "Scale from measured peers, not taste: the GLA barracks is 110 x 51 x 88 world units at",
+    "565 triangles, the war factory 100 x 58 x 122 at 684.",
+    "",
+    "WHAT THE BUDGET BUYS IS THE SILHOUETTE, NOT THE PIPEWORK. The reference is dense with",
+    "gantry cranes, rail spurs, pipe runs and crates — all of it scene dressing around the",
+    "building rather than the building. At ~650 triangles the things that must read are the",
+    "dome, the drum it sits on, the entrance portico and the stacks. Everything else is a",
+    "texture's job.",
+    "",
+    "+X is FORWARD: the entrance faces +X, so the portico projects that way and the stacks",
+    "sit at the rear. Z is up and z = 0 is the ground, so `at` is the CENTRE of a part.",
+    "",
+    "The drum is 12-sided ON PURPOSE. The reference has vertical ribs around it, and a radial",
+    "array is not something this recipe format has — but a 12-gon already reads as ribbed at",
+    "RTS camera distance, and it costs 44 triangles instead of a rib array's several hundred."
+  ],
+
+  "name": "RFBASE",
+  "texture": "rfbase.tga",
+  "budget": 650,
+  "uvScale": 24.0,
+
+  "parts": [
+    {
+      "_": "Battered podium. taper < 1 leans the walls inward, which is what reads as poured",
+      "__": "concrete mass rather than a box sitting on grass.",
+      "name": "PODIUM",
+      "shape": "box",
+      "size": [108, 96, 8],
+      "at": [0, 0, 4],
+      "taper": 0.96,
+      "bevel": { "width": 1.4, "segments": 1 }
+    },
+    {
+      "_": "The drum the dome sits on. See the note above about 12 sides standing in for ribs.",
+      "name": "DRUM",
+      "shape": "cylinder",
+      "size": [63, 63, 24],
+      "segments": 12,
+      "at": [0, 0, 20],
+      "bevel": { "width": 0.8, "segments": 1 }
+    },
+    {
+      "_": "THE DOME. The whole reason `dome` exists as a shape. 3 rings is enough at this",
+      "__": "size — the silhouette is a half-circle and extra rings buy interior shading",
+      "___": "nobody sees. Its base sits exactly on the drum's top at z = 32.",
+      "name": "DOME",
+      "shape": "dome",
+      "size": [58, 58, 26],
+      "segments": 12,
+      "rings": 3,
+      "at": [0, 0, 45]
+    },
+    {
+      "_": "Entrance portico, projecting forward, with the archway cut clean through its front",
+      "__": "face. NOTE the cut is in the PART's local frame — the part is still at the origin",
+      "___": "when a boolean runs, so this is x +6 of the portico's own centre, not of the",
+      "____": "world's. A doorway is the one thing a texture genuinely cannot fake, because the",
+      "_____": "silhouette has to have a hole in it.",
+      "name": "PORTICO",
+      "shape": "box",
+      "size": [24, 46, 24],
+      "at": [42, 0, 20],
+      "bevel": { "width": 1.0, "segments": 1 },
+      "cuts": [
+        { "shape": "box", "size": [16, 24, 16], "at": [6, 0, -4] }
+      ]
+    },
+    {
+      "_": "The sign band over the entrance — СОВЕТСКАЯ КОНСТРУКЦИОННАЯ БАЗА in the",
+      "__": "reference. Geometry, not just painted on, because the reference's band stands",
+      "___": "proud of the wall and catches its own shadow line. The lettering is the",
+      "____": "texture's job.",
+      "name": "SIGNBAND",
+      "shape": "box",
+      "size": [3, 42, 5],
+      "at": [54, 0, 28],
+      "bevel": { "width": 0.3, "segments": 1 }
+    },
+    {
+      "_": "Flanking halls, one authored and mirrored across Y. Taller than the podium and",
+      "__": "lower than the dome, which is what keeps the dome reading as the centrepiece.",
+      "name": "WINGS",
+      "shape": "box",
+      "size": [34, 24, 22],
+      "at": [-4, 36, 19],
+      "taper": 0.94,
+      "mirror": "y",
+      "bevel": { "width": 1.0, "segments": 1 }
+    },
+    {
+      "_": "Rear machine hall — the block the stacks stand on.",
+      "name": "REARBLOCK",
+      "shape": "box",
+      "size": [22, 40, 26],
+      "at": [-42, 0, 21],
+      "taper": 0.95,
+      "bevel": { "width": 1.0, "segments": 1 }
+    },
+    {
+      "_": "Stacks, mirrored across Y. Deliberately TALLER than the dome: in the reference",
+      "__": "they are the highest thing on the site, and a stack that stops below the dome",
+      "___": "reads as a vent. The red and white banding is texture.",
+      "name": "STACKS",
+      "shape": "cylinder",
+      "size": [10, 10, 34],
+      "segments": 6,
+      "at": [-42, 12, 42],
+      "mirror": "y"
+    }
+  ]
+}

@@ -64,8 +64,7 @@
       "size": [11, 11, 26],
       "segments": 8,
       "at": [-26, 20, 53],
-      "array": { "count": 3, "offset": [26, 0, 0] },
-      "bevel": { "width": 0.8, "segments": 1 }
+      "array": { "count": 3, "offset": [26, 0, 0] }
     },
     {
       "_": "Cooling louvres, arrayed up the flank and mirrored across X so both sides match",
@@ -74,7 +73,7 @@
       "shape": "box",
       "size": [5, 44, 3],
       "at": [37, 4, 16],
-      "array": { "count": 4, "offset": [0, 0, 6] },
+      "array": { "count": 3, "offset": [0, 0, 7] },
       "mirror": "x",
       "bevel": { "width": 0.4, "segments": 1 }
     }

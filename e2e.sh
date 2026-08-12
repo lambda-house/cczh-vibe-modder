@@ -2571,6 +2571,43 @@ print(f"  dome honours full height ({h:.0f} of 20 asked)")
 print(f"  mirror reflects across the MODEL centreline, not the part's")
 print(f"  every face winds outward after taper, bevel, boolean and mirror")
 PYMB
+
+  # --- Every SHIPPED recipe must still build, fit its budget, and keep its part names. ---
+  # The recipes in Content/models/ are content, and a change to the kernel can break them
+  # without touching a line of them. Budget is checked because over-budget now REPORTS rather
+  # than silently decimating — so a recipe that drifts over would otherwise just print a
+  # warning into a log nobody reads. Part names are checked because they are load-bearing: an
+  # INI Draw module shows and hides a piece BY NAME, and the engine finds a turret the same way.
+  for rec in Content/models/*.json; do
+    base=$(basename "$rec" .json)
+    out=$(./tools/zhasset model --recipe "$rec" --out "$MB/$base.w3d" 2>&1) \
+      || { echo "  SHIPPED RECIPE $base FAILED TO BUILD"; echo "$out"; exit 1; }
+    case "$out" in
+      *"BUDGET"*"EXCEEDED"*)
+        echo "  $base IS OVER ITS OWN BUDGET:"; echo "$out" | grep BUDGET; exit 1 ;;
+    esac
+    python3 - "$rec" "$MB/$base.w3d" <<'PYREC'
+import json, re, struct, sys
+recipe = json.load(open(sys.argv[1]))
+want = {p["name"] for p in recipe["parts"]}
+buf = open(sys.argv[2], "rb").read()
+def walk(off, end):
+    while off + 8 <= end:
+        t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+        if raw & 0x80000000: yield from walk(body, body + sz)
+        else: yield t, buf[body:body + sz]
+        off = body + sz
+got = {p[8:24].split(b"\0")[0].decode() for t, p in walk(0, len(buf)) if t == 0x001F}
+missing = want - got
+if missing:
+    print(f"  PART NAMES LOST between recipe and .w3d: {sorted(missing)}")
+    print(f"   — a Draw module addresses a sub-object by name; renamed is as bad as absent")
+    sys.exit(1)
+PYREC
+    tris=$(echo "$out" | sed -n 's/.*-> [0-9]* part(s), \([0-9]*\) triangles.*/\1/p')
+    echo "  $base: $tris triangles, all $(python3 -c "
+import json,sys; print(len(json.load(open('$rec'))['parts']))") part names survive"
+  done
   rm -rf "$MB"; trap - EXIT
 fi
 
