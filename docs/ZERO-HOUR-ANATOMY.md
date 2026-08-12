@@ -9,9 +9,16 @@ Sources, both on disk, neither requiring retail assets:
 
 | What | Where | Role |
 |---|---|---|
-| EA GPL v3 source | `~/work/oss/CnC_Generals_Zero_Hour` | schema authority — the `FieldParse` tables enumerate every legal key |
+| Engine source, pinned | `~/work/oss/GeneralsX` @ `GeneralsX-Beta-15` | **schema authority today** — the `FieldParse` tables enumerate every legal key. Note they span `GeneralsMD/Code` (338 files) *and* the fork's hoisted `Core/` (94) |
+| EA GPL v3 source | `~/work/oss/CnC_Generals_Zero_Hour` | historical baseline. 2,348 keys vs Beta-15's 2,393: 45 added, none removed |
 | Shipping INI corpus | `~/work/oss/GeneralsGamePatch/Patch104pZH/GameFilesEdited/Data/INI` | 581,467 lines / 118 files — what authors actually wrote |
 | Real maps | `~/work/oss/GeneralsGamePatch/Maps` | 55 `.map` files, all parsed successfully |
+
+**The corpus rows are deliberately NOT repointed.** Every measurement below was taken against
+104p, and the community's active line has since moved to `GeneralsGamePatch2` (2,215 files /
+498,416 lines, with `Object.ini` exploded into 2,112 per-object files). Swapping the source line
+without re-running the counts would leave a document that cites numbers no listed source
+produces. Re-measure first, then repoint.
 
 Retail `.big` archives are *not* needed for any of this. They are needed only to run the
 game client, and the client is the least interesting artifact for our purposes.

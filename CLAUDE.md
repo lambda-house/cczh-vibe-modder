@@ -61,11 +61,35 @@ of them.
 
 Sources on disk:
 
-- `~/work/oss/CnC_Generals_Zero_Hour` — EA's GPL v3 source. **Schema authority**:
-  the `FieldParse` tables enumerate every legal key of every content type.
+- `~/work/oss/GeneralsX` — **schema authority**, pinned to tag `GeneralsX-Beta-15`
+  (`468d6e7`), which is the source of the binary we actually run. Its `FieldParse` tables
+  enumerate every legal key. **They live in TWO trees, not one:** the community fork hoisted
+  shared code into a new top-level `Core/`, so the 432 files carrying a table split
+  `GeneralsMD/Code` 338 / `Core` 94. Tooling that walks `GeneralsMD/` alone — as every
+  EA-shaped script does — silently misses a quarter of the schema and reports the keys it
+  cannot see as deleted.
+- `~/work/oss/CnC_Generals_Zero_Hour` — EA's pristine GPL v3 release. **Historical baseline,
+  no longer authority.** Diffed against Beta-15: 2,393 keys vs 2,348, **45 added, none
+  removed** — a strict superset, so nothing we already emit is at risk, but the additions
+  are real and some are ours to use: `AngleX`/`AngleY`/`AngularRateX`/`AngularRateY` give
+  ParticleSystem the axes EA shipped Z alone for, plus `Use3DSoundRangeVolumeFade`,
+  `StartsReady`, `TransferSelection`. (Counted on the `{"Key", INI::parse…}` form, so 45
+  is a floor.)
+- `~/work/oss/Generals-Mac-iOS-iPad` — a DIFFERENT macOS/iOS port, **not** the build we run.
+  It sat at `~/work/oss/GeneralsX` under that name until this was caught, which is exactly
+  the confusion this list exists to prevent: answering a schema question from it reads a
+  tree the running binary was never built from.
 - `~/work/oss/zh-retail/Data/INI` — retail INI, 118 files / 538,362 lines, extracted
   from `INIZH.big`. **Authoritative for planning.**
-- `~/work/oss/GeneralsGamePatch/.../Data/INI` — the 104p community corpus, 581,467 lines.
+- `~/work/oss/GeneralsGamePatch2/GeneralsZH/Data/INI` — the **current** community patch line,
+  2,215 files / 498,416 lines. Its SHAPE is the finding: `Object.ini` is exploded into 2,112
+  per-object files under `Object/`, plus `CommandButton/` 16, `CommandSet/` 16, `Default/` 24.
+  That is `loadDirectory` used in anger at scale — the strongest evidence available that the
+  additive channel we emit into is the one the community actually builds on.
+- `~/work/oss/GeneralsGamePatch/Patch104pZH/GameFilesEdited/Data/INI` — the 104p corpus,
+  118 files / 581,467 lines. Superseded upstream (last push June 2025) but **kept, because
+  `ZERO-HOUR-ANATOMY.md` was measured against THIS**. Repointing the studies at GamePatch2
+  without re-measuring would turn every number in them into a lie.
 - `~/GeneralsX/GeneralsZH` — retail install, **running natively on arm64**. 35 `.big`
   archives in two layers (ZH is a delta over base Generals in `ZH_Generals/`):
   26,264 files, 2.23 GB, 9,000 models, 7,891 textures.
@@ -86,9 +110,11 @@ additive-in-excess, not multiplicative; the generals are forks, not diffs; and a
 ## Modding the retail game
 
 Emitting new content and MODIFYING retail content are different problems with different
-mechanics, and the rules were each paid for with a crash, a hang or a silent misfire. **The GPL
-tree is schema authority; the running GeneralsX build is loading authority; they diverge** — so
-never conclude a load path works because a file parsed. Carry a witness field whose effect is
+mechanics, and the rules were each paid for with a crash, a hang or a silent misfire. **The
+pinned GeneralsX tree is schema authority; the running binary is loading authority; they still
+diverge** — a `FieldParse` table proves a key is legal, never that the subsystem was wired to
+scan a directory for the file carrying it. So never conclude a load path works because a file
+parsed. Carry a witness field whose effect is
 unmissable, and check the boot log's `loadDirectory` lines rather than the source.
 
 The 17 measured rules — override channels, what is additive, which shared leaves break when
@@ -203,10 +229,15 @@ the **`zh-authoring`** skill:
   reported by lint. Retail proves the cost of getting this wrong: 88 bad references / 68
   broken definitions shipped, and `Prerequisites` accounts for none of them — 64 are
   references reached through a shared intermediary.
-- **Schema authority is their source; LOADING behaviour is the running engine.** The two
-  differ. EA's `GameEngine.cpp` passes no directory to `TheScienceStore`, yet the build we
-  target logs `loadDirectory('Data\INI\Science')`. Before assuming a content type can be
-  emitted additively, check the boot log's `loadDirectory` lines — not the source.
+- **Schema authority is the PINNED GeneralsX tree; LOADING behaviour is the running binary.**
+  Reading EA's tree instead is what made the science ladder look impossible, and the diff is
+  one character wide: EA hands `TheScienceStore` two FILE paths (`Data\INI\Science.ini`),
+  while the build we target hands it the same two paths with the EXTENSION DROPPED
+  (`Data\INI\Science`) — which is how this engine is told to scan a directory. The mystery
+  was never in the engine; it was in consulting a tree the binary was not built from. The
+  habit survives the fix, because a source that says "directory" still does not prove the
+  subsystem ran: before assuming a content type can be emitted additively, check the boot
+  log's `loadDirectory` lines.
   The one type that genuinely cannot be additive is `Rank`: its blocks are NUMBERED, not
   named, so emitting a ladder overwrites retail's instead of extending it.
 - **Never invent an enum value, and never confirm one by substring.** Every literal

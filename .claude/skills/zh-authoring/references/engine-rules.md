@@ -1,13 +1,14 @@
 # Rules measured against the RUNNING engine
 
 Every rule here cost a crash, a hang or a silent misfire to establish, and several contradict
-what EA's source implies. **The GPL tree is schema authority; the running GeneralsX build is
-loading authority; they diverge.**
+what EA's source implies. **The pinned GeneralsX tree (`~/work/oss/GeneralsX`, tag
+`GeneralsX-Beta-15`) is schema authority; the running binary is loading authority; they
+diverge.** EA's pristine tree is a historical baseline and answers several of the questions
+below WRONGLY — every "GeneralsX addition" noted in the rules is a place where consulting it
+cost time.
 
 Emitting new content and MODIFYING retail content are different problems with different
-mechanics. Each rule below cost a crash, a hang or a silent misfire to establish, and several
-contradict what EA's source implies — the GPL tree is schema authority, the running GeneralsX
-build is loading authority, and **they diverge**.
+mechanics. Each rule below cost a crash, a hang or a silent misfire to establish.
 
 1. **`Data/INI/**` is ADD-NEW-NAMES ONLY.** Redeclaring an existing block there is a fatal
    load error: the engine aborts at 29 of 42 subsystems and never reaches its main loop.
