@@ -159,6 +159,7 @@ one there (rule 3), and touch weapons only alongside an object override (rule 4)
    | `Turret` (in Draw) | no bone | the LOGIC turret in `AIUpdateInterface` aims and fires perfectly while the gun stays welded to the hull. **Two different `Turret` concepts in different modules**; retail has 516 of the art-side one |
    | `ProductionUpdate` | absent | build buttons render and clicking does nothing |
    | `PhysicsBehavior` | absent | unit exists, cannot move or be selected |
+   | `GeometryIsSmall` | hardcoded `Yes` for anything mobile | **a 40-radius unit renders as NOTHING.** No error, no log line; the object exists and is simply never drawn. It looked like placement was broken — the same mesh was fine as a STRUCTURE, and a 20-radius mesh was fine as a unit. Retail's own practice, measured over 237 `IsSmall=Yes` objects: median radius 10, 90th percentile 15, only 3 above 30. Derive it from the radius, never from the unit/structure split |
 
    The sweep then found ten more in one pass — `ExperienceValue`, `ExperienceRequired`,
    `IsTrainable`, `CrusherLevel`, `CrushableLevel`, `TransportSlotCount`, `GeometryIsSmall`,

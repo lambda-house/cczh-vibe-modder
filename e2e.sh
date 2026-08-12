@@ -1655,6 +1655,17 @@ else
   # Maps/MapCache.ini and never scans, so a map in the install is never discovered.
   rm -rf "$PLAY"
 
+  # ONE pack, or the lobby's default army is arbitrary. Sides are pack-prefixed now, so two
+  # installed packs no longer overwrite each other — they coexist, the dropdown lists several
+  # factions, and the drive plays whichever happens to be selected. That silently tests the
+  # wrong pack, which is an hour of chasing a bug that is not there. Fail loudly instead.
+  packs=$(ls "$HOME/GeneralsX/GeneralsZH/Data/INI/PlayerTemplate/"*.ini 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$packs" != "1" ]; then
+    echo "  $packs packs installed; the lobby's default army is then arbitrary."
+    ls "$HOME/GeneralsX/GeneralsZH/Data/INI/PlayerTemplate/" 2>/dev/null | sed 's/^/    /'
+    echo "  Remove the others and re-run."; exit 1
+  fi
+
   pkill -x GeneralsXZH 2>/dev/null || true
   sleep 2
   ./tools/zhdrive skirmish || { echo "  COULD NOT REACH A MATCH"; exit 1; }

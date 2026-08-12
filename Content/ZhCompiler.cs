@@ -346,7 +346,6 @@ public static class ZhCompiler
             // make the unit behave unlike its peers.
             bool inf = u.Is("INFANTRY");
             sb.AppendLine($"  RadarPriority = {(u.IsStructure ? "STRUCTURE" : "UNIT")}");
-            sb.AppendLine($"  GeometryIsSmall = {(u.IsStructure ? "No" : "Yes")}");
             if (!u.IsStructure)
             {
                 // "What am I to a crusher" / "what can I crush": 0 infantry, 1 trees,
@@ -674,6 +673,18 @@ public static class ZhCompiler
             art.TryGet(model, out var mp);
             sb.AppendLine($"  Geometry = {mp?.Geometry ?? "BOX"}");
             sb.AppendLine($"  GeometryMajorRadius = {mp?.MajorRadius ?? (u.IsStructure ? StructureRadius : "13.0")}");
+            // IsSmall follows the RADIUS, not the unit/structure split it used to. Hardcoding
+            // Yes for anything mobile is fine until a mesh is large: a 40-radius object that
+            // declares itself small renders as NOTHING — no error, no log line, and the object
+            // otherwise exists and is selectable-by-nothing. RTSBOX units vanished exactly that
+            // way, while the SAME mesh was fine as a structure and a 20-radius mesh was fine as
+            // a unit, which is what made it look like a placement bug for so long.
+            // Retail's practice, measured over 237 IsSmall=Yes objects: median radius 10, 90th
+            // percentile 15, only 3 above 30.
+            double smallR = double.TryParse(mp?.MajorRadius, System.Globalization.NumberStyles.Float,
+                                            CultureInfo.InvariantCulture, out var srv)
+                            ? srv : (u.IsStructure ? 53.0 : 13.0);
+            sb.AppendLine($"  GeometryIsSmall = {(smallR <= 20.0 ? "Yes" : "No")}");
             if (u.IsStructure)
             {
                 // Both were missing against retail's war factory. BuildCompletion is authored
