@@ -57,6 +57,43 @@ def _prim(spec):
         # chimney actually is, and a true point is rarely what is wanted.
         bpy.ops.mesh.primitive_cone_add(vertices=segs, radius1=1,
                                         radius2=spec.get("tip", 0.0), depth=2)
+    elif shape == "ridge":
+        # A box whose top collapses to a LINE, not a point — a pitched roof. `taper` cannot
+        # express this: it scales both non-axis dimensions equally and so makes a pyramid.
+        # This shape is an entire silhouette on its own (a shed, a carapace, a gable), which
+        # is why it is a primitive rather than a modifier trick.
+        bpy.ops.mesh.primitive_cube_add(size=2)
+        ob = bpy.context.object
+        axis = spec.get("ridgeAxis", "y")               # the ridge LINE runs along this axis
+        narrow = 0 if axis == "y" else 1                # so the roof slopes in the other one
+        w = spec.get("ridgeWidth", 0.0)                 # 0 = sharp ridge, 0.2 = flat-topped
+        bm = bmesh.new(); bm.from_mesh(ob.data)
+        for v in bm.verts:
+            if v.co.z > 0:
+                v.co[narrow] *= w
+        if w <= 1e-6:
+            # A sharp ridge leaves coincident vertex pairs along the top, and the quads between
+            # them are zero-area. Left in, they survive to the W3D as degenerate triangles the
+            # engine still transforms and rasterises for nothing.
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
+        bm.to_mesh(ob.data); bm.free()
+    elif shape == "dome":
+        rings = spec.get("rings", 4)
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=segs, ring_count=rings * 2)
+        ob = bpy.context.object
+        bm = bmesh.new(); bm.from_mesh(ob.data)
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.z < -1e-6], context="VERTS")
+        edges = [e for e in bm.edges if e.is_boundary]
+        if edges:
+            # Cap the base. An open hemisphere is invisible from below, which is fine until the
+            # camera drops or the building sits on a slope, and then it is a hole in the world.
+            bmesh.ops.holes_fill(bm, edges=edges)
+        # Remap z from 0..1 to -1..1, so `size` means full height and `at` means centre — the
+        # same contract every other shape here has. Without it a dome is silently half as tall
+        # as asked for and sits at the wrong elevation.
+        for v in bm.verts:
+            v.co.z = v.co.z * 2.0 - 1.0
+        bm.to_mesh(ob.data); bm.free()
     elif shape == "wedge":
         # A ramp: the sloped-front hull that makes a vehicle read as a vehicle rather than a
         # crate. Built by hand because Blender has no wedge primitive.
@@ -164,12 +201,6 @@ def build_part(spec, uv_scale):
         m.constant_offset_displace = arr.get("offset", [0, 0, 0])
         _apply(ob, m)
 
-    mir = spec.get("mirror")
-    if mir:
-        m = ob.modifiers.new(name="mirror", type="MIRROR")
-        m.use_axis = tuple(a in mir.lower() for a in "xyz")
-        _apply(ob, m)
-
     bev = spec.get("bevel")
     if bev:
         m = ob.modifiers.new(name="bevel", type="BEVEL")
@@ -188,6 +219,19 @@ def build_part(spec, uv_scale):
     ob.rotation_euler = [math.radians(a) for a in spec.get("rot", [0, 0, 0])]
     _only(ob)
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+    # MIRROR RUNS LAST, and specifically AFTER the part has been placed. *This was a live bug:*
+    # while a part is still at the origin, the mirror plane passes through the part itself, so
+    # reflecting a symmetric box lands it exactly on top of itself and the modifier appears to
+    # do nothing at all — a building asking for louvres down both flanks got one flank, with no
+    # error and a plausible triangle count. Symmetry is about the MODEL's centreline, never the
+    # part's. transform_apply has just moved the origin back to the world origin, which is what
+    # makes the modifier's own axes the world's.
+    mir = spec.get("mirror")
+    if mir:
+        m = ob.modifiers.new(name="mirror", type="MIRROR")
+        m.use_axis = tuple(a in mir.lower() for a in "xyz")
+        _apply(ob, m)
 
     # CUBE projection, not smart-project. The house rule is that texel density must be UNIFORM
     # across surfaces — a live bug once made a cylinder's side cells 3.1x wider than its cap
@@ -218,19 +262,28 @@ def main():
     uv_scale = recipe.get("uvScale", 8.0)
     parts = [build_part(p, uv_scale) for p in recipe["parts"]]
 
-    # BUDGET. Decimation is applied AFTER every part exists, at one ratio across all of them,
-    # so the model keeps its proportions instead of whichever part was built last being the
-    # one that survives intact.
+    # BUDGET. Over-budget REPORTS by default and does not quietly degrade the model.
+    #
+    # Collapse decimation is an organic-mesh tool: run on hard surface it eats exactly the
+    # bevel loops that made the thing read as built rather than blocked out, and it does it
+    # silently — the triangle count lands on target and the model quietly gets worse. Retail
+    # models are hand-built to budget, not decimated to it, and the honest response to an
+    # over-budget recipe is to tell the author which parts are expensive so they can drop a
+    # segment or a wheel. Opt in with "decimate": true if the degradation is genuinely wanted.
     budget = recipe.get("budget")
     total = sum(tri_count(o) for o in parts)
     if budget and total > budget:
-        ratio = budget / float(total)
-        for ob in parts:
-            m = ob.modifiers.new(name="decimate", type="DECIMATE")
-            m.decimate_type = "COLLAPSE"
-            m.ratio = ratio
-            _apply(ob, m)
-        total = sum(tri_count(o) for o in parts)
+        heavy = sorted(parts, key=tri_count, reverse=True)[:3]
+        print(f"ZHOVER {total} {budget} "
+              + " ".join(f"{o.name}={tri_count(o)}" for o in heavy))
+        if recipe.get("decimate"):
+            ratio = budget / float(total)
+            for ob in parts:
+                m = ob.modifiers.new(name="decimate", type="DECIMATE")
+                m.decimate_type = "COLLAPSE"
+                m.ratio = ratio
+                _apply(ob, m)
+            total = sum(tri_count(o) for o in parts)
 
     bpy.ops.export_scene.gltf(
         filepath=out,

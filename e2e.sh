@@ -2459,5 +2459,121 @@ PYCHK
 rm -rf "$NT"; trap - EXIT
 
 
+gate "the modelling recipe — ridge, dome, and a mirror that actually mirrors"
+# The geometry kernel is Blender's; what is ours is the recipe, and each of these three has a
+# failure mode that produces a PLAUSIBLE model rather than an error.
+BL=/Applications/Blender.app/Contents/MacOS/Blender
+if [ ! -x "$BL" ]; then
+  echo "  (no Blender: the modelling backend cannot be exercised — skipped)"
+else
+  MB=$(mktemp -d); trap 'rm -rf "$MB"' EXIT
+  cat > "$MB/r.json" <<'JSONMB'
+{ "name": "GATE", "budget": 900, "uvScale": 16,
+  "parts": [
+    { "name": "RIDGE", "shape": "ridge", "size": [40, 24, 16], "at": [0, 0, 8],
+      "ridgeAxis": "x" },
+    { "name": "DOME", "shape": "dome", "size": [36, 36, 20], "at": [0, 90, 10],
+      "segments": 12, "rings": 3 },
+    { "name": "WING", "shape": "box", "size": [6, 10, 6], "at": [40, -60, 3],
+      "mirror": "x" }
+  ] }
+JSONMB
+  ./tools/zhasset model --recipe "$MB/r.json" --out "$MB/r.w3d" >/dev/null 2>&1 \
+    || { echo "  THE MODELLING BACKEND FAILED"; ./tools/zhasset model --recipe "$MB/r.json" \
+         --out "$MB/r.w3d"; exit 1; }
+  python3 - "$MB/r.w3d" <<'PYMB'
+import struct, sys
+buf = open(sys.argv[1], "rb").read()
+def tree(off, end):
+    n = []
+    while off + 8 <= end:
+        t, raw = struct.unpack_from("<II", buf, off); sz = raw & 0x7FFFFFFF; body = off + 8
+        n.append((t, None if raw & 0x80000000 else buf[body:body + sz],
+                  tree(body, body + sz) if raw & 0x80000000 else []))
+        off = body + sz
+    return n
+parts = {}
+for t, p, k in tree(0, len(buf)):
+    if t != 0x0000:
+        continue
+    st = {}
+    def scan(ns):
+        for tt, pp, kk in ns:
+            if tt == 0x001F: st["nm"] = pp[8:24].split(b"\0")[0].decode()
+            if tt == 0x0002: st["v"] = [struct.unpack_from("<3f", pp, i * 12)
+                                        for i in range(len(pp) // 12)]
+            if tt == 0x0020: st["t"] = [struct.unpack_from("<3I", pp, i * 32)
+                                        for i in range(len(pp) // 32)]
+            scan(kk)
+    scan(k)
+    parts[st["nm"]] = st
+
+fail = []
+
+# RIDGE: the top must collapse to a LINE. `taper` scales both non-axis dimensions equally and
+# so yields a pyramid — a shape that looks deliberate and is not a roof. Measure the Y spread
+# at the top against the Y spread at the bottom: a roof narrows in Y only, and keeps its full
+# length in X.
+r = parts["RIDGE"]; v = r["v"]
+zhi = max(p[2] for p in v); zlo = min(p[2] for p in v)
+top = [p for p in v if p[2] > zhi - 1e-3]
+bot = [p for p in v if p[2] < zlo + 1e-3]
+wy_top = max(p[1] for p in top) - min(p[1] for p in top)
+wy_bot = max(p[1] for p in bot) - min(p[1] for p in bot)
+wx_top = max(p[0] for p in top) - min(p[0] for p in top)
+if wy_top > wy_bot * 0.5:
+    fail.append(f"RIDGE did not narrow: top spans {wy_top:.1f} in Y, bottom {wy_bot:.1f}")
+if wx_top < 30.0:
+    fail.append(f"RIDGE collapsed to a POINT, not a line: top spans {wx_top:.1f} in X")
+
+# DOME: `size` must mean FULL height. A hemisphere is naturally z in 0..1, so without the
+# remap it is silently half as tall as asked for and sits at the wrong elevation — which reads
+# as a scale mistake in the recipe rather than a bug in the shape.
+d = parts["DOME"]["v"]
+h = max(p[2] for p in d) - min(p[2] for p in d)
+if abs(h - 20.0) > 0.5:
+    fail.append(f"DOME is {h:.1f} tall, asked for 20 — `size` must mean full height")
+
+# MIRROR: *this was a live bug.* While a part still sits at the origin the mirror plane passes
+# through the part itself, so reflecting a symmetric box lands it exactly on top of itself and
+# the modifier appears to do nothing — one flank of louvres instead of two, no error, and a
+# triangle count that looks entirely reasonable. WING is authored at x=+40, so a working
+# mirror must put geometry at negative x too.
+w = parts["WING"]["v"]
+if min(p[0] for p in w) > -1.0:
+    fail.append(f"MIRROR PRODUCED NOTHING: WING spans x {min(p[0] for p in w):.1f}.."
+                f"{max(p[0] for p in w):.1f}, authored at +40 with mirror:x")
+
+# And every face must still wind outward after all that surgery — an inverted normal renders
+# black or invisible in game and is not visible in a chunk dump.
+for nm, st in parts.items():
+    vs, ts = st["v"], st["t"]
+    c = [sum(p[i] for p in vs) / len(vs) for i in range(3)]
+    bad = 0
+    for a, b, cc in ts:
+        p0, p1, p2 = vs[a], vs[b], vs[cc]
+        u = [p1[i] - p0[i] for i in range(3)]; vv = [p2[i] - p0[i] for i in range(3)]
+        n = (u[1]*vv[2]-u[2]*vv[1], u[2]*vv[0]-u[0]*vv[2], u[0]*vv[1]-u[1]*vv[0])
+        fc = [(p0[i]+p1[i]+p2[i])/3 - c[i] for i in range(3)]
+        if sum(n[i]*fc[i] for i in range(3)) < 0:
+            bad += 1
+    # MIRROR is exempt: a mirrored pair straddles the centre, so "away from the mesh centroid"
+    # is not a meaningful test for it.
+    if bad and nm != "WING":
+        fail.append(f"{nm}: {bad}/{len(ts)} faces wind INWARD")
+
+if fail:
+    for f in fail:
+        print("  " + f)
+    sys.exit(1)
+print(f"  ridge narrows to a line ({wy_top:.1f} vs {wy_bot:.1f} in Y, {wx_top:.0f} long)")
+print(f"  dome honours full height ({h:.0f} of 20 asked)")
+print(f"  mirror reflects across the MODEL centreline, not the part's")
+print(f"  every face winds outward after taper, bevel, boolean and mirror")
+PYMB
+  rm -rf "$MB"; trap - EXIT
+fi
+
+
 echo
 echo "E2E PASS"

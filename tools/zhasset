@@ -3717,8 +3717,18 @@ def cmd_model(a):
         # State the budget against the MEASURED corpus rather than against a number someone
         # liked: median 169 triangles, p90 619. A model over p90 is not wrong, but it is
         # heavier than 90% of everything the game already ships.
-        verdict = "within" if int(tot[2]) <= budget else "OVER"
-        print(f"  budget {budget}: {verdict} (retail median 169 tris, p90 619)")
+        over = next((l.split() for l in r.stdout.splitlines() if l.startswith("ZHOVER ")), None)
+        if over and not recipe.get("decimate"):
+            # Named parts, not just a number: "over by 260" is not actionable, "LOUVRES=532"
+            # is. Silent decimation was the old behaviour and it made a model quietly worse
+            # while the count landed on target.
+            print(f"  BUDGET {budget} EXCEEDED: {over[1]} triangles. Heaviest: "
+                  + ", ".join(over[3:]))
+            print("    drop a segment, a wheel or an array count — or set \"decimate\": true")
+            print("    to collapse to fit, which eats the bevels that made it read as built.")
+        else:
+            verdict = "within" if int(tot[2]) <= budget else "decimated to fit"
+            print(f"  budget {budget}: {verdict} (retail median 169 tris, p90 619)")
     return 0
 
 
