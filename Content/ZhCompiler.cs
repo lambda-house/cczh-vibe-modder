@@ -104,6 +104,28 @@ public static class ZhCompiler
         // pack has no reason to reinvent to prove a unit works.
         var icons = ZhIcons.Begin(pack + "_icons");
 
+        // Point each unit's button and portrait at a RENDER OF ITS MODEL, when the art build
+        // made one. `zhasset models` writes <MODEL>_icon.tga beside every mesh it builds, so
+        // the file is found the same way the zero-borrow lint finds a mesh's textures: through
+        // zh.Art, by leaf name. No new schema field, and nothing to keep in sync.
+        foreach (var u in db.Units)
+        {
+            if (!zh.Models.TryGetValue(u.Id, out var model) || string.IsNullOrWhiteSpace(model))
+                continue;
+            var meshPath = zh.Art.FirstOrDefault(p =>
+                string.Equals(Path.GetFileNameWithoutExtension(p), model,
+                              StringComparison.OrdinalIgnoreCase));
+            if (meshPath is null) continue;
+            var icon = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(meshPath)) ?? ".",
+                                    model + "_icon.tga");
+            if (!File.Exists(icon)) continue;
+            // Both the build button and the larger selection portrait: they are two cells and
+            // two MappedImage entries, and a portrait left as a swatch beside a rendered
+            // button looks like one of the two is broken.
+            icons.Art[P(u.Id)] = icon;
+            icons.Art[P(u.Id) + "_L"] = icon;
+        }
+
         // The pack's own death effect. Authored unconditionally and used wherever an adopted
         // mesh does not supply one, which is every authored mesh and every structure — those
         // died silently and invisibly before this, the last place adopting retail art was

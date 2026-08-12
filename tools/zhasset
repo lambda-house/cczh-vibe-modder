@@ -2796,14 +2796,24 @@ def cmd_tga(a):
     return 0
 
 
-def tga_write(path, w, h, rows):
-    """rows[y][x] = (r,g,b), y ascending from the BOTTOM — TGA's own origin."""
+def tga_write(path, w, h, rows, alpha=None):
+    """rows[y][x] = (r,g,b), y ascending from the BOTTOM — TGA's own origin.
+
+    With `alpha` supplied the file is 32-bit BGRA with descriptor 0x08 (8 alpha bits), which
+    is what every retail UI page measures as. An icon is COMPOSITED over the control bar, so
+    without a real alpha channel its background shows as a black tile around the unit.
+    """
     px = bytearray()
     for y in range(h):
         for x in range(w):
             r, g, b = rows[y][x]
-            px += bytes((b, g, r))
-    hdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, w, h, 24, 0)
+            if alpha is None:
+                px += bytes((b, g, r))
+            else:
+                px += bytes((b, g, r, alpha[y][x]))
+    bpp = 24 if alpha is None else 32
+    desc = 0 if alpha is None else 0x08
+    hdr = struct.pack("<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, w, h, bpp, desc)
     open(path, "wb").write(hdr + bytes(px))
     return 18 + len(px)
 
@@ -4098,6 +4108,7 @@ def cmd_models(a):
     if os.path.exists(prof):
         os.remove(prof)
     rc = 0
+    built = []
     for r in recipes:
         recipe = json.load(open(os.path.join(a.dir, r)))
         name = recipe.get("name") or os.path.splitext(r)[0].upper()
@@ -4106,8 +4117,134 @@ def cmd_models(a):
                                 name=name, texture=None, blender=a.blender, profiles=a.out)
         print(f"== {r} ==")
         rc |= cmd_model(ns)
+        built.append(name)
+
+    if not a.no_icons:
+        # ICONS ARE RENDERS OF THE MODEL ITSELF. The generated sheet was flat colour swatches —
+        # diagnostic (adjacent hues far apart, so two MappedImages sharing a cell is visible)
+        # and completely uninformative, which in game reads as a missing icon rather than as a
+        # placeholder. The unit is the best possible picture of the unit, and everything needed
+        # to take it already exists: the glTF exporter and headless Blender.
+        for name in built:
+            rc |= _render_icon(os.path.join(a.out, f"{name}.W3D"),
+                               os.path.join(a.out, f"{name}_icon.tga"),
+                               a.blender or BLENDER)
     print(f"built {len(recipes)} recipe(s) into {a.out}")
     return rc
+
+
+def _render_icon(w3d, out, blender):
+    """Render one model to a 64x64 RGBA icon on a transparent background."""
+    import subprocess, tempfile
+    if not os.path.exists(blender):
+        print(f"  (no Blender: {os.path.basename(out)} not rendered)")
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        glb = os.path.join(tmp, "m.glb")
+        if cmd_gltf(argparse.Namespace(file=w3d, out=glb, textures=None)):
+            return 1
+        png = os.path.join(tmp, "icon.png")
+        # A three-quarter view from slightly above: the angle the game itself shows a unit
+        # from, so the button and the thing on the battlefield agree.
+        script = f'''
+import bpy, math, mathutils
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath={glb!r})
+sc = bpy.context.scene
+objs = [o for o in bpy.data.objects if o.type == "MESH"]
+mn = mathutils.Vector((1e9,)*3); mx = mathutils.Vector((-1e9,)*3)
+for o in objs:
+    for c in o.bound_box:
+        w = o.matrix_world @ mathutils.Vector(c)
+        for i in range(3):
+            mn[i] = min(mn[i], w[i]); mx[i] = max(mx[i], w[i])
+ctr = (mn + mx) / 2
+rad = (mx - mn).length / 2
+cam_d = bpy.data.cameras.new("c"); cam = bpy.data.objects.new("c", cam_d)
+sc.collection.objects.link(cam); sc.camera = cam
+cam_d.type = "ORTHO"; cam_d.ortho_scale = rad * 2.05
+d = rad * 4
+cam.location = ctr + mathutils.Vector((d*0.62, -d*0.66, d*0.44))
+cam.rotation_euler = (ctr - cam.location).to_track_quat("-Z", "Y").to_euler()
+key = bpy.data.lights.new("k", type="SUN"); key.energy = 4.5
+ko = bpy.data.objects.new("k", key); sc.collection.objects.link(ko)
+ko.rotation_euler = (math.radians(52), 0, math.radians(35))
+fill = bpy.data.lights.new("f", type="SUN"); fill.energy = 1.6
+fo = bpy.data.objects.new("f", fill); sc.collection.objects.link(fo)
+fo.rotation_euler = (math.radians(64), 0, math.radians(210))
+sc.render.engine = "BLENDER_EEVEE"
+sc.render.resolution_x = 64; sc.render.resolution_y = 64
+sc.render.film_transparent = True
+sc.render.image_settings.file_format = "PNG"
+sc.render.image_settings.color_mode = "RGBA"
+sc.render.filepath = {png!r}
+bpy.ops.render.render(write_still=True)
+print("ICON OK")
+'''
+        r = subprocess.run([blender, "--background", "--python-expr", script],
+                           capture_output=True, text=True)
+        if "ICON OK" not in r.stdout or not os.path.exists(png):
+            print(f"  ICON RENDER FAILED for {os.path.basename(w3d)}")
+            for line in (r.stdout + r.stderr).splitlines():
+                if any(k in line for k in ("Error", "Traceback", "raise")):
+                    print("    " + line)
+            return 1
+        w, h, rows, alpha = png_read(png)
+        tga_write(out, w, h, rows, alpha)
+        print(f"  icon {os.path.basename(out)}: {w}x{h} RGBA, rendered from the model")
+    return 0
+
+
+def png_read(path):
+    """Decode an 8-bit RGB/RGBA PNG to (w, h, rows_bottom_up, alpha_bottom_up).
+
+    Needed because Blender writes PNG and the sheet wants TGA, and the alpha matters: an icon
+    is composited over the control bar, so a background that is merely dark rather than
+    TRANSPARENT shows as a black tile around the unit.
+    """
+    import zlib
+    d = open(path, "rb").read()
+    if d[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{path}: not a PNG")
+    off, idat, w = 8, b"", None
+    while off < len(d):
+        ln = struct.unpack_from(">I", d, off)[0]
+        typ = d[off + 4:off + 8]
+        body = d[off + 8: off + 8 + ln]
+        if typ == b"IHDR":
+            w, h, depth, ctype = struct.unpack_from(">IIBB", body, 0)
+            if depth != 8 or ctype not in (2, 6):
+                raise ValueError(f"{path}: only 8-bit RGB/RGBA handled (got {depth}/{ctype})")
+        elif typ == b"IDAT":
+            idat += body
+        off += 12 + ln
+    n = 3 if ctype == 2 else 4
+    raw = zlib.decompress(idat)
+    stride = w * n
+    prev = bytearray(stride)
+    rows, alph = [], []
+    p = 0
+    for _ in range(h):
+        f = raw[p]; p += 1
+        line = bytearray(raw[p:p + stride]); p += stride
+        # The five PNG filters. Skipping them gives an image that is recognisably the right
+        # shape and wrong everywhere, which is worse than failing.
+        for i in range(stride):
+            a = line[i - n] if i >= n else 0
+            b = prev[i]
+            c = prev[i - n] if i >= n else 0
+            if f == 1: line[i] = (line[i] + a) & 255
+            elif f == 2: line[i] = (line[i] + b) & 255
+            elif f == 3: line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 255
+        prev = line
+        rows.append([(line[x * n], line[x * n + 1], line[x * n + 2]) for x in range(w)])
+        alph.append([line[x * n + 3] if n == 4 else 255 for x in range(w)])
+    rows.reverse(); alph.reverse()                 # PNG is top-down, TGA is bottom-up
+    return w, h, rows, alph
 
 
 def main():
@@ -4173,6 +4310,8 @@ def main():
     ms = sub.add_parser("models", help="build EVERY recipe in a directory — the pack's art step")
     ms.add_argument("--dir", default="Content/models"); ms.add_argument("--out", default="build/models")
     ms.add_argument("--blender", help=f"path to Blender (default {BLENDER})")
+    ms.add_argument("--no-icons", dest="no_icons", action="store_true",
+                    help="skip rendering each model to an icon")
     ms.set_defaults(fn=cmd_models)
 
     wf = sub.add_parser("w3dfrom", help="build a .w3d from a .glb — every chunk authored, no template")

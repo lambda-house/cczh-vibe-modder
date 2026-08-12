@@ -2854,6 +2854,11 @@ PYART2
   n=0
   for f in "$RF"/models/*.tga; do
     b=$(basename "$f")
+    # *_icon.tga is an INPUT, not an installed file — the same footing as labels.str. The art
+    # build renders one per model and the compiler blits it INTO the shared icon sheet, so the
+    # sheet ships and the source does not. Carrying it too would install a texture nothing
+    # references and put it in the uninstall manifest.
+    case "$b" in *_icon.tga) continue ;; esac
     cmp -s "$f" "$RF/out/Art/Textures/$b" \
       || { echo "  texture $b was not carried byte-identically"; exit 1; }
     n=$((n + 1))

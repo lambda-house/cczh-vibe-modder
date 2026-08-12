@@ -63,6 +63,17 @@ public static class ZhIcons
             return name;
         }
 
+        /// <summary>
+        /// Image name -> a 32-bit TGA to blit into that cell instead of the flat hue.
+        ///
+        /// <para>The generated swatches are diagnostic and completely uninformative, and in
+        /// game an uninformative button reads as a MISSING one rather than as a placeholder —
+        /// which is exactly how it was reported. A render of the model is the best possible
+        /// picture of the model, and `zhasset models` already takes one beside every mesh it
+        /// builds.</para>
+        /// </summary>
+        public readonly Dictionary<string, string> Art = new(StringComparer.Ordinal);
+
         public byte[] Tga() => Render(this);
     }
 
@@ -98,10 +109,34 @@ public static class ZhIcons
             for (int x = 0; x < w; x++)
                 Put(x, y, 18, 20, 26);
 
+        void PutA(int x, int y, int r, int g, int b, int a)
+        {
+            int o = ((h - 1 - y) * w + x) * 4;
+            px[o] = (byte)b; px[o + 1] = (byte)g; px[o + 2] = (byte)r; px[o + 3] = (byte)a;
+        }
+
         int cells = s.Cells;
         for (int idx = 0; idx < s.Images.Count; idx++)
         {
             int cx = idx % cells, cy = idx / cells;
+            // A rendered picture of the model wins over the diagnostic swatch whenever one was
+            // produced. The swatch remains the fallback rather than being deleted: it is what
+            // an upgrade button, which has no model, still gets — and it keeps the "two
+            // MappedImages pointing at one cell" mistake visible.
+            if (s.Art.TryGetValue(s.Images[idx], out var file) && ReadTga(file) is { } art)
+            {
+                for (int y = 0; y < CellPixels; y++)
+                    for (int x = 0; x < CellPixels; x++)
+                    {
+                        // Nearest-neighbour, because the render is authored at exactly
+                        // CellPixels and any resample here would only blur it.
+                        int sx = x * art.W / CellPixels, sy = y * art.H / CellPixels;
+                        int o = (sy * art.W + sx) * 4;
+                        PutA(cx * CellPixels + x, cy * CellPixels + y,
+                             art.Px[o + 2], art.Px[o + 1], art.Px[o], art.Px[o + 3]);
+                    }
+                continue;
+            }
             var (r, g, b) = Hue((idx * 0.6180339887) % 1.0);
             int dr = (int)(r * 0.35), dg = (int)(g * 0.35), db = (int)(b * 0.35);
             for (int y = 0; y < CellPixels; y++)
@@ -124,6 +159,30 @@ public static class ZhIcons
         tga[17] = 0x08;                               // 8 alpha bits, origin bottom-left
         px.CopyTo(tga, 18);
         return tga;
+    }
+
+    /// <summary>
+    /// Read an uncompressed 32-bit BGRA TGA back, as BGRA bytes top-down.
+    /// Returns null rather than throwing when the file is absent or not the one shape we
+    /// write: a missing icon must fall back to the swatch, never fail a compile.
+    /// </summary>
+    private static (int W, int H, byte[] Px)? ReadTga(string path)
+    {
+        byte[] d;
+        try { d = File.ReadAllBytes(path); }
+        catch (IOException) { return null; }
+        if (d.Length < 18 || d[2] != 2 || d[16] != 32) return null;
+        int idlen = d[0];
+        int w = BitConverter.ToUInt16(d, 12), h = BitConverter.ToUInt16(d, 14);
+        bool topDown = (d[17] & 0x20) != 0;
+        if (d.Length < 18 + idlen + w * h * 4) return null;
+        var px = new byte[w * h * 4];
+        for (int y = 0; y < h; y++)
+        {
+            int src = 18 + idlen + ((topDown ? y : h - 1 - y) * w) * 4;
+            Array.Copy(d, src, px, y * w * 4, w * 4);
+        }
+        return (w, h, px);
     }
 
     private static (int R, int G, int B) Hue(double hue)
