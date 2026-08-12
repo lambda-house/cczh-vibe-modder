@@ -317,3 +317,50 @@ are emitted by `rts compile`, not hand-written.
      verify audio with `zhasset audio <packdir>` and a clean boot, and say plainly that
      playback is unverified. This is the same shape as rule 11 (`GameData` parses and does
      nothing) — the file being read is necessary and nowhere near sufficient.
+
+20. **A SUBMESH NAME IS AN ENGINE INTERFACE, and it is not declared in INI anywhere.** Four
+   features are switched on by string-matching a name inside the `.w3d`, so a lint that reads
+   only content cannot see any of them:
+
+   | match | where | what it does |
+   |---|---|---|
+   | `_strnicmp(name,"TREADS",6)`, then `name[6]` ∈ `L`/`R` | `W3DTankDraw::updateTreadObjects` | scrolling track belt |
+   | `_strnicmp(name,"HOUSECOLOR",10)` | `W3DAssetManager::Recolor_Mesh` | submesh takes the player's colour |
+   | `Get_Bone_Index("TREADFX01")` / `02` | `computeTrackSpacing` | how wide the mud ribbon is |
+   | the exact part name `TURRET` | `zhasset artprofile` → our compiler | emits the AI Turret block and the Draw bone |
+
+   Every one needs a **second half in INI, and each half fails silently on its own.** A belt
+   scrolls only if all four of these hold: the mesh is named `TREADSL`/`TREADSR`; its vertex
+   material carries `W3DVERTMAT_STAGE0_MAPPING_LINEAR_OFFSET` (`0x00040000`) **and** a
+   `VERTEX_MAPPER_ARGS0` chunk, because the scan tests `Peek_Mapper()->Mapper_ID()` and skips
+   a belt with none; `TreadAnimationRate` is non-zero, since its 0.0 default makes
+   `updateTreadObjects` return before it scans anything; and `Draw = W3DTankDraw`. Four ways
+   to get a tank whose tracks never move, in a clean boot, with nothing logged. `HOUSECOLOR`
+   is the same shape: perfect naming plus a draw module that did not say
+   `OkToChangeModelColor = Yes` is a unit that is grey for every player.
+
+   Two consequences worth stating separately:
+   - **A side letter is mandatory on a tread.** Without one the type stays `TREAD_MIDDLE`,
+     which `updateTreadPositions` handles with a `DEBUG_CRASH` — compiled out here — and an
+     offset of zero. Found, bound, and motionless.
+   - **`HOUSECOLOR` texels are multiplied by the team colour, and the material is IGNORED.**
+     `Recolor_Vertex_Material` says so in its own comment ("we ignore the existing
+     ambient/diffuse and assume they were 1.0") and then *sets* both to the team colour. So
+     paint that region near-white. Olive × red is mud, for every player alike.
+
+   **There is no turret ARC.** `TurretAIData::buildFieldParse` carries eighteen keys and not
+   one bounds azimuth: `NaturalTurretPitch`/`MinPhysicalPitch` and the weapon's
+   `Min`/`MaxTargetPitch` are elevation, `Min`/`MaxIdleScanAngle` bound only the idle wander,
+   `TurretFireAngleSweep` is a sweep *while firing*, and `AcceptableAimDelta` is a tolerance
+   before the shot is allowed. **A gun is 360° or it is fixed.** A casemate vehicle is
+   therefore modelled by *not* naming the part `TURRET` and by dropping the hull's `TurnRate`
+   to the traverse speed you want — 60 is retail's Overlord, against 180 for a Crusader.
+
+21. **A MODULE'S C++ DEFAULTS ARE A CONTENT CHANNEL NOTHING CAN LINT.** Adopting
+   `W3DTankDraw` silently attaches EA's `TrackDebrisDirtLeft` and `TrackDebrisDirtRight`
+   particle systems, because `W3DTankDrawModuleData`'s constructor assigns those names —
+   there is no reference in your INI, so a zero-borrow check that reads content finds nothing
+   to object to, and the dust appears in game anyway. Override with `TreadDebrisLeft` /
+   `TreadDebrisRight`. *The general rule: a module you did not fully specify is running on
+   defaults chosen by whoever wrote it, and some of those defaults name retail assets. Read
+   the module's constructor, not just its `buildFieldParse`.*

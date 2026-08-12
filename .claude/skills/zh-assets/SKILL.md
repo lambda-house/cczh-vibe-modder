@@ -90,6 +90,30 @@ Three consequences that are not obvious:
   and the engine finds a turret the same way. `w3dfrom` carries recipe names through; a
   merged single mesh cannot animate however good it looks.
 
+### Names the engine reads, and the INI half each one needs
+
+Naming a part is not documentation — it is the switch. Full contract and the four silent
+failure modes: **`zh-authoring` → `references/engine-rules.md` rule 20.** Summary:
+
+| name the part | and emit | to get |
+|---|---|---|
+| `TREADSL` / `TREADSR` | `Draw = W3DTankDraw` + `TreadAnimationRate` (non-zero!) | a scrolling belt |
+| `HOUSECOLOR<nn>` | `OkToChangeModelColor = Yes` | the player's colour on that submesh |
+| bones `TREADFX01`/`02` | `TrackMarks = <sheet>.tga` | mud sized to the real track width |
+| `TURRET`, exactly | *(derived)* an AI Turret block and a Draw bone | a **360°** gun |
+
+A tread must also carry the `LINEAR_OFFSET` vertex-material mapper (`0x00040000`) plus a
+`VERTEX_MAPPER_ARGS0` chunk, or the engine's scan skips it. `zhasset model` does this from
+the name; do not hand-write it.
+
+**Do not name a part `TURRET` unless it should spin through 360°** — ZH has no arc field
+anywhere, so a limited-traverse gun does not exist. Model a casemate by naming the part
+something else (`CASEMATE`) and slowing the hull's `TurnRate` to the traverse you want.
+
+**Bones need no geometry, and most bones have none.** NVGattTank carries **29 pivots for 12
+submeshes**; the 17 spare ones are `FIREPOINT01..08` (flames on a wreck), `SMOKE01..03`,
+`MUZZLE01`, `TREADFX01..04`. Declare them with `"bones": [{"name":…, "at":[x,y,z]}]`.
+
 ## Recipes (`Content/models/*.json`)
 
 `tools/zhblender.py` runs **inside Blender**, never under system Python. Shapes: `box`,
@@ -105,6 +129,41 @@ W3D sub-object.
 - **Over budget REPORTS and names the heaviest parts.** It does not decimate unless
   `"decimate": true`, because collapse decimation eats exactly the bevel loops that made the
   thing read as built, while the count lands neatly on target.
+
+## Textures: tiling material, packed atlas, and the one that must be neither
+
+Three modes, and picking wrong is not a quality question but a correctness one.
+
+- **A tiling MATERIAL** is the default and the measured norm: **61.9% of the 3,790 retail
+  meshes with texcoords have UVs outside 0..1**, so the engine wraps. Cube projection at a
+  fixed world size gives uniform texel density by construction.
+- **A packed ATLAS** (`"atlas": true`) gives each part its own rectangle, so a generator can
+  paint the roof *as* a roof. It is also what makes the AO bake possible — two parts sharing
+  a texel cannot each bake their own shadow into it.
+- **A SCROLLING sheet can be neither.** `W3DTankDraw` animates a belt by adding to the mesh's
+  U offset, so a tread packed into a sub-rectangle scrolls straight into its neighbour's.
+  Retail splits exactly here: `NVGattTank.tga` for the body, `NVTreads.tga` for the two
+  belts. `zhasset model` excludes a `TREADS*` part from the pack automatically.
+
+Four rules that each cost a rebuild:
+
+- **COUNTS IN A PAINTER ARE PER TILE, NOT PER MODEL.** Cube projection repeats the sheet;
+  at `uvScale` 12 a 48-long belt samples it four times, so `"wheels": 6` arrived in game as
+  twenty-four tiny ovals. Divide by the repeat count before you author.
+- **A part that leaves the atlas also leaves the AO bake**, so it must carry its own tone.
+  A belt tucked under an overhang rendered as the brightest thing on the vehicle otherwise.
+- **Every feature must be a FRACTION of its pitch.** A 1-px gap is 11% of a 9-px link and 3%
+  of a 32-px one, so coarsening a pattern to make it readable makes its edges finer instead.
+- **A moving texture must be legible at the speed it moves**, which is much coarser than a
+  good static surface. Thirty-two fine links read as a stationary hatch; twelve read as a
+  track. This is a different criterion from "looks right in a still".
+- **Don't paint what would slide.** Road wheels were correct on a static belt and wrong the
+  moment it scrolled — a painted wheel travels down the hull. Links are the only thing on a
+  real track that moves.
+- **A track-mark sheet is 32-bit and V-symmetric.** `_PresetAlphaShader` composites it, so
+  alpha *is* the mark; U runs across the ribbon (two bands, bare ground between) and V
+  alternates 0/1 **every other quad**, so anything not mirror-symmetric in V flickers between
+  two orientations as the vehicle drives.
 
 ## Looking at it
 

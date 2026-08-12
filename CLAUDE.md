@@ -309,6 +309,33 @@ the **`zh-authoring`** skill:
   *Corollary: a W3D mesh has nowhere to put a transform* — position lives in its vertices —
   so any importer must bake the source's node graph in, and any author-side step must apply
   transforms before export.
+- **A SUBMESH NAME IS AN ENGINE INTERFACE, so the compiler READS THE MESH rather than
+  believing the author.** Four features are switched on by string-matching a name inside the
+  `.w3d` and are declared in no INI key: `TREADS<L|R>` gives a scrolling belt, `HOUSECOLOR`
+  makes a submesh take the player's colour, the `TREADFX01`/`02` bones size the mud ribbon,
+  and a part named exactly `TURRET` produces a turret. Each needs a matching half in INI —
+  `TreadAnimationRate` (whose 0.0 default means the sub-object scan never runs at all),
+  `OkToChangeModelColor`, `TrackMarks` — and **every half fails silently and separately, in a
+  clean boot, with nothing logged.** That is why `ZhCompiler` opens the model and derives the
+  draw module, the tread fields and the hull turn rate from what is in it: an author restating
+  the mesh in content is an author who can contradict it. The corollary is that a rename is a
+  behaviour change — calling the Mangal's casemate `TURRET` would silently restore a 360° gun.
+  *Two shapes to keep in mind. **A gun is 360° or fixed**: `TurretAIData::buildFieldParse` has
+  eighteen keys and none bounds azimuth, so a limited arc cannot be expressed and a casemate is
+  modelled by not naming the part. And **a module's C++ defaults are a content channel nothing
+  can lint** — `W3DTankDraw` attaches EA's `TrackDebrisDirtLeft`/`Right` from its constructor,
+  so the pack depends on retail art with no reference anywhere for a check to find.*
+- **A TILING material, a packed ATLAS, and a SCROLLING sheet are three different things, and a
+  scrolling one can be neither of the others.** Scrolling works by adding to the mesh's U
+  offset, so a belt packed into an atlas rectangle scrolls into its neighbour's — retail splits
+  the same way, `NVGattTank.tga` for the body and `NVTreads.tga` for the belts. It follows that
+  a scrolling part also leaves the AO bake (whose whole premise is non-overlapping UVs) and
+  must carry its own tone, or it renders as the brightest thing on the vehicle. *Counts in a
+  tiling painter are PER TILE, not per model — cube projection repeated a six-wheel sheet four
+  times along a 48-long belt and put twenty-four wheels in game. And a moving texture has to be
+  legible at the SPEED IT MOVES, which is far coarser than a good static surface: thirty-two
+  fine links read as a stationary hatch. Make every feature a fraction of its pitch, or
+  coarsening the pattern makes its edges finer instead.*
 - **Model to the MEASURED budget, and spend the triangles where they can be seen.** Retail is
   median **169 triangles** (p75 298, p90 619, p99 1,015 over 3,794 models) and **256×256**
   textures (44% of 3,748). That is a 2003 hard-surface budget, and it is why text-to-3D

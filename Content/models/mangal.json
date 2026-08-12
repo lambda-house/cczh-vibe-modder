@@ -168,15 +168,34 @@
       "shape": "box",
       "texture": "mangal_tread.tga",
       "uvScale": 16,
+      "_shape": [
+        "A TRACK IS A TRAPEZOID IN SIDE VIEW, NOT A RECTANGLE. The belt only lies flat where",
+        "it touches the ground; at each end it climbs to a raised idler, so the return run",
+        "along the top is much longer than the contact patch and the ends slope at roughly",
+        "45 degrees. Three passes shipped a plain box, which is why the tank read as sitting",
+        "on two rails.",
+        "",
+        "`size` is the GROUND RUN and the taper stretches the top out to it: 28 at the",
+        "bottom, 28 x 1.71 = 48 along the return. That is 10 units of run against 11 of rise",
+        "at each end, a 48-degree slope. Contact is 58% of overall length, which is where a",
+        "real tank sits.",
+        "",
+        "The taper is [1.71, 1.0] — length only. A single factor scales BOTH other axes and",
+        "would have splayed the belt outward as it rose, turning the track into a funnel."
+      ],
       "size": [
-        48,
+        28,
         7,
-        9
+        11
       ],
       "at": [
         0,
         13.5,
-        4.5
+        5.5
+      ],
+      "taper": [
+        1.71,
+        1.0
       ],
       "bevel": {
         "width": 0.6,
@@ -190,17 +209,53 @@
       "texture": "mangal_tread.tga",
       "uvScale": 16,
       "size": [
-        48,
+        28,
         7,
-        9
+        11
       ],
       "at": [
         0,
         -13.5,
-        4.5
+        5.5
+      ],
+      "taper": [
+        1.71,
+        1.0
       ],
       "bevel": {
         "width": 0.6,
+        "segments": 1
+      }
+    },
+    {
+      "_": "THE SKIRT — vertical plates over the upper half of each track, and it exists to",
+      "__": "solve a coupling the taper created rather than for decoration. A tapered wall",
+      "___": "narrows as it rises, so above z = 7.4 the shed was inboard of the track's outer",
+      "____": "face and 3.6 units of track top surface stuck out from under it as a flat ledge.",
+      "_____": "The reference has exactly this piece for exactly this reason: near-vertical skirt",
+      "______": "plates standing proud, with the sloped shed starting above them.",
+      "_______": "",
+      "________": "Spans z 7 to 12.5, up to the carapace's new base. 36 wide, matching that base",
+      "_________": "exactly so the two read as one continuous flank rather than a stack.",
+      "__________": "",
+      "___________": "Its BOTTOM EDGE is the only thing deciding how much track shows, and the track",
+      "____________": "is where the 45-degree climb to the raised idlers lives. At 5.5 — the literal",
+      "_____________": "middle of an 11-tall belt — it hid all but a sliver of that climb and the tank",
+      "______________": "went back to looking like it sat on two rails. 7 leaves 64% of the belt showing.",
+      "name": "SKIRT",
+      "shape": "box",
+      "size": [
+        46,
+        36,
+        5.5
+      ],
+      "at": [
+        0,
+        0,
+        9.75
+      ],
+      "bevel": {
+        "width": 0.5,
         "segments": 1
       }
     },
@@ -242,14 +297,14 @@
       "size": [
         46,
         36,
-        22
+        14
       ],
       "at": [
         0,
         0,
-        15.5
+        19.5
       ],
-      "taper": 0.58,
+      "taper": 0.583,
       "bevel": {
         "width": 0.6,
         "segments": 1
@@ -265,7 +320,7 @@
           "at": [
             20,
             0,
-            0.5
+            -3
           ]
         }
       ]
@@ -346,14 +401,14 @@
         1.4,
         3.6
       ],
-      "_x": "The wall SLOPES now, so a flat plate's standoff is a function of its height: the",
-      "_y": "half-width runs 18 at the skirt to 10.4 at the ridge. At z = 13 the wall is at",
-      "_z": "15.1, and a 1.4-thick plate centred on 15.4 sits roughly flush across its own",
-      "_w": "3.6 of rise. Left at the old y = 18.3 it floated five units clear in mid-air.",
+      "_x": "The wall SLOPES, so a flat plate's standoff is a function of its height — and it",
+      "_y": "moves every time the carapace's base does. The wall now runs 18 at z = 12.5 to",
+      "_z": "10.5 at the ridge, so at z = 14 it is at 17.2 and a 1.4-thick plate centred on",
+      "_w": "17.4 sits roughly flush. Every earlier value left it either buried or in mid-air.",
       "at": [
         -11,
-        15.4,
-        13
+        17.4,
+        14
       ],
       "mirror": "y",
       "bevel": {
@@ -394,10 +449,10 @@
     "but retail carries all four and they cost 60 bytes each."
   ],
   "bones": [
-    { "name": "TREADFX01", "at": [-22, -13.5, 0.2] },
-    { "name": "TREADFX02", "at": [-22, 13.5, 0.2] },
-    { "name": "TREADFX03", "at": [22, 13.5, 0.2] },
-    { "name": "TREADFX04", "at": [22, -13.5, 0.2] }
+    { "name": "TREADFX01", "at": [-13, -13.5, 0.2] },
+    { "name": "TREADFX02", "at": [-13, 13.5, 0.2] },
+    { "name": "TREADFX03", "at": [13, 13.5, 0.2] },
+    { "name": "TREADFX04", "at": [13, -13.5, 0.2] }
   ],
 
   "extraTextures": {

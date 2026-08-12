@@ -119,10 +119,21 @@ def _taper(ob, factor, axis="z"):
 
     Done in bmesh on the finished primitive rather than as a modifier, so it composes with
     everything downstream instead of fighting the modifier stack's order.
+
+    ONE FACTOR TAPERS BOTH OTHER AXES EQUALLY and makes a pyramid, which is right for a
+    battered wall and wrong for anything with a profile. `[sx, sy]` scales them separately,
+    listed in xyz order skipping `axis`. A tank track is the case that forced it: seen from
+    the side its return run is LONGER than its ground contact, because the belt climbs to a
+    raised idler at each end — so it needs to stretch in length over its height and not budge
+    in width. An equal taper would have splayed the belt outward as it rose.
     """
-    if factor is None or factor == 1.0:
+    if factor is None:
+        return
+    fs = (factor, factor) if isinstance(factor, (int, float)) else (factor[0], factor[1])
+    if fs[0] == 1.0 and fs[1] == 1.0:
         return
     i = "xyz".index(axis)
+    others = [k for k in range(3) if k != i]
     lo = min(v.co[i] for v in ob.data.vertices)
     hi = max(v.co[i] for v in ob.data.vertices)
     if hi - lo < 1e-9:
@@ -130,10 +141,8 @@ def _taper(ob, factor, axis="z"):
     bm = bmesh.new(); bm.from_mesh(ob.data)
     for v in bm.verts:
         t = (v.co[i] - lo) / (hi - lo)              # 0 at the near face, 1 at the far one
-        s = 1.0 + (factor - 1.0) * t
-        for k in range(3):
-            if k != i:
-                v.co[k] *= s
+        for f, k in zip(fs, others):
+            v.co[k] *= 1.0 + (f - 1.0) * t
     bm.to_mesh(ob.data); bm.free()
 
 
