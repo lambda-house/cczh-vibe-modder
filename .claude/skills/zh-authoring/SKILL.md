@@ -41,6 +41,15 @@ effects expanded into their particle systems and debris meshes. Full shapes in
 - **Cover does not exist in ZH.** Firing line-of-sight is checked nowhere — confirmed in a match
   by killing a target through a cliff. Never tune balance against terrain cover.
 
+## Deeper references
+
+- **`references/engine-rules.md`** — the 17 rules measured against the RUNNING engine. Which
+  channels are additive and which are fatal, why `map.ini` is the only override channel, which
+  shared leaves BREAK when patched in place, and what a new faction must emit to be playable.
+  Read this before emitting anything into a retail install.
+- **`references/driving.md`** — launching with logging, and driving the client into a live
+  match to check a change by observation rather than by hope.
+
 ## Silent failures that reach a match
 
 Every one of these compiles, loads, boots 42/42 and then does nothing. No error, no log line.
