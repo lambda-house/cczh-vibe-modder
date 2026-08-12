@@ -2131,5 +2131,134 @@ fi
 rm -rf "$STR"; trap - EXIT
 
 
+gate "a mesh can be LOOKED AT — glTF export, graded by a second implementation"
+# Every other check on a mesh in this file is blind. w3dround proves the container is
+# understood by re-emitting it byte-identically; the authoring gate asserts counts, UV density
+# and normal variation. None of that can tell you the model is the SHAPE you meant, and the
+# project has the scar to prove the difference matters: art profiles were measured and found
+# UNDERIVABLE from geometry (slice 15, struck), so a mesh whose declared radius disagrees with
+# its drawn size is selectable in the wrong place and nothing here would notice.
+#
+# glTF rather than a Blender plugin: writing it straight out of the parser we already have
+# needs no dependency, and gives a SECOND IMPLEMENTATION reading our own output — the standing
+# this file already demands of ZhMapWriter, which is graded by `zhasset map` because a writer
+# checked by its own reader proves only that the two agree.
+GL=$(mktemp -d); trap 'rm -rf "$GL"' EXIT
+W3DBIG="$HOME/GeneralsX/GeneralsZH/ZH_Generals/W3D.big"
+if [ ! -f "$W3DBIG" ]; then
+  echo "  (no install: the sample models are EA's art, extracted locally — skipped)"
+else
+  python3 - "$W3DBIG" "$GL" <<'PYGL'
+import struct, sys, os
+big, out = sys.argv[1], sys.argv[2]
+with open(big, "rb") as f:
+    f.read(8); (n,) = struct.unpack(">I", f.read(4)); f.read(4)
+    ents = []
+    for _ in range(n):
+        off, size = struct.unpack(">II", f.read(8)); nm = b""
+        while True:
+            c = f.read(1)
+            if c in (b"\x00", b""): break
+            nm += c
+        ents.append((nm.decode("latin-1"), off, size))
+    for nm, off, size in ents:
+        base = nm.split("\\")[-1].upper()
+        if base in ("ABPWRPLANT_D01.W3D", "AVLEOPARD.W3D", "AIHERO_SKL.W3D"):
+            f.seek(off); open(os.path.join(out, base), "wb").write(f.read(size))
+PYGL
+
+  # --- 1. The exporter must AGREE with the explainer on what is in the file. -----------
+  # `zhasset w3d` sums VERTICES/TRIANGLES over the flat chunk stream; the exporter walks the
+  # TREE, because a 10-sub-object model has ten VERTICES chunks and a renderer needs to know
+  # which belongs to which mesh. Two different traversals reaching the same totals is the
+  # cheapest evidence that the regrouping did not lose or double-count a chunk.
+  for f in "$GL"/AVLEOPARD.W3D "$GL"/ABPWRPLANT_D01.W3D; do
+    a=$(./tools/zhasset w3d "$f" | sed -n 's/.*geometry *: \([0-9,]*\) vertices, \([0-9,]*\) triangles/\1 \2/p')
+    b=$(./tools/zhasset gltf "$f" --out "${f%.W3D}.glb" | sed -n 's/.*mesh(es), \([0-9,]*\) vertices, \([0-9,]*\) triangles/\1 \2/p')
+    [ "$a" = "$b" ] && [ -n "$a" ] \
+      || { echo "  EXPORTER DISAGREES with the explainer on $(basename "$f"): '$a' vs '$b'"; exit 1; }
+  done
+  echo "  the tree walk and the flat walk agree on every count"
+
+  # --- 2. A .glb must be a well-formed glTF container. ----------------------------------
+  # Checked structurally rather than by "a viewer opened it": a truncated BIN chunk, or an
+  # accessor whose byteOffset is not 4-aligned, produces a file some viewers tolerate and
+  # others render as nothing.
+  python3 - "$GL/AVLEOPARD.glb" <<'PYGLB'
+import json, struct, sys
+d = open(sys.argv[1], "rb").read()
+magic, ver, total = struct.unpack_from("<III", d, 0)
+assert magic == 0x46546C67 and ver == 2, (hex(magic), ver)
+assert total == len(d), (total, len(d))
+off, chunks = 12, {}
+while off < len(d):
+    ln, ct = struct.unpack_from("<II", d, off)
+    chunks[ct] = d[off + 8: off + 8 + ln]
+    assert ln % 4 == 0, f"chunk {ct:#x} length {ln} is not 4-aligned"
+    off += 8 + ln
+doc = json.loads(chunks[0x4E4F534A])
+bin_ = chunks[0x004E4942]
+assert doc["buffers"][0]["byteLength"] <= len(bin_)
+for i, v in enumerate(doc["bufferViews"]):
+    assert v["byteOffset"] % 4 == 0, f"bufferView {i} is not 4-aligned"
+    assert v["byteOffset"] + v["byteLength"] <= len(bin_), f"bufferView {i} runs past the BIN chunk"
+# POSITION must carry min/max: the spec requires it, and a viewer uses it to frame the model.
+for m in doc["meshes"]:
+    for p in m["primitives"]:
+        a = doc["accessors"][p["attributes"]["POSITION"]]
+        assert "min" in a and "max" in a, "POSITION accessor has no bounds"
+print(f"  valid glb: {len(doc['meshes'])} meshes, {len(doc['accessors'])} accessors, "
+      f"{len(bin_):,} bytes of buffer")
+PYGLB
+
+  # --- 3. A file with no geometry is REFUSED, not exported empty. -----------------------
+  # A _SKL file is all HIERARCHY. Writing it as a valid glTF with zero meshes gives a viewer
+  # that opens on a blank grey void, which reads as a broken exporter rather than as the
+  # wrong input file.
+  if ./tools/zhasset gltf "$GL/AIHERO_SKL.W3D" --out "$GL/skl.glb" >/dev/null 2>&1; then
+    echo "  A SKELETON-ONLY FILE EXPORTED AS GEOMETRY — a viewer would open on nothing"; exit 1
+  fi
+  echo "  a skeleton-only file is refused rather than exported as an empty scene"
+
+  # --- 4. AUTHORED dimensions must survive the whole chain. -----------------------------
+  # This is the one that proves the axis convention. W3D is Z-up and glTF is Y-up, so the
+  # export applies the -90 degree rotation about X; get it wrong and the model arrives lying
+  # on its side, which reads as a modelling error rather than a transform one. Authoring a
+  # deliberately NON-CUBIC box is what makes the mistake visible — on 60x60x60 every wrong
+  # axis mapping looks perfect.
+  ./tools/zhasset w3dbox --template "$GL/ABPWRPLANT_D01.W3D" --out "$GL/tall.w3d" \
+      --name E2ETALL --size 60 40 90 --out-dir "$GL" >/dev/null
+  ./tools/zhasset gltf "$GL/tall.w3d" --out "$GL/tall.glb" \
+    | grep -q "bounds (Y-up): 60.00 x 90.00 x 40.00" \
+    || { echo "  AUTHORED 60x40x90 (Z-up) did not arrive as 60x90x40 (Y-up) — axes are wrong"
+         ./tools/zhasset gltf "$GL/tall.w3d" --out "$GL/tall.glb"; exit 1; }
+  echo "  authored 60x40x90 Z-up arrives as 60x90x40 Y-up — the rotation is right way round"
+
+  # --- 5. An INDEPENDENT glTF implementation, when one is installed. --------------------
+  # Everything above is still our own code grading our own output. Blender's importer was
+  # written by people who have never heard of this project, and it is the only check here that
+  # nothing in this repo can talk its way past.
+  BL=/Applications/Blender.app/Contents/MacOS/Blender
+  if [ ! -x "$BL" ]; then
+    echo "  (no Blender: the independent importer check is skipped)"
+  else
+    "$BL" --background --python-expr "
+import bpy
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath='$GL/AVLEOPARD.glb')
+v = t = 0
+for o in bpy.data.objects:
+    if o.type == 'MESH':
+        o.data.calc_loop_triangles()
+        v += len(o.data.vertices); t += len(o.data.loop_triangles)
+print('BLENDER %d %d' % (v, t))
+" 2>/dev/null | grep -q "BLENDER 400 245" \
+      || { echo "  BLENDER DID NOT READ BACK 400 verts / 245 tris — the glb is not portable"; exit 1; }
+    echo "  Blender's own importer reads back 400 vertices / 245 triangles"
+  fi
+fi
+rm -rf "$GL"; trap - EXIT
+
+
 echo
 echo "E2E PASS"

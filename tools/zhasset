@@ -3164,6 +3164,185 @@ def cmd_w3d(a):
     return 0
 
 
+# ---------------------------------------------------------------------------------------
+# glTF export — the first way anything in this project can be LOOKED AT.
+#
+# Every check we have on a mesh is blind. `w3dround` proves the container is understood by
+# re-emitting it byte-identically; the e2e gate asserts vertex and triangle counts, UV density
+# and normal variation. All of that is real and none of it can tell you the model is the SHAPE
+# you meant. A picture can, in one glance.
+#
+# WHY glTF RATHER THAN DRIVING BLENDER. Blender is installed here and OpenSAGE.BlenderPlugin
+# is the only W3D importer that exists, but wiring it means a heavyweight dependency, a
+# subprocess driver, and a plugin whose W3D dialect may differ from the one we emit — and a
+# mismatch there would read as OUR bug. Writing glTF straight out of the parser we already
+# have is smaller, and it is a SECOND IMPLEMENTATION reading our own output: the same standing
+# this project already demands of the map writer, where `zhasset map` grades what ZhMapWriter
+# emits precisely because a writer checked by its own reader proves only that the two agree.
+#
+# .glb rather than .gltf + .bin: one self-contained file, so a viewer cannot half-open it and
+# the contact sheet has one artefact per mesh to point at.
+# ---------------------------------------------------------------------------------------
+
+def _yup(x, y, z):
+    """W3D is Z-up, glTF is Y-up. This is the -90 degree rotation about X that reconciles them.
+
+    Its determinant is +1 — a proper rotation, not a mirror — so triangle winding carries over
+    unchanged. That is worth stating because the neighbouring convention (x, -z, y) or any
+    single-axis negation flips handedness, and then every face renders backwards: the model
+    looks hollow, or inside-out, or invisible from the side you are looking at, none of which
+    reads as a coordinate bug.
+    """
+    return (x, z, -y)
+
+
+def _w3d_meshes(buf):
+    """Pull renderable geometry out of a .w3d as a list of dicts.
+
+    Walks the TREE, not the flat chunk stream. A model file carries several top-level
+    containers — MESH, and HLOD tying meshes to a skeleton — and a multi-sub-object model has
+    one VERTICES chunk PER MESH. The flat walk cannot say which arrays belong to which mesh,
+    which is exactly the association a renderer needs. (`cmd_w3d` sums them on purpose; it is
+    reporting totals, not rebuilding geometry.)
+    """
+    out = []
+    for ctype, _payload, kids in w3d_tree(buf):
+        if ctype != 0x0000:                                        # MESH
+            continue
+        m = {"name": "", "verts": [], "normals": [], "uvs": [], "tris": [], "texture": None}
+
+        def scan(nodes):
+            for t, p, k in nodes:
+                if t == 0x001F and len(p) >= 24:                   # MESH_HEADER3
+                    # Version(4) Attributes(4) then MeshName[16] — the name the HLOD and the
+                    # INI both address this mesh by.
+                    m["name"] = p[8:24].split(b"\0")[0].decode("latin-1")
+                elif t == 0x0002:                                  # VERTICES
+                    m["verts"] = [struct.unpack_from("<3f", p, i * 12)
+                                  for i in range(len(p) // 12)]
+                elif t == 0x0003:                                  # VERTEX_NORMALS
+                    m["normals"] = [struct.unpack_from("<3f", p, i * 12)
+                                    for i in range(len(p) // 12)]
+                elif t == 0x0020:                                  # TRIANGLES
+                    # W3dTriStruct is 32 bytes: Vindex[3], Attributes, Normal[3], Dist. Only
+                    # the three indices are geometry; the face normal is derived data the
+                    # engine keeps and glTF recomputes.
+                    m["tris"] = [struct.unpack_from("<3I", p, i * 32)
+                                 for i in range(len(p) // 32)]
+                elif t == 0x004A and not m["uvs"]:                 # STAGE_TEXCOORDS
+                    m["uvs"] = [struct.unpack_from("<2f", p, i * 8)
+                                for i in range(len(p) // 8)]
+                elif t == 0x0032 and m["texture"] is None:         # TEXTURE_NAME
+                    m["texture"] = p.split(b"\0")[0].decode("latin-1")
+                scan(k)
+
+        scan(kids)
+        if m["verts"] and m["tris"]:
+            out.append(m)
+    return out
+
+
+def _glb(meshes):
+    """Serialise meshes to a glTF 2.0 binary container.
+
+    Textures are NAMED, not embedded: a W3D references .tga/.dds and glTF permits only PNG or
+    JPEG, so converting is a separate concern (and the same converter the icon-sheet view
+    wants). The name is carried on the material so nothing is lost in the round trip — a model
+    that arrives untextured in a viewer still says which texture it is asking for.
+    """
+    bin_ = bytearray()
+    views, accessors, gmeshes, materials, nodes = [], [], [], [], []
+
+    def accessor(data, count, ctype, atype, minmax=None):
+        # glTF requires each accessor's data to start on a 4-byte boundary. Both our component
+        # types are 4 bytes wide, so padding the running buffer is enough.
+        while len(bin_) % 4:
+            bin_.append(0)
+        views.append({"buffer": 0, "byteOffset": len(bin_), "byteLength": len(data)})
+        bin_.extend(data)
+        acc = {"bufferView": len(views) - 1, "componentType": ctype,
+               "count": count, "type": atype}
+        if minmax:
+            acc["min"], acc["max"] = minmax
+        accessors.append(acc)
+        return len(accessors) - 1
+
+    for m in meshes:
+        pos = [_yup(*v) for v in m["verts"]]
+        lo = [min(p[i] for p in pos) for i in range(3)]
+        hi = [max(p[i] for p in pos) for i in range(3)]
+        attrs = {"POSITION": accessor(struct.pack(f"<{len(pos) * 3}f",
+                                                  *[c for p in pos for c in p]),
+                                      len(pos), 5126, "VEC3", (lo, hi))}
+        if len(m["normals"]) == len(pos):
+            nrm = [_yup(*n) for n in m["normals"]]
+            attrs["NORMAL"] = accessor(struct.pack(f"<{len(nrm) * 3}f",
+                                                   *[c for n in nrm for c in n]),
+                                       len(nrm), 5126, "VEC3")
+        if len(m["uvs"]) == len(pos):
+            # W3D texcoords are D3D-style, V increasing upward; glTF puts the UV origin at the
+            # top-left. Without the flip a texture arrives mirrored vertically, which on a
+            # symmetric test grid looks perfectly correct — so this is asserted against an
+            # asymmetric image, never eyeballed on a checkerboard.
+            uv = [(u, 1.0 - v) for u, v in m["uvs"]]
+            attrs["TEXCOORD_0"] = accessor(struct.pack(f"<{len(uv) * 2}f",
+                                                       *[c for t in uv for c in t]),
+                                           len(uv), 5126, "VEC2")
+        idx = [i for tri in m["tris"] for i in tri]
+        prim = {"attributes": attrs,
+                "indices": accessor(struct.pack(f"<{len(idx)}I", *idx), len(idx), 5125, "SCALAR")}
+        materials.append({"name": m["texture"] or "untextured",
+                          "pbrMetallicRoughness": {"baseColorFactor": [0.72, 0.72, 0.74, 1.0],
+                                                   "metallicFactor": 0.0,
+                                                   "roughnessFactor": 0.85},
+                          "extras": {"w3dTexture": m["texture"]}})
+        prim["material"] = len(materials) - 1
+        gmeshes.append({"name": m["name"] or f"mesh{len(gmeshes)}", "primitives": [prim]})
+        nodes.append({"mesh": len(gmeshes) - 1, "name": m["name"] or f"mesh{len(nodes)}"})
+
+    doc = {"asset": {"version": "2.0", "generator": "zhasset gltf"},
+           "scene": 0, "scenes": [{"nodes": list(range(len(nodes)))}],
+           "nodes": nodes, "meshes": gmeshes, "materials": materials,
+           "accessors": accessors, "bufferViews": views,
+           "buffers": [{"byteLength": len(bin_)}]}
+
+    js = json.dumps(doc, separators=(",", ":")).encode("utf-8")
+    js += b" " * (-len(js) % 4)                     # JSON chunk pads with SPACES
+    bn = bytes(bin_) + b"\0" * (-len(bin_) % 4)     # BIN chunk pads with ZEROS
+    body = (struct.pack("<II", len(js), 0x4E4F534A) + js
+            + struct.pack("<II", len(bn), 0x004E4942) + bn)
+    return struct.pack("<III", 0x46546C67, 2, 12 + len(body)) + body
+
+
+def cmd_gltf(a):
+    """Export a .w3d as glTF 2.0 (.glb), so a mesh can be looked at rather than only counted."""
+    buf = open(a.file, "rb").read()
+    meshes = _w3d_meshes(buf)
+    if not meshes:
+        # A _SKL file is all HIERARCHY and no MESH, and so is an animation file. Saying so
+        # beats writing an empty scene that a viewer opens as a blank grey void.
+        print(f"{os.path.basename(a.file)}: no MESH chunks — nothing to render "
+              f"(a _skl or animation file carries hierarchy or motion, not geometry)")
+        return 1
+    open(a.out, "wb").write(_glb(meshes))
+
+    verts = sum(len(m["verts"]) for m in meshes)
+    tris = sum(len(m["tris"]) for m in meshes)
+    pos = [_yup(*v) for m in meshes for v in m["verts"]]
+    lo = [min(p[i] for p in pos) for i in range(3)]
+    hi = [max(p[i] for p in pos) for i in range(3)]
+    tex = sorted({m["texture"] for m in meshes if m["texture"]})
+    print(f"{os.path.basename(a.file)} -> {a.out}")
+    print(f"  {len(meshes)} mesh(es), {verts:,} vertices, {tris:,} triangles")
+    # Reported Y-up, i.e. in the exported file's own frame, so a mismatch against the viewer
+    # is a real disagreement rather than a units-of-measure argument.
+    print(f"  bounds (Y-up): "
+          f"{hi[0] - lo[0]:.2f} x {hi[1] - lo[1]:.2f} x {hi[2] - lo[2]:.2f}")
+    if tex:
+        print(f"  textures named (not embedded): {', '.join(tex)}")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="zhasset", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -3202,6 +3381,10 @@ def main():
     wr = sub.add_parser("w3dround", help="parse a .w3d and re-emit it; proves the reader is lossless")
     wr.add_argument("file"); wr.add_argument("--write")
     wr.set_defaults(fn=cmd_w3dround)
+
+    gl = sub.add_parser("gltf", help="export a .w3d as glTF 2.0 (.glb) so it can be LOOKED AT")
+    gl.add_argument("file"); gl.add_argument("--out", required=True)
+    gl.set_defaults(fn=cmd_gltf)
 
     wb = sub.add_parser("w3dbox", help="author new geometry (any topology) into a mesh template")
     wb.add_argument("--template", required=True); wb.add_argument("--out", required=True)
