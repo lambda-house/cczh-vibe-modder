@@ -1,21 +1,21 @@
 {
   "_comment": [
-    "The 'Mangal' \u2014 a tank wearing a welded shed. Authored from reference photographs at",
+    "The 'Mangal' — a tank wearing a welded shed. Authored from reference photographs at",
     "incoming/factions/russian-federation/units/mangal/ (gitignored: third-party rights, and",
-    "they inform PARAMETERS only \u2014 silhouette, proportion, palette \u2014 never pixels).",
+    "they inform PARAMETERS only — silhouette, proportion, palette — never pixels).",
     "",
     "SECOND PASS, after seeing it in game and against a better reference frame. Three things",
     "the first pass got wrong, all of them shape rather than detail:",
     "",
     "  1. IT IS WIDE. The shed is nearly as wide as it is tall and only about 1.5x longer than",
-    "     wide \u2014 a squat box, not the long narrow wedge the side-on still suggested.",
+    "     wide — a squat box, not the long narrow wedge the side-on still suggested.",
     "  2. THE ROOF IS FLAT, or very nearly. The sides are VERTICAL and the top is a shallow",
     "     pitch of corrugated sheet. The first pass read the side profile as a triangular prism",
     "     and set ridgeWidth 0.18, which is a tent; the truth is a box with a lid on it, so the",
     "     ridge is now a separate shallow part at ridgeWidth 0.78.",
     "  3. THERE IS A TURRET. It traverses only a little, but it exists and it is visible",
     "     through the open front. The first pass asserted the carapace was welded solid and",
-    "     that there was deliberately no TURRET sub-object \u2014 that was wrong, and it was wrong",
+    "     that there was deliberately no TURRET sub-object — that was wrong, and it was wrong",
     "     in the direction of making a limitation sound like a design decision.",
     "",
     "THIRD PASS, one correction and it is again the SILHOUETTE rather than any detail: the",
@@ -33,7 +33,7 @@
     "so a part's `at` is the CENTRE of its box.",
     "",
     "STILL DELIBERATELY NOT GEOMETRY: the cope-cage grid, the camo netting, and the road",
-    "wheels. All three are wire, mesh or repetition \u2014 texture work at a 245-triangle peer",
+    "wheels. All three are wire, mesh or repetition — texture work at a 245-triangle peer",
     "budget. The wheels cost 55% of the first pass's triangles and were invisible inside the",
     "track boxes; retail reaches the same conclusion, carrying flat tread strips with the links",
     "painted on."
@@ -46,7 +46,7 @@
     "mangal.tga": {
       "_": "Weathered olive drab for the hull and the shed's flanks. `ao` and `lip` are the",
       "__": "two that matter: a retail 256x256 vehicle sheet is not more colourful than ours",
-      "___": "and not higher frequency \u2014 it has dark occlusion in every recess and a bright lip",
+      "___": "and not higher frequency — it has dark occlusion in every recess and a bright lip",
       "____": "on every top edge, and that is what makes a flat polygon read as a panelled one.",
       "size": 256,
       "seed": 4,
@@ -69,70 +69,98 @@
       "hatches": 3,
       "grilles": 2
     },
+    "mangal_screen.tga": {
+      "_": "THE OPEN FRAME. In the reference everything below the roof is mesh screen on a",
+      "__": "welded frame — dark, see-through, with the tank visible inside it. That is not",
+      "___": "geometry we can afford at this budget, so it is a DARK, heavily grilled material",
+      "____": "in deep occlusion. The read we want is 'recess', not 'wall'.",
+      "size": 256,
+      "seed": 27,
+      "base": [
+        54,
+        58,
+        50
+      ],
+      "panel": 44,
+      "seam": 0.4,
+      "wear": 0.3,
+      "rivets": true,
+      "accent": [
+        38,
+        42,
+        36
+      ],
+      "grilles": 6,
+      "hatches": 0,
+      "ao": 0.6,
+      "lip": 0.5
+    },
     "mangal_roof.tga": {
-      "_": "Corrugated rust sheet. Narrow panels at strong occlusion IS corrugation once it is",
-      "__": "texture rather than geometry \u2014 the ribs are the shadow between the sheets.",
+      "_": "Corrugated sheet. Narrow panels at strong occlusion IS corrugation once it is",
+      "__": "texture rather than geometry — the ribs are the shadow between the sheets.",
+      "___": "",
+      "____": "PALE GREY-GREEN, NOT RUST. The rust was ours, not the reference's: the real",
+      "_____": "vehicle is one uniform colour throughout, and a red-brown lid on an olive body",
+      "______": "reads as two objects bolted together rather than one welded shelter.",
       "size": 256,
       "seed": 9,
       "base": [
-        124,
-        72,
-        46
+        116,
+        120,
+        106
       ],
       "panel": [
-        16,
+        60,
         400
       ],
-      "seam": 0.55,
-      "wear": 0.35,
+      "seam": 0.76,
+      "wear": 0.28,
       "rivets": false,
       "accent": [
-        92,
-        50,
-        34
+        96,
+        100,
+        90
       ],
       "ao": 0.55,
       "lip": 0.45
     },
     "mangal_tread.tga": {
-      "_": "THE ONE SHEET THAT IS NOT A REGION OF THE ATLAS, because a scrolling tread cannot",
-      "__": "be. W3DTankDraw animates a belt by adding to the mesh's U offset, so UVs confined",
-      "___": "to a sub-rectangle would scroll straight out of it and into the hull's. Retail says",
-      "____": "the same by construction: NVGattTank's body is on NVGattTank.tga and its two treads",
-      "_____": "are on NVTreads.tga.",
-      "______": "128 rather than 256 because it is one belt seen edge-on, and it must TILE \u2014 the",
-      "_______": "wrap crosses the screen several times a second once the thing is moving.",
-      "________": "NO ROAD WHEELS, and that reverses what the atlas pass concluded. Painting the",
-      "_________": "wheels was right while the belt was STATIC — they were invisible geometry inside",
-      "__________": "the track box and cost 55% of the model's triangles. A W3DTankDraw belt animates",
-      "___________": "by sliding the whole sheet along U, so a painted wheel travels down the hull with",
-      "____________": "the links. A link is the only thing on a real track that moves; it is the only",
-      "_____________": "thing left on this sheet.",
-      "______________": "Darker than the hull's olive on purpose. This sheet is the one surface",
-      "_______________": "the AO bake does not reach — it left the atlas — so it has to carry its",
-      "________________": "own tone, or a belt tucked under an overhanging carapace renders as the",
-      "_________________": "brightest thing on the vehicle.",
+      "_": [
+        "THE ONE SHEET THAT IS NOT A REGION OF THE ATLAS, because a scrolling tread cannot be.",
+        "W3DTankDraw animates a belt by adding to the mesh's U offset, so UVs confined to a",
+        "sub-rectangle would scroll straight out of it and into the hull's. Retail says the same",
+        "by construction: NVGattTank's body is on NVGattTank.tga, its two belts on NVTreads.tga.",
+        "",
+        "128 rather than 256 because it is one belt seen edge-on, and it must TILE — the wrap",
+        "crosses the screen several times a second once the thing is moving.",
+        "",
+        "NO ROAD WHEELS, reversing what the atlas pass concluded. Painting them was right while",
+        "the belt was STATIC. A belt that slides its whole sheet along U carries a painted wheel",
+        "down the hull with it; a link is the only thing on a real track that travels.",
+        "",
+        "COARSE ON PURPOSE. At uvScale 16 this repeats three times along the run and a pitch of",
+        "32 gives four links per repeat — twelve links, four world units each. The earlier",
+        "thirty-two were correct as a surface and impossible to tell from a stationary belt once",
+        "they moved. A moving texture must be legible at the speed it moves.",
+        "",
+        "Darker than the hull's olive: this sheet is the one surface the AO bake cannot reach,",
+        "since it left the atlas, so it has to carry its own tone."
+      ],
       "size": 128,
       "seed": 31,
       "paint": "tread",
       "base": [
-        58,
-        60,
-        52
+        72,
+        74,
+        64
       ],
-      "_______________": "COARSE ON PURPOSE. At uvScale 16 this sheet repeats three times",
-      "________________": "along the 48-long run and a pitch of 32 gives four links per",
-      "_________________": "repeat — twelve links on the vehicle, each four world units. The",
-      "__________________": "earlier thirty-two were a fine hatch: correct as a surface, and",
-      "___________________": "impossible to tell apart from a stationary one when it scrolled.",
-      "____________________": "A moving texture has to be legible at the speed it moves.",
       "linkPitch": 32,
       "wheels": 0
     },
     "mangal_house.tga": {
       "_": "The house-colour plate, and it is painted NEARLY WHITE on purpose. Recolouring SETS",
-      "__": "the vertex material's ambient and diffuse to the team colour \u2014 the engine's own",
-      "___": "comment says it ignores whatever was there and assumes 1.0 \u2014 and the texture still",
+      "__": "the vertex material's ambient and diffuse to the team colour — the engine's own",
+      "___": "comment says it ignores whatever was there and assumes 1.0 — and the texture still",
       "____": "modulates. So the pixel is texture x teamColour: a light plate reads as the team's",
       "_____": "actual colour, and an olive one would read as muddy olive for every player alike.",
       "______": "hatches and grilles are switched OFF explicitly, because an atlas region",
@@ -157,7 +185,7 @@
   },
   "parts": [
     {
-      "_": "Track runs. Links and road wheels are painted, not modelled \u2014 see the note above.",
+      "_": "Track runs. Links and road wheels are painted, not modelled — see the note above.",
       "__": "",
       "___": "TWO PARTS NOW, NOT ONE MIRRORED PART, and the names are the reason. W3DTankDraw",
       "____": "finds a belt by _strnicmp(meshName, \"TREADS\", 6) and reads the SEVENTH character",
@@ -281,30 +309,20 @@
       }
     },
     {
-      "_": "THE CARAPACE \u2014 a box with VERTICAL sides, not a prism, and it goes DOWN. It spans",
-      "__": "z 4.5 to 26.5: from the middle of the track runs to the eaves, so the hull and the",
-      "___": "inner half of each track are inside it and the outer half is behind a skirt. That",
-      "____": "is what 'a tank wearing a welded shed' has to look like from the side \u2014 two passes",
-      "_____": "left its floor at 13.5, above tracks that stop at 9, and the daylight between them",
-      "______": "read as two separate objects.",
-      "_______": "",
-      "________": "The front is cut clean through so the turret inside is visible, which is the one",
-      "_________": "feature a texture genuinely cannot fake: the silhouette has to have a hole in it.",
-      "__________": "Cut coordinates are LOCAL to the part, so the cut's z tracks the part's centre \u2014",
-      "___________": "it moved with the box rather than staying where it was.",
-      "name": "CARAPACE",
+      "_": "THE OPEN FRAME, not a wall. The reference's whole midsection below the roof is mesh screen on welded uprights — the tank is visible through it, and the gun comes out of an opening spanning nearly the full width rather than a letterbox slot. Three passes modelled this as solid armour, which is why ours read as a bunker where the real one reads as a shelter. Short (9 tall) and DARK on purpose: the roof above is the vehicle's mass, and this band's job is to be the shadow under it.",
+      "name": "SCREEN",
       "shape": "box",
       "size": [
-        46,
-        36,
-        14
+        44,
+        34,
+        10
       ],
       "at": [
         0,
         0,
-        19.5
+        15
       ],
-      "taper": 0.583,
+      "taper": 0.97,
       "bevel": {
         "width": 0.6,
         "segments": 1
@@ -313,45 +331,44 @@
         {
           "shape": "box",
           "size": [
-            13,
-            22,
-            11
+            18,
+            28,
+            9
           ],
           "at": [
-            20,
+            16,
             0,
-            -3
+            0
           ]
         }
-      ]
+      ],
+      "texture": "mangal_screen.tga"
     },
     {
-      "_": "The lid, and it now CAPS A TAPER rather than sitting on a vertical box. The video",
-      "__": "reference settles an argument the first two passes both got wrong in opposite",
-      "___": "directions: the shed is neither a tent (pass one, ridgeWidth 0.18) nor a flat-",
-      "____": "sided crate (pass two). It is a truncated pyramid \u2014 big flat panels sloping down",
-      "_____": "and OUTWARD from a narrow ridge to a skirt wider than the tracks, which is what",
-      "______": "makes the front view a trapezoid. The slope is the CARAPACE's taper; this part is",
-      "_______": "only the shallow peak sitting on its narrow top (27 x 21 after tapering).",
       "name": "ROOF",
       "texture": "mangal_roof.tga",
       "shape": "ridge",
       "size": [
-        30,
-        24,
-        5
+        52,
+        40,
+        12
       ],
       "at": [
+        2,
         0,
-        0,
-        28.4
+        22
       ],
       "ridgeAxis": "x",
-      "ridgeWidth": 0.78,
+      "ridgeWidth": 0.18,
       "bevel": {
         "width": 0.4,
         "segments": 1
-      }
+      },
+      "_": "THE ROOF IS THE VEHICLE. The video reverses pass two: the shed IS a tent, a wide shallow one, and pass one's error was making it NARROW rather than making it a tent at all. At 42 wide and 11 tall the panels fall about 33 degrees, the reference's slope.",
+      "__": "It OVERHANGS everything — 52 x 42 over a 44 x 34 frame, four units proud on every side. That overhang is most of what makes the silhouette read as a shelter draped over a tank rather than a hull wearing a lid.",
+      "___": "ridgeAxis x: the ridge runs fore-and-aft, so the panels shed to the flanks.",
+      "____": "The EAVES come down to 16 — below the frame's top at 20 — so the panels cover the flanks and the open frame is seen mainly from the FRONT. That is how the reference is put together, and a roof whose eaves sat above the frame turned the whole thing into a carport.",
+      "_____": "Pushed 4 units FORWARD of the frame. The reference's roof projects past the nose as a visor over the open front — it is the first thing you see coming at you, and a roof flush with the frame loses it entirely."
     },
     {
       "_": "THE CASEMATE, and the name is the decision. It was called TURRET, and that name is",
@@ -360,11 +377,11 @@
       "____": "`Turret = TURRET` draw line off the back of it.",
       "_____": "",
       "______": "ZH HAS NO TURRET ARC. TurretAIData::buildFieldParse carries eighteen keys and not",
-      "_______": "one bounds azimuth \u2014 MinIdleScanAngle/MaxIdleScanAngle limit the idle wander only,",
+      "_______": "one bounds azimuth — MinIdleScanAngle/MaxIdleScanAngle limit the idle wander only,",
       "________": "TurretFireAngleSweep is a sweep while firing, and the weapon's MinTargetPitch /",
       "_________": "MaxTargetPitch are elevation. A gun is 360 degrees or it is fixed. So a vehicle",
       "__________": "whose gun is welded inside a box of armour has to be FIXED, and the piece of",
-      "___________": "geometry behind the opening must not be called TURRET \u2014 a part named for a thing",
+      "___________": "geometry behind the opening must not be called TURRET — a part named for a thing",
       "____________": "it cannot do is a lie in the exact place four different tools go looking.",
       "name": "CASEMATE",
       "shape": "box",
@@ -374,9 +391,9 @@
         8
       ],
       "at": [
-        4,
+        2,
         0,
-        16
+        15
       ],
       "taper": 0.82,
       "bevel": {
@@ -399,22 +416,19 @@
       "size": [
         13,
         1.4,
-        3.6
+        3.2
       ],
-      "_x": "The wall SLOPES, so a flat plate's standoff is a function of its height — and it",
-      "_y": "moves every time the carapace's base does. The wall now runs 18 at z = 12.5 to",
-      "_z": "10.5 at the ridge, so at z = 14 it is at 17.2 and a 1.4-thick plate centred on",
-      "_w": "17.4 sits roughly flush. Every earlier value left it either buried or in mid-air.",
       "at": [
         -11,
-        17.4,
-        14
+        18.4,
+        10.2
       ],
       "mirror": "y",
       "bevel": {
         "width": 0.3,
         "segments": 1
-      }
+      },
+      "_x": "On the SKIRT, which is vertical. Chasing a sloped wall's standoff moved this plate three times and buried or floated it twice — a flat plate belongs on a flat face."
     },
     {
       "_": "Gun, out of the turret and through the opening.",
@@ -427,9 +441,9 @@
       ],
       "segments": 6,
       "at": [
-        27,
+        26,
         0,
-        16
+        15
       ],
       "rot": [
         0,
@@ -449,12 +463,39 @@
     "but retail carries all four and they cost 60 bytes each."
   ],
   "bones": [
-    { "name": "TREADFX01", "at": [-13, -13.5, 0.2] },
-    { "name": "TREADFX02", "at": [-13, 13.5, 0.2] },
-    { "name": "TREADFX03", "at": [13, 13.5, 0.2] },
-    { "name": "TREADFX04", "at": [13, -13.5, 0.2] }
+    {
+      "name": "TREADFX01",
+      "at": [
+        -13,
+        -13.5,
+        0.2
+      ]
+    },
+    {
+      "name": "TREADFX02",
+      "at": [
+        -13,
+        13.5,
+        0.2
+      ]
+    },
+    {
+      "name": "TREADFX03",
+      "at": [
+        13,
+        13.5,
+        0.2
+      ]
+    },
+    {
+      "name": "TREADFX04",
+      "at": [
+        13,
+        -13.5,
+        0.2
+      ]
+    }
   ],
-
   "extraTextures": {
     "track_rf.tga": {
       "_": "The mud, laid on the terrain rather than on the tank — so no mesh names it and it",
@@ -474,7 +515,6 @@
       "strength": 0.8
     }
   },
-
   "atlas": true,
   "textureSize": 512
 }
