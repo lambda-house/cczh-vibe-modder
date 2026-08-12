@@ -24,7 +24,7 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    plus resolved content; `rts diff` emits the delta taxonomy and duplication ratio.
    A `null` value REMOVES a key, and removing a name no earlier layer declared is an error —
    the same reasoning as retail's 88 dangling references, caught one step earlier where the
-   author can still see what they meant. See the total-resolution-order invariant above.
+   author can still see what they meant. See the total-resolution-order invariant in `CLAUDE.md`.
    *Rationale: this is the authoring substrate. Everything below is a sim verb, and
    every one of them would otherwise be authored by hand-editing a single monolithic
    `game.json` — which is precisely the workflow this product exists to replace. It
@@ -62,7 +62,7 @@ caps / round-trip loss / unmappable mechanics as three separate failure kinds.
    *Retail splits 570 buildables into 379 units / 261 structures, and a minimum viable ZH
    faction is five objects of which THREE are buildings. We have no structure concept at
    all — which is exactly why "rushes can only spawn-camp, there are no economic targets"
-   appears in Known simplifications. Smaller than upgrades, and it unblocks the harness's
+   appears in Known simplifications (`CLAUDE.md`). Smaller than upgrades, and it unblocks the harness's
    biggest known gap.*
 6. ~~**Upgrades as a content type**~~ — done as tech nodes granting flags, which is their
    model: an upgrade carries no effect data, it sets a bit and a keyed loadout is selected.
@@ -236,7 +236,8 @@ furniture is borrowed on purpose.
     the map put it.
     **The owner is the trap.** `GameLogic` resolves it with `PlayerList::validateTeam`, whose
     miss path is a `DEBUG_CRASH` *before* it falls back to neutral — and DEBUG_CRASH is
-    compiled into this build, same as rule 1. Only `"team"`, the neutral side's default, is
+    compiled into this build, same as the add-new-names-only rule
+    (`zh-authoring/references/engine-rules.md`). Only `"team"`, the neutral side's default, is
     safe from a compiled map: a skirmish opponent's name exists in the LOBBY, not in the map's
     `SidesList`, so naming one is the crash rather than the fallback.
     *This is what finally settled the LOS question below.*
@@ -260,7 +261,8 @@ furniture is borrowed on purpose.
     Verified: legal enums, our own reader walks the emitted FXList to its texture, and the
     engine loads both files (`[INI] load('Data/INI/ParticleSystem/…')`). **The explosion has not
     yet been seen rendering** — the attempt was abandoned when Chrome stole focus mid-sequence,
-    which is what prompted the frontmost guard below.
+    which is what prompted the visibility guard in
+    `zh-authoring/references/driving.md`.
 18. **Audio.** (L) *The largest untouched category: not one line is emitted and every unit is
     silent. `SoundEffects`, `Speech`, `Voice` and `MiscAudio` are all in the 42 scanned dirs.
     It is also 0% of the simulation, so it changes no measurement — which is why it is here
@@ -288,76 +290,21 @@ importer is the cheap answer).
 
 Both design decisions this roadmap owed an answer to are now ANSWERED:
 **(a)** ~~flag changes re-select loadouts~~ — `LoadoutSystem` runs between
-production and cooldowns; see the system-order invariant above.
-**(b)** ~~one total resolution order~~ — see the invariant below. There turned out to be
+production and cooldowns; see the system-order invariant in `CLAUDE.md`.
+**(b)** ~~one total resolution order~~ — see the invariant in `CLAUDE.md`. There turned out to be
 THREE mechanisms, not four: an entity-level `extends` was never built, and deliberately
 will not be.
 
-Deliberately out, on evidence: terrain types as content (ZH's are inert — 291 blocks,
-one call site, a flag nothing sets); art/FX/audio; prerequisite OR-expressions; slope-
-modulated speed; elevation damage/range/cover; chokepoints as a content type.
+Deliberately out, on evidence: terrain types as content (ZH's are inert — 291 blocks, one
+call site, a flag nothing sets); prerequisite OR-expressions; slope-modulated speed; elevation
+damage/range/cover; chokepoints as a content type.
+*This list used to include "art/FX/audio" wholesale. Slices 14-19 overtook it: art, FX and
+terrain are authored now, and only audio is still open.*
 
 Lockstep session layer stays last, unchanged.
 
+---
 
-## The extracted reference model (`tools/zhasset`)
-
-The extraction exists so an agent can reason over ZH's content and derive new content from it,
-rather than re-deriving the corpus each time. Three commands carry the model; `reference/` is
-their output and is gitignored — ship the extractor, never the extract.
-
-- `catalogue` — the resolved corpus: 15 factions, 2,102 objects, 363 weapons, 96 sciences,
-  79 powers. Answers *what is in the game*.
-- **`dossier <object>`** — one object COMPLETE, with its asset closure. Answers *how do I make
-  another one of these*. Full definition, every `ModelConditionState` with its model and
-  animation, the textures named INSIDE each `.w3d`, icons resolved through both hops, sounds,
-  and the death FX/OCL entry points.
-  *`AmericaWarFactory` is 86 draw states — 36 of them construction, 9 of them door animations —
-  across 36 models and 155 distinct textures. **Building assembly is not a separate asset**; it
-  is `ACTIVELY_BEING_CONSTRUCTED` / `PARTIALLY_CONSTRUCTED` states, and a summary reporting only
-  the default model misses the whole build-up.*
-- **`techtree [faction]`** — the graph, joined across five files none of which names it:
-  `PlayerTemplate` roots, `Object` command sets and `Prerequisites`, `CommandSet` slots,
-  `CommandButton` verbs, `Science`/`Rank`. Every playable faction resolves to 4 tiers.
-  **The verb is the edge, and there are more than the obvious one:** `UNIT_BUILD` (259) makes
-  units, **`DOZER_CONSTRUCT` (192) makes STRUCTURES** — a tree built from `UNIT_BUILD` alone
-  stops dead at the dozer — **`PURCHASE_SCIENCE` (82) IS the experience tree**, and
-  `OBJECT_UPGRADE` is per-object where `PLAYER_UPGRADE` is per-player. Some lines carry a
-  trailing space, so the verb is normalised before comparing.
-  *The two trees are ONE graph: an `Object`'s `Prerequisites` can require a Science and a
-  `SPECIAL_POWER` button can require one, so superweapons and the promotion ladder are reached
-  from different roots of the same structure. Measured: 5 ranks at 0/800/1500/2500/5000 grant
-  7 purchase points a game against 14-24 reachable sciences per faction.*
-
-- **`fx <name>`** — expands an `FXList` / `ParticleSystem` / `OCL` into its transitive closure,
-  which is where `dossier` used to stop. A name like `FX_StructureMediumDeath` told an author
-  nothing about what to author, and FX is the last category where adopted art is still
-  structurally required: an authored mesh dies silently and invisibly today.
-  **The graph recurses in three places** and missing any one truncates the closure —
-  `FXListAtBonePos` nests another FXList, and a ParticleSystem's `SlaveSystem` /
-  `PerParticleAttachedSystem` name further systems. Cycles exist, so every walk carries a
-  seen-set. Measured: **429 FXLists, 1,087 ParticleSystems, 294 OCLs, 179 slave links**.
-  ***1,087 particle systems draw on only 81 distinct textures.*** That ratio is the case for
-  authoring FX being cheap: 81 images cover every explosion in the game, and a from-scratch set
-  is a modest art task rather than a pipeline.
-  *`dossier` now expands death effects rather than naming them, and walks the debris models'
-  own textures — a thrown turret is a mesh like any other. `AmericaTankCrusader`'s 6 FX/OCL
-  names resolve to 12 particle systems, 6 textures, 4 sounds and 14 debris models.*
-
-- **`nearest --like <object>`** / `nearest --role … --cost …` — the clone entry point, and the
-  first step of the authoring loop: pick the nearest existing thing, take everything it is made
-  of, change some, emit it.
-  **Substitutability is ROLE, not cost and not stats.** A 900-cost tank and a 900-cost jet share
-  a number and nothing else, while a Crusader and a Battlemaster are the same thing under
-  different flags. So role is a Jaccard overlap on `KindOf` weighted 3x against everything else,
-  with the entries that say nothing about role removed — `PRELOAD`, `SCORE`, `SELECTABLE`,
-  `CAN_CAST_REFLECTIONS` are on almost everything and leaving them in inflates every object's
-  similarity to every other. Numeric axes compare as RATIOS, not differences: 100 vs 200 damage
-  is the same distance as 1000 vs 2000.
-  *Distances are reported PER AXIS, because an agent picking a template needs to know WHY —
-  "same role, 18% cheaper, identical range" is actionable and "score 0.026" is not.*
-  *`CINE_` cutscene clones are excluded by default: they are byte-identical copies, they rank
-  first every time, and cloning a clone inherits nothing the original lacks.*
-  Sanity: `--like AmericaTankCrusader` returns Paladin (its own upgrade) then Battlemaster
-  (China's equivalent); a spec for a cheap fast anti-infantry China vehicle returns the Gattling
-  Tank, which is precisely what that unit is.
+*What `tools/zhasset` produces — the commands, their JSON shapes and the joins that are not
+obvious — is specified in `docs/ZERO-HOUR-MODEL.md`, not here. That is a contract a skill can
+rely on; this file is provenance.*
