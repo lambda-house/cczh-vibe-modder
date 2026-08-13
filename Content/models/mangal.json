@@ -184,7 +184,7 @@
     },
     "mangal_wheel.tga": {
       "_": "Road wheels on a hull plate, with the belt's runs shadowed top and bottom.",
-      "size": 64,
+      "size": 96,
       "seed": 52,
       "base": [
         108,
@@ -192,9 +192,10 @@
         96
       ],
       "wheels": 1,
-      "runDepth": 0.17,
+      "runDepth": 0.09,
       "paint": "wheels",
-      "phase": 0.0
+      "phase": 0.0,
+      "wheelRadius": 0.46
     }
   },
   "parts": [
@@ -312,8 +313,8 @@
       "name": "SPROCKET",
       "shape": "cylinder",
       "size": [
-        8,
-        8,
+        7,
+        7,
         7
       ],
       "segments": 8,

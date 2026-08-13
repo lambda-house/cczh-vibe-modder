@@ -24,7 +24,7 @@
   ],
   "name": "RFBASE",
   "texture": "rfbase.tga",
-  "budget": 650,
+  "budget": 700,
   "uvScale": 24.0,
   "_texture": [
     "Three materials. Cold grey concrete for the mass, a darker ribbed metal for the dome,",
@@ -65,7 +65,7 @@
       "hatches": 2,
       "grilles": 3,
       "streaks": 20,
-      "streakStrength": 0.4
+      "streakStrength": 0.72
     },
     "rfbase_dome.tga": {
       "_": "Ribbed sheet metal, darker and cooler than the concrete so the dome separates from",
@@ -73,9 +73,9 @@
       "size": 256,
       "seed": 12,
       "base": [
+        156,
         162,
-        168,
-        172
+        166
       ],
       "panel": [
         14,
@@ -91,10 +91,11 @@
       ],
       "ao": 0.28,
       "lip": 0.4,
-      "ribs": 22,
+      "ribs": 16,
       "_lighten": "Three darkening passes stack on a dome: the material's own occlusion, the rib painter's valleys, and a Cycles bake of a surface curving away from every light. Authored at the flanks' tone it renders as a black cap.",
-      "streaks": 5,
-      "streakStrength": 0.18
+      "streaks": 4,
+      "streakStrength": 0.5,
+      "ribStrength": 0.34
     },
     "rfbase_stack.tga": {
       "_": "Banded stacks: two red bands on dirty white. See the note above about why this works",
@@ -157,7 +158,7 @@
       "grilles": 0,
       "ribs": 11,
       "streaks": 14,
-      "streakStrength": 0.34
+      "streakStrength": 0.6
     },
     "rfbase_pipes.tga": {
       "_": "The machine hall's pipe runs and conduit banks, with a flange every few units.",
@@ -183,7 +184,7 @@
       "grilles": 2,
       "pipes": 6,
       "streaks": 12,
-      "streakStrength": 0.36
+      "streakStrength": 0.62
     },
     "rfbase_sign.tga": {
       "_": "The entrance sign band. Deep red with a white rule, which is what the reference has under its lettering — the lettering itself is beyond what a 256px region can hold at this scale and is deliberately not attempted.",
@@ -232,8 +233,33 @@
       "grilles": 0,
       "windowCols": 20,
       "streaks": 18,
-      "streakStrength": 0.42,
+      "streakStrength": 0.68,
       "storeys": 11
+    },
+    "rfbase_door.tga": {
+      "_": "The dark interior behind the entrance arch.",
+      "size": 128,
+      "seed": 88,
+      "base": [
+        96,
+        98,
+        92
+      ],
+      "panel": 70,
+      "seam": 0.5,
+      "wear": 0.35,
+      "rivets": false,
+      "accent": [
+        70,
+        72,
+        68
+      ],
+      "ao": 0.45,
+      "lip": 0.3,
+      "hatches": 0,
+      "grilles": 3,
+      "streaks": 4,
+      "streakStrength": 0.5
     }
   },
   "parts": [
@@ -338,6 +364,26 @@
             -4
           ]
         }
+      ]
+    },
+    {
+      "_": [
+        "The back of the archway. Without it the cut looks straight through the building and",
+        "the entrance reads as damage. Set back 5 units so the reveal has depth, and dark, so",
+        "it reads as an interior rather than as another wall."
+      ],
+      "name": "DOORWAY",
+      "shape": "box",
+      "texture": "rfbase_door.tga",
+      "size": [
+        2,
+        20,
+        14
+      ],
+      "at": [
+        50,
+        0,
+        16
       ]
     },
     {

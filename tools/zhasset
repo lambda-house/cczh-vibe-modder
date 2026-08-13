@@ -4204,8 +4204,15 @@ def _paint_wheels(w, h, spec):
     n = max(1, int(spec.get("wheels", 1)))
     # The runs the belt makes along the top and bottom of the plate. The wheels are tangent to
     # them rather than floating, so the assembly reads as load-bearing.
-    run = max(2, int(across * float(spec.get("runDepth", 0.13))))
-    r = (across - 2 * run) * 0.5
+    run = max(1, int(across * float(spec.get("runDepth", 0.09))))
+    # THE WHEELS NEARLY TOUCH, and they are as tall as the track. That is what a real running
+    # gear looks like from the side: a row of large discs with a thin belt strip above them and
+    # only a slot of daylight between one and the next. Deriving the radius from the band
+    # HEIGHT alone gave discs a third of the tile wide, with more gap than wheel — which reads
+    # as studs on a plate rather than as road wheels under a tank.
+    # Driven by the TILE WIDTH instead, and deliberately allowed to run past the band so the
+    # belt strip clips it: the wheel is behind the belt, not inside it.
+    r = float(spec.get("wheelRadius", 0.46)) * (length / float(max(1, int(spec.get("wheels", 1)))))
 
     rows = []
     for y in range(h):
@@ -4317,7 +4324,12 @@ def _paint_ribbed(w, h, spec):
         for x in range(w):
             t = ((y if across else x) / pitch) % 1.0
             # A rounded rib: bright on the near shoulder, dark in the valley beside it.
-            k = 1.16 if t < 0.22 else (0.66 if t < 0.40 else 0.94)
+            # Strength is authored, because a rib that suits a flat wall OVERPOWERS a curved
+            # one: a dome's form is carried by the falloff across it, and meridians as strong
+            # as that falloff turn the hemisphere into a striped bowl. Lerped toward 1.
+            g = float(spec.get("ribStrength", 1.0))
+            base_k = 1.16 if t < 0.22 else (0.66 if t < 0.40 else 0.94)
+            k = 1.0 + (base_k - 1.0) * g
             out[y][x] = tuple(int(max(0, min(255, c * k))) for c in out[y][x])
     return out
 
