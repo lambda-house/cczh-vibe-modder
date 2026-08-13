@@ -302,7 +302,18 @@ the **`zh-authoring`** skill:
   agree. e2e asserts the two-sided result: the same authored shapes that measure 27.4s and a
   timeout draw here come out CONNECTED and SEPARATED under their cliff rule there.
 - **A TRANSFORM THAT SILENTLY DID NOTHING is the asset pipeline's characteristic bug, and no
-  structural check catches it. Render it and LOOK.** *Three landed in one session, all one
+  structural check catches it. Render it and LOOK — and LOOK AT THE THING YOU JUST CLAIMED TO
+  FIX.** `zhasset preview --recipe <r.json> --out sheet.png` gives four angles in six seconds:
+  three-quarter is what the game draws, SIDE is where proportion lives, FRONT is where an
+  opening either reads as a hole or does not, and the low GEAR pass is where texture-space bugs
+  surface. *Three fixes in one session were reported as done and were not, and in every case the
+  change itself was correct — something else was covering it: an opening widened twice under a
+  roof whose eaves already closed it, a doorway placed first where solid geometry already stood
+  and then in a recess no light reaches (a detail light cannot reach renders black whatever is
+  in it), and a plate excluded from the atlas PACK while still pointed at the atlas TEXTURE.
+  Counts matched, the round-trip was byte-identical and an independent reader agreed, on every
+  one.* The game is the authority on what the ENGINE thinks and a poor judge of shape — one
+  angle, at distance, two minutes per look. Never package before the sheet is right. *Three landed in one session, all one
   shape:* a glTF node transform the importer ignored (every positioned part collapsed to the
   origin); `bpy.ops.object.transform_apply` acting on the SELECTION rather than the active
   object, so a part whose boolean cutter had stolen the selection never moved; and a `mirror`

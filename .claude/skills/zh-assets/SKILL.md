@@ -53,6 +53,7 @@ zhasset gltf <f.w3d> --out x.glb        # EXPORT so it can be LOOKED AT
 zhasset w3dfrom --gltf x.glb --out y.w3d  # BUILD one back, every chunk authored
 zhasset model --recipe r.json --out y.w3d # a parametric recipe, via Blender's kernel
 
+zhasset preview --recipe r.json --out sheet.png   # 4 VIEWS IN ONE IMAGE, ~6s. START HERE.
 zhasset w3dgrade <f.w3d>       # grade it with OpenSAGE's INDEPENDENT reader, and diff
 zhasset w3dround <f>           # parse and re-emit; byte-identity proves the reader
 zhasset w3dbox|w3dskel|w3danim # older direct generators (w3dbox needs a retail --template)
@@ -80,6 +81,44 @@ from spec.
 
 Generated output lands in `reference/` and is **gitignored** — see Licence below.
 
+## How an asset is actually built
+
+One recipe produces every file a unit needs. Nothing downstream is hand-made.
+
+```
+Content/models/<x>.json          the ONLY source. Declarative: parts, textures, bones.
+        |
+        |  zhasset model / models          (zhblender.py runs INSIDE Blender)
+        v
+  Blender kernel   prims -> taper -> bevel -> boolean cuts -> array -> mirror
+                   -> cube_project -> pack_atlas -> Cycles AO bake
+        |
+        v  glTF (.glb)
+        |
+        |  zhasset w3dfrom                 every chunk authored; no template, no retail bytes
+        v
+  <X>.W3D  +  <x>.tga sheets  +  <X>_icon.tga  +  art-profiles.json
+        |
+        |  listed in the pack's zh.art
+        v
+  rts compile --target zh            Object/Locomotor/FXList/... INI + Art/W3D + Art/Textures
+        v
+  rsync into ~/GeneralsX/GeneralsZH
+```
+
+**Check it in this order. Each step is cheaper than the next and catches different things.**
+
+| | catches | cost |
+|---|---|---|
+| `zhasset preview --recipe … --out sheet.png` | shape, proportion, every texture-space bug | **6 s** |
+| `zhasset w3dgrade <f.w3d>` | format errors, by an INDEPENDENT reader | ~20 s |
+| `./e2e.sh` | the contracts: names, mappers, INI halves, zero-borrow | minutes |
+| `rts lint --no-borrow <faction>` | art that resolves into the installed game | seconds |
+| boot the game | **only** what the ENGINE thinks | ~2 min |
+
+**The game is the authority on the engine and a poor judge of shape.** It shows one angle at
+distance after a two-minute round trip. Never package before the sheet looks right.
+
 ## Authoring a model: the numbers that decide everything
 
 Model to the **measured** budget, not to taste:
@@ -91,19 +130,16 @@ Model to the **measured** budget, not to taste:
 | a real building | GLA barracks 110×51×88 at 565 tris; war factory 100×58×122 at 684 |
 | a real vehicle | AVLeopard 44×17×15 at 245 tris, in **10 named sub-objects** |
 
-Three consequences that are not obvious:
-
-- **Text-to-3D generation is the wrong tool.** It emits 50k–500k triangles of organic
-  surface; retopologising that to 169 is harder than authoring 169. And the engine consumes
-  **structure**, not surface — a turret must be its own named sub-object to rotate, house
-  colour its own submesh to be tinted.
-- **Spend triangles where they can be SEEN.** The Mangal's road wheels were 55% of the model
-  and completely invisible — a wheel 3 units thick inside a track box 5 units thick. Retail
-  reaches the same conclusion from the other end: flat tread strips, with links and wheels in
-  a scrolling texture.
-- **Sub-object NAMES are load-bearing.** An INI Draw module shows and hides a piece by name,
-  and the engine finds a turret the same way. `w3dfrom` carries recipe names through; a
-  merged single mesh cannot animate however good it looks.
+- **Text-to-3D generation is the wrong tool here.** It emits 50k–500k triangles of organic
+  surface; retopologising to 169 is harder than authoring 169. And the engine consumes
+  **structure**, not surface. (It is the right tool for *reference*, and for organic subjects —
+  infantry — where this approach genuinely runs out.)
+- **PROPORTION BEFORE DETAIL.** Every silhouette correction in this project came from the SIDE
+  view, and no amount of surface work fixes a wrong ratio. Get length:height right first.
+- **Spend triangles only on what changes the SILHOUETTE.** A hole in the outline cannot be
+  faked; a rib, a wheel, a window, a pipe run, a rivet can. Corollary: a detail at a *different
+  height* from its neighbours is geometry, because a flat plate at constant z cannot say that —
+  which is why a drive sprocket is modelled and road wheels are painted.
 
 ### Names the engine reads, and the INI half each one needs
 
@@ -118,84 +154,134 @@ failure modes: **`zh-authoring` → `references/engine-rules.md` rule 20.** Summ
 | `TURRET`, exactly | *(derived)* an AI Turret block and a Draw bone | a **360°** gun |
 
 A tread must also carry the `LINEAR_OFFSET` vertex-material mapper (`0x00040000`) plus a
-`VERTEX_MAPPER_ARGS0` chunk, or the engine's scan skips it. `zhasset model` does this from
-the name; do not hand-write it.
+`VERTEX_MAPPER_ARGS0` chunk, or the engine's scan skips it. `zhasset model` does this from the
+name; do not hand-write it.
 
-**Do not name a part `TURRET` unless it should spin through 360°** — ZH has no arc field
-anywhere, so a limited-traverse gun does not exist. Model a casemate by naming the part
-something else (`CASEMATE`) and slowing the hull's `TurnRate` to the traverse you want.
+**Do not name a part `TURRET` unless it should spin through 360°** — ZH has no arc field, so a
+limited-traverse gun does not exist. Model a casemate by naming the part something else and
+slowing the hull's `TurnRate` to the traverse you want.
 
 **Bones need no geometry, and most bones have none.** NVGattTank carries **29 pivots for 12
-submeshes**; the 17 spare ones are `FIREPOINT01..08` (flames on a wreck), `SMOKE01..03`,
-`MUZZLE01`, `TREADFX01..04`. Declare them with `"bones": [{"name":…, "at":[x,y,z]}]`.
+submeshes**; the spares are `FIREPOINT01..08`, `SMOKE01..03`, `MUZZLE01`, `TREADFX01..04`.
+Declare them with `"bones": [{"name":…, "at":[x,y,z]}]`.
 
 ## Recipes (`Content/models/*.json`)
 
 `tools/zhblender.py` runs **inside Blender**, never under system Python. Shapes: `box`,
-`cylinder`, `cone`, `wedge`, `ridge`, `dome`. Per part: `size`, `at` (centre of the box),
-`rot`, `taper`, `bevel`, `cuts` (boolean), `array`, `mirror`. Each part becomes one named
-W3D sub-object.
+`cylinder`, `cone`, `wedge`, `ridge`, `dome`. Per part: `size`, `at` (centre), `rot`, `taper`,
+`bevel`, `cuts` (boolean), `array`, `mirror`, `uvScale`, `texture`, `paint`, `noAtlas`.
 
-- **`ridge` is not `taper`.** A ridge collapses the top to a LINE; taper scales both non-axis
-  dimensions equally and so makes a pyramid. A pitched roof is an entire silhouette on its own.
-- **`cuts` are LOCAL to the part**, because the part is still at the origin when they are
-  applied — it has to be, or a bevel width scales with wherever the part happens to stand.
-- **`mirror` is about the MODEL's centreline**, and therefore runs after placement.
+- **`ridge` is not `taper`.** A ridge collapses the top to a LINE (`ridgeWidth` widens the
+  crown); taper scales the other two axes and makes a truncated pyramid. **A ridge is a PRISM,
+  so its end face is SOLID** — that gable will stand in front of anything you cut behind it.
+- **`taper` takes `[sx, sy]`** for one axis only. A single factor scales both and splays a
+  track into a funnel; a tank's belt stretches in LENGTH over its height and not in width.
+- **`cuts` are LOCAL to the part**, so a cut's z moves when the part's centre does.
+- **`mirror` is about the MODEL's centreline**, and therefore runs after placement. `"xy"`
+  gives four copies from one authored part — front/rear and left/right.
 - **Over budget REPORTS and names the heaviest parts.** It does not decimate unless
-  `"decimate": true`, because collapse decimation eats exactly the bevel loops that made the
-  thing read as built, while the count lands neatly on target.
+  `"decimate": true`: collapse decimation eats exactly the bevel loops that made the thing read
+  as built, while the count lands neatly on target.
 
 ## Textures: tiling material, packed atlas, and the one that must be neither
 
-Three modes, and picking wrong is not a quality question but a correctness one.
+Three modes. Picking wrong is a correctness question, not a quality one.
 
-- **A tiling MATERIAL** is the default and the measured norm: **61.9% of the 3,790 retail
-  meshes with texcoords have UVs outside 0..1**, so the engine wraps. Cube projection at a
-  fixed world size gives uniform texel density by construction.
+- **A tiling MATERIAL** is the default and the measured norm: **61.9% of the 3,790 retail meshes
+  with texcoords have UVs outside 0..1**, so the engine wraps. Cube projection at a fixed world
+  size gives uniform texel density by construction.
 - **A packed ATLAS** (`"atlas": true`) gives each part its own rectangle, so a generator can
-  paint the roof *as* a roof. It is also what makes the AO bake possible — two parts sharing
-  a texel cannot each bake their own shadow into it.
-- **A SCROLLING sheet can be neither.** `W3DTankDraw` animates a belt by adding to the mesh's
-  U offset, so a tread packed into a sub-rectangle scrolls straight into its neighbour's.
-  Retail splits exactly here: `NVGattTank.tga` for the body, `NVTreads.tga` for the two
-  belts. `zhasset model` excludes a `TREADS*` part from the pack automatically.
+  paint the roof *as* a roof. It is also what makes the AO bake possible — two parts sharing a
+  texel cannot each bake their own shadow.
+- **A SCROLLING sheet can be neither.** `W3DTankDraw` animates a belt by adding to its U
+  offset, so a tread packed into a sub-rectangle scrolls into its neighbour's. Retail splits
+  exactly here: `NVGattTank.tga` for the body, `NVTreads.tga` for the belts.
 
-Four rules that each cost a rebuild:
+Painters available: `tread`, `wheels`, `hatch`, `ribbed`, `pipes`, `windows`, `trackmark`.
+A painter on a PART selects an atlas region's generator; on a TEXTURE spec it fills a standalone
+tiling sheet. **Both places exist and they are not interchangeable** — a `paint` on a part whose
+texture is standalone silently falls through to the plain panel generator.
 
-- **COUNTS IN A PAINTER ARE PER TILE, NOT PER MODEL.** Cube projection repeats the sheet;
-  at `uvScale` 12 a 48-long belt samples it four times, so `"wheels": 6` arrived in game as
-  twenty-four tiny ovals. Divide by the repeat count before you author.
-- **A part that leaves the atlas also leaves the AO bake**, so it must carry its own tone.
-  A belt tucked under an overhang rendered as the brightest thing on the vehicle otherwise.
-- **Every feature must be a FRACTION of its pitch.** A 1-px gap is 11% of a 9-px link and 3%
-  of a 32-px one, so coarsening a pattern to make it readable makes its edges finer instead.
-- **A moving texture must be legible at the speed it moves**, which is much coarser than a
-  good static surface. Thirty-two fine links read as a stationary hatch; twelve read as a
-  track. This is a different criterion from "looks right in a still".
-- **Don't paint what would slide.** Road wheels were correct on a static belt and wrong the
-  moment it scrolled — a painted wheel travels down the hull. Links are the only thing on a
-  real track that moves.
-- **A track-mark sheet is 32-bit and V-symmetric.** `_PresetAlphaShader` composites it, so
-  alpha *is* the mark; U runs across the ribbon (two bands, bare ground between) and V
-  alternates 0/1 **every other quad**, so anything not mirror-symmetric in V flickers between
-  two orientations as the vehicle drives.
+### The rules that each cost a rebuild
 
-## Looking at it
+- **COUNTS IN A PAINTER ARE PER TILE, NOT PER MODEL.** Cube projection repeats the sheet; at
+  `uvScale` 12 a 48-long belt samples it four times, so `"wheels": 6` arrived as twenty-four.
+- **PHASE IS NOT FREE TO ASSUME.** Cube projection decides where U=0 falls on a part. A feature
+  centred mid-tile lands on the tile SEAM if that origin is half a tile out — which cut a wheel
+  in half at each end of the plate and added one the recipe never asked for. Hence `phase`.
+- **AN ATLAS REGION IS A PART'S WHOLE UV BOX, NOT ITS IMPORTANT FACE.** Faces are placed by
+  WORLD position, so a thin plate standing 17 units off the centreline puts its big faces at
+  V=z/scale and its edges at V=y/scale — a box spanning 1.25 of V to hold a face needing 0.5,
+  with that face landing in the bottom third of its own region. Symptom: a region correctly
+  packed, correctly painted, and sampling its own empty band. Fix with `"noAtlas": true`, then
+  size the part so **height == uvScale and centre == uvScale/2**, which lands V on exactly 0..1.
+- **BOTH HALVES OF OPTING OUT MUST AGREE.** `noAtlas` leaves the packing *and* the texture
+  assignment. Leaving one behind points a tiling part at the atlas — the wheels rendered as
+  blocks for exactly this reason, being a slice of whatever regions lay under their UVs.
+- **EVERY FEATURE MUST BE A FRACTION OF ITS PITCH.** A 1-px gap is 11% of a 9-px link and 3% of
+  a 32-px one, so coarsening a pattern to make it readable makes its edges *finer* instead.
+- **A MOVING TEXTURE MUST BE LEGIBLE AT THE SPEED IT MOVES** — far coarser than a good static
+  surface. Thirty-two fine links read as a stationary hatch; twelve read as a track.
+- **DON'T PAINT WHAT WOULD SLIDE.** Road wheels were correct on a static belt and wrong the
+  moment it scrolled. They became their own static SURFACE, not a different feature of the same
+  one.
+- **A PART THAT LEAVES THE ATLAS LEAVES THE AO BAKE**, so it must carry its own tone — a belt
+  under an overhang otherwise renders as the brightest thing on the vehicle.
+- **ROUND IS CARRIED BY THE CONTRAST STEP AT THE RIM**, not by the mask. Wheels with a gap
+  brighter than the tyre read as a row of squares whatever shape the maths draws.
+- **A TRACK-MARK SHEET IS 32-BIT AND V-SYMMETRIC.** `_PresetAlphaShader` composites it, so alpha
+  *is* the mark; U runs across the ribbon and V alternates 0/1 **every other quad**.
+- **AN ADDITIVE SPRITE AND AN ALPHA SPRITE ARE DIFFERENT IMAGES.** Additive encodes falloff as
+  brightness on BLACK (adding zero hides the square edge); ALPHA composites by alpha and
+  multiplies by the system's colour, so that same black is *opaque* and renders as a dark box.
 
-**There is no substitute for rendering and looking.** Structural checks — counts, byte-identical
-round-trips, even Blender's own importer — all pass happily on a model whose parts are in the
-wrong place. Three transform bugs in one session were caught this way and by nothing else.
+### Fidelity, in the order it pays
+
+1. **AO baked from the real geometry.** The single largest gap between our sheets and retail's.
+2. **A region that knows what it is** — the roof painted as a roof, the belt as a belt.
+3. **A repeating human-scale element.** For a building this is WINDOWS, and it is the difference
+   between "inhabited structure" and "grey box" — dark glass, a lit sill, a shadowed reveal, a
+   few panes lit so the grid does not read as a texture. Small and many, not few and large.
+4. **Grime streaks anchored to the panel seams**, because that is where water runs. The cheapest
+   fidelity available on a large flat wall.
+5. Colour and panel noise. Least important; retail sheets are *not* more colourful than ours.
+
+Two calibration traps: **strength tuned on a flat surface overpowers a curved one** (a dome's
+form is its falloff, and meridians as strong as that make a striped bowl), and **anything
+multiplied by the AO bake needs roughly double the authored strength**, because the bake
+flattens exactly the low-frequency variation streaks add.
+
+## Looking at it — and the discipline that goes with it
 
 ```
-blender --background --python-expr "...import_scene.gltf(filepath=...)..."
+zhasset preview --recipe Content/models/x.json --out sheet.png     # 4 views, ~6 s
 ```
+
+Three-quarter is what the game draws; **SIDE is where proportion lives**; **FRONT is where an
+opening either reads as a hole or does not**; the low **gear** pass is where texture-space bugs
+surface, being the part small enough to be wrong without the silhouette changing.
+
+**LOOK AT THE THING YOU JUST CLAIMED TO FIX.** In one session three fixes were reported as done
+and were not, and in every case the change itself was correct — something else was covering it:
+
+- the front opening was widened twice while a ROOF whose eaves overlapped the frame covered the
+  top of it, so no widening could ever show;
+- the doorway slab was placed where the portico's own solid rear already was (buried), then in a
+  recess so deep no light reached it — **a detail light cannot reach renders black whatever is
+  in it, so a door must be SHALLOW**;
+- the wheel plate was excluded from the atlas pack but still pointed at the atlas texture.
+
+A structural check cannot see any of these. Counts matched, the round-trip was byte-identical,
+and an independent reader agreed — on every one.
+
+Blender gotchas that cost time and will again:
 
 - the render engine enum is **`BLENDER_EEVEE`**, not `BLENDER_EEVEE_NEXT`
 - `read_factory_settings(use_empty=True)` first, or the default cube is in the shot
-- frame from the union of `obj.matrix_world @ Vector(c) for c in obj.bound_box`
+- `bpy.ops.object.transform_apply` acts on the **selection**, not the active object
+- `bpy.data.materials.new()` treats the name as a HINT and appends `.001` on a collision — two
+  parts naming one texture produced a mesh pointing at a file nobody wrote
 - **macOS Quick Look does NOT open `.glb`** — `qlmanage` hangs. Blender or a browser.
-- `bpy.ops.object.transform_apply` acts on the **selection**, not the active object, and
-  reports success either way
 
 ## What lives where
 
