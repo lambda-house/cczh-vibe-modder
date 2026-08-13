@@ -3268,5 +3268,93 @@ PYCUT
 fi
 
 
+gate "a TRACK LOOP is unwrapped by arc length, and to RETAIL's measured convention"
+# THE BELT IS THE ONE PART THE ATLAS CANNOT HOLD, because W3DTankDraw scrolls it by adding to
+# its U offset and a packed rectangle would scroll into its neighbour's. So it was the last
+# surface still cube-projected, and cube projection cannot know what a part IS. Three defects
+# at once, none visible to a structural check:
+#
+#   - both runs got u = x/scale, so the engine's offset moved them the SAME way. A real track
+#     counter-rotates: the ground run travels backwards relative to the hull, the return run
+#     forwards.
+#   - a hollowed belt's runs are thin bars, so one sampled v = 0.000..0.044 of the sheet and
+#     the other v = 0.394..0.438 — same track, one texture, two materials.
+#   - the end wraps have normals along x, so they were mapped by (y, z): a near-constant u,
+#     hence no links at all where the belt goes round the idler and the sprocket.
+#
+# THE V ENVELOPE IS MEASURED, NOT CHOSEN. 164 TREADS sub-objects across 56 retail models:
+# V span median 0.91 with 99% at or under 1.05, against a U span whose median is 5.03 tiles.
+# EA scales V to the belt's width and tiles U along its length — anisotropic on purpose, which
+# they can afford for the same reason the belt leaves the atlas: it owns its whole sheet, so it
+# has nobody's texel density to match. The 0.91 is a ~4.5% inset at each edge, the margin that
+# stops bilinear filtering and the mip chain sampling past the end of the strip.
+BL=/Applications/Blender.app/Contents/MacOS/Blender
+if [ ! -x "$BL" ] || [ ! -f build/models/T80.W3D ]; then
+  echo "  (no Blender or no built model: skipped)"
+else
+python3 - <<'PYEOF' || { echo "  BELT UNWRAP REGRESSED"; exit 1; }
+import struct, sys
+out = []
+d = open("build/models/T80.W3D", "rb").read()
+def walk(b, off, end):
+    while off + 8 <= end:
+        cid, sz = struct.unpack_from("<II", b, off)
+        cont = bool(sz & 0x80000000); sz &= 0x7FFFFFFF; body = off + 8
+        walk(b, body, body + sz) if cont else out.append((cid, b[body:body + sz]))
+        off = body + sz
+walk(d, 0, len(d))
+cur, mesh = None, {}
+for cid, p in out:
+    if cid == 0x1F: cur = p[8:24].split(b"\0")[0].decode(); mesh[cur] = {}
+    elif cur:
+        if cid == 0x02:   mesh[cur]['v'] = [struct.unpack_from("<3f", p, i*12) for i in range(len(p)//12)]
+        elif cid == 0x03: mesh[cur]['n'] = [struct.unpack_from("<3f", p, i*12) for i in range(len(p)//12)]
+        elif cid == 0x20: mesh[cur]['t'] = [struct.unpack_from("<3I", p, i*32) for i in range(len(p)//32)]
+        elif cid == 0x4A: mesh[cur].setdefault('uv', [struct.unpack_from("<2f", p, i*8) for i in range(len(p)//8)])
+bad = []
+for nm in ("TREADSL", "TREADSR"):
+    m = mesh[nm]; V, N, T, UV = m['v'], m['n'], m['t'], m['uv']
+    runs = {}
+    for tri in T:
+        n = [sum(N[i][a] for i in tri)/3 for a in range(3)]
+        if abs(n[1]) < 0.7: continue                       # the ring faces, seen from the side
+        zs = [V[i][2] for i in tri]
+        if max(zs) - min(zs) > 1.5: continue               # a bar, not a wrap
+        xs = [V[i][0] for i in tri]; us = [UV[i][0] for i in tri]
+        if max(xs) - min(xs) < 0.5: continue
+        lo = min(range(3), key=lambda i: xs[i]); hi = max(range(3), key=lambda i: xs[i])
+        runs.setdefault("ground" if sum(zs)/3 < 0 else "return", []).append(
+            (us[hi]-us[lo]) / (xs[hi]-xs[lo]))
+    if not runs.get("ground") or not runs.get("return"):
+        bad.append(f"{nm}: could not find both runs"); continue
+    g = sum(runs["ground"])/len(runs["ground"]); r = sum(runs["return"])/len(runs["return"])
+    if g * r >= 0:
+        bad.append(f"{nm}: the two runs scroll the SAME way (dU/dx {g:+.4f} and {r:+.4f})")
+    if abs(abs(g) - abs(r)) > 1e-3:
+        bad.append(f"{nm}: the runs scroll at different RATES ({g:+.4f} vs {r:+.4f})")
+    vs = [v for _, v in UV]; vspan = max(vs) - min(vs)
+    if abs(vspan - 0.91) > 0.03:
+        bad.append(f"{nm}: V spans {vspan:.3f} — retail's 164 belts measure 0.91")
+    if min(vs) < -0.001 or max(vs) > 1.001:
+        bad.append(f"{nm}: V leaves 0..1 ({min(vs):.3f}..{max(vs):.3f}) — the strip would wrap")
+    ntri = len(T)
+    if ntri > 50:
+        bad.append(f"{nm}: {ntri} triangles — retail's belts are median 12, max 50")
+    print(f"  {nm}: runs counter-rotate at {abs(g):.4f}/unit, V spans {vspan:.2f} "
+          f"(retail 0.91), {ntri} triangles (retail median 12, max 50)")
+if bad:
+    for b in bad: print("  FAIL " + b)
+    sys.exit(1)
+PYEOF
+# And the belt must be the ONLY thing unwrapped this way: every other part is cube-projected,
+# which is what keeps texel density uniform across the parts that DO share an atlas.
+grep -q '"uvMode": "belt"' Content/models/t80.json \
+  || { echo "  the recipe stopped asking for a belt unwrap"; exit 1; }
+[ "$(grep -c '"uvMode"' Content/models/t80.json)" = "2" ] \
+  || { echo "  uvMode is set on something other than the two belts"; exit 1; }
+echo "  only the two belts are unwrapped; everything else stays cube-projected"
+fi
+
+
 echo
 echo "E2E PASS"

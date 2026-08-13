@@ -1,34 +1,53 @@
 {
   "_comment": [
-    "THE 'MANGAL' — a T-80 wearing a welded shed, and from this pass that is LITERALLY how it",
-    "is built: this recipe is the t80 recipe with a roof on it. Every part from TREADSL down to",
-    "HOUSECOLOR01 is the T-80's, unchanged, and everything above the deck is new.",
+    "THE T-80 HULL — running gear and lower hull only. No turret, no gun: this is the base",
+    "everything else bolts onto, and it is deliberately finished before anything is added,",
+    "because a turret is the easiest thing in the world to look at and the tracks are where",
+    "every previous silhouette correction on this project actually came from.",
     "",
-    "That is not a shortcut, it is the correction. The two were authored independently, so they",
-    "disagreed about the one thing they should have shared — the running gear. The Mangal had a",
-    "solid belt with a painted plate outboard of it and no wrap at the ends; the T-80 learned,",
-    "over several passes and one measurement of 164 retail belts, that a track is a hollow loop",
-    "with the wheels painted on a static plate INSIDE it. Re-authoring that a second time would",
-    "have been re-deriving it a second time, and getting it a second way.",
+    "Authored from reference photographs at incoming/factions/russian-federation/units/t80/",
+    "(gitignored: third-party rights, and they inform PARAMETERS only — proportion, spacing,",
+    "palette — never pixels).",
     "",
-    "So the shed is the whole delta: an open screen band on the deck, a shallow pitched roof",
-    "over it, a casemate behind the opening and a gun through it.",
+    "+X is FORWARD, +Y is LEFT, Z is up, z = 0 is the ground. A part's `at` is the CENTRE of",
+    "its box, so a wheel of radius 2.6 sitting on the belt has `at` z = 3.4.",
     "",
-    "+X is FORWARD, +Y is LEFT, Z is up, z = 0 is the ground. A part's `at` is the CENTRE of its",
-    "box. The T-80's deck is at z = 12.4 and everything here stands on it."
+    "WHAT THE REFERENCE ACTUALLY SAYS, in the order it changes the model:",
+    "",
+    "  1. SIX BIG ROAD WHEELS, WITH REAL GAPS. Each is about a third of a diameter clear of",
+    "     the next — not the sliver the T-80's reputation for close-packed running gear",
+    "     suggests. This is the tank's identity from the side and the reason the wheels are",
+    "     GEOMETRY here rather than paint. They are also PAINTED OLIVE, lighter than the hull;",
+    "     the dark thing down there is the TRACK.",
+    "  2. THE TRACK IS ALMOST A RECTANGLE. 87% of the belt is on the ground and the corners",
+    "     are cut off steeply — a 64-degree climb over three units, not a long shallow ramp.",
+    "     What makes the ends read as raised is not the outline: it is the idler and the",
+    "     sprocket being visible, small and off the ground INSIDE the loop.",
+    "  3. THE BELT WRAPS. It is a loop, so it passes in front of the end wheels; they are not",
+    "     wheels standing beside a strip. This is the single thing three passes got wrong.",
+    "  4. IT IS LOW. The hull roof is 1.5 m on a 7.0 m hull — the famous 2.2 m is the TURRET",
+    "     roof, and building to it makes a hull half again too tall.",
+    "  5. THE GLACIS IS ENORMOUS AND VERY SHALLOW: 17 degrees off horizontal over a third of",
+    "     the length. A steep front plate is the fastest way to make a Soviet tank look",
+    "     Western.",
+    "  6. THE FENDER IS THE WIDEST THING ON THE VEHICLE and it runs the entire length, past",
+    "     the idler, ending in a hanging mud flap across the nose.",
+    "",
+    "SCALE: 57 long, 28.5 wide, 13 tall, against the Mangal's 76 x 39 x 33. The two share a",
+    "pack and therefore a world scale, and a T-80 has to read as much the lower of the pair."
   ],
-  "name": "MANGAL",
-  "texture": "mangal.tga",
-  "budget": 560,
+  "name": "T80",
+  "texture": "t80.tga",
+  "budget": 380,
   "uvScale": 12.0,
   "textures": {
-    "mangal.tga": {
+    "t80.tga": {
       "_": "Soviet dark olive — greener and darker than the Mangal's drab. `ao` and `lip` are",
       "__": "the two fields that do the work: dark occlusion in every recess and a bright lip",
       "___": "on every top edge is the whole difference between a retail 256 vehicle sheet and",
       "____": "a flat one, and it is not a matter of colour or of frequency.",
       "size": 256,
-      "seed": 18,
+      "seed": 12,
       "base": [88, 96, 68],
       "panel": 36,
       "seam": 0.5,
@@ -43,24 +62,7 @@
       "streaks": 3,
       "streakStrength": 0.3
     },
-    "mangal_roof.tga": {
-      "_": "Corrugated sheet, and now the ONLY material on the shell — crown and flanks alike,",
-      "__": "which is the point. Narrow panels at strong occlusion IS corrugation once it is",
-      "___0": "texture rather than geometry: the ribs are the shadow between the sheets.",
-      "___": "PALE GREY-GREEN, NOT RUST, but no longer NEARLY WHITE: the real vehicle is one",
-      "____": "colour throughout, and at 116 against the hull's 88 the lid read as a separate",
-      "_____": "object bolted to an olive tank rather than as one welded shelter.",
-      "size": 256,
-      "seed": 9,
-      "base": [104, 110, 86],
-      "panel": [60, 400],
-      "seam": 0.76,
-      "wear": 0.28,
-      "rivets": false,
-      "accent": [96, 100, 90],
-      "lip": 0.45
-    },
-    "mangal_wheel.tga": {
+    "t80_wheel.tga": {
       "_": "Six road wheels between the belt's two runs, on their own tiling sheet because the",
       "__": "plate leaves the atlas: cube projection puts a thin offset plate's faces so far",
       "___": "apart in UV that a packed region sized to hold them all leaves the face that",
@@ -78,7 +80,7 @@
       "phase": 0.0,
       "wheelRadius": 0.42
     },
-    "mangal_tread.tga": {
+    "t80_tread.tga": {
       "_": [
         "THE BELT, and the one sheet that cannot be a region of the atlas. W3DTankDraw animates",
         "a track by adding to the mesh's U offset, so UVs confined to a packed rectangle would",
@@ -115,7 +117,7 @@
         "The `edgeShadow` knob stays in the tool for any tread that is still projected."
       ]
     },
-    "mangal_deck.tga": {
+    "t80_deck.tga": {
       "_": "THE ENGINE DECK, and it is the only place on a tank where a grille belongs. The",
       "__": "T-80's rear deck is almost entirely louvres and radiator mesh, which is why the",
       "___": "hull's own region now carries hatches 0 and this one carries six grilles: put them",
@@ -132,7 +134,7 @@
       "grilles": 6,
       "lip": 0.5
     },
-    "mangal_house.tga": {
+    "t80_house.tga": {
       "_": "The team-colour plate, painted NEARLY WHITE deliberately. Recolour_Vertex_Material",
       "__": "SETS the vertex material's ambient and diffuse to the player's colour — the engine's",
       "___": "own comment says it ignores whatever was there and assumes 1.0 — and the texture",
@@ -198,7 +200,7 @@
       ],
       "name": "TREADSL",
       "shape": "box",
-      "texture": "mangal_tread.tga",
+      "texture": "t80_tread.tga",
       "uvScale": 16,
       "uvMode": "belt",
       "size": [45, 4.4, 7.0],
@@ -212,7 +214,7 @@
       "_": "The right belt. Authored rather than mirrored, for the naming reason above.",
       "name": "TREADSR",
       "shape": "box",
-      "texture": "mangal_tread.tga",
+      "texture": "t80_tread.tga",
       "uvScale": 16,
       "uvMode": "belt",
       "size": [45, 4.4, 7.0],
@@ -254,7 +256,7 @@
       ],
       "name": "RUNGEAR",
       "shape": "box",
-      "texture": "mangal_wheel.tga",
+      "texture": "t80_wheel.tga",
       "size": [46.2, 0.8, 7.7],
       "at": [0, 12.0, 3.85],
       "mirror": "y",
@@ -410,93 +412,9 @@
       "____": "region is the one carrying the grilles.",
       "name": "DECKGRILLE",
       "shape": "box",
-      "texture": "mangal_deck.tga",
+      "texture": "t80_deck.tga",
       "size": [17, 21, 0.7],
       "at": [-16, 0, 12.6]
-    },
-    {
-      "_": [
-        "THE COVER, and it is ONE PART because it is one sheet. A video frame settled this: the",
-        "shell is a continuous folded plate — a flat crown that bends into sloping flanks and",
-        "runs straight down to just above the tracks. No horizontal break, no separate roof and",
-        "wall, no change of material anywhere on it.",
-        "",
-        "Two passes built it as a pale ROOF sitting on a dark SCREEN band, which put a hard edge",
-        "and a tone change exactly where the reference has neither, and the vehicle read as a lid",
-        "floating over a chassis. The band was then lightened to stop it going black under the",
-        "roof's shadow — treating the symptom of a part that should not have existed.",
-        "",
-        "A `ridge` IS this shape: full width at the bottom, collapsing toward a crown at the top,",
-        "with the flanks as the slope between. ridgeWidth 0.5 makes the crown half the width, so",
-        "the flanks fall about 26 degrees off vertical over 16.5 of height — the reference's",
-        "angle. At 0.18 it is a tent; on a part this wide that is a barn.",
-        "",
-        "IT COMES DOWN TO 8.5, past the deck at 12.4 and past the hull's flanks entirely, to just",
-        "above the fender. That is the whole visual idea of the thing — an armoured box with a",
-        "vehicle somewhere inside it — and it is why the hull underneath stays in the model even",
-        "though most of it is now hidden: it is still seen through the front opening, and the",
-        "Mangal is a T-80 with a cover on it rather than a shed with a chassis drawn under it.",
-        "",
-        "32 wide against the fenders' 28.5. Coplanar faces Z-FIGHT, so a shell flush with the",
-        "track it covers would flicker between the two surfaces as the camera moves."
-      ],
-      "name": "COVER",
-      "shape": "ridge",
-      "texture": "mangal_roof.tga",
-      "size": [62, 32, 16.5],
-      "at": [-1, 0, 16.75],
-      "ridgeAxis": "x",
-      "ridgeWidth": 0.5,
-      "bevel": { "width": 0.4, "segments": 1 },
-      "cuts": [
-        { "shape": "box", "size": [10, 20, 9], "at": [28, 0, -4] }
-      ],
-      "_cut": [
-        "THE FRONT IS OPEN, and ONLY the front. A ridge is a PRISM and its end face is solid, so",
-        "without a cut the nose is a wall however large the hole behind it.",
-        "",
-        "THE CUTTER MUST BE NARROWER THAN THE SHELL AT THAT HEIGHT. At 26 wide against a shell",
-        "that has narrowed to about 20 by the top of the opening, it did not cut a mouth in the",
-        "front — it sliced the whole nose off, taking both FLANKS with it and leaving daylight",
-        "down the sides behind a floating lip. 20 wide leaves six units of flank at the bottom",
-        "and two at the top, so the shell still runs unbroken to the front edge.",
-        "",
-        "It stops at local z 0.5 — a little over halfway up — so the crown overhangs the opening,",
-        "which is what the reference has and what the gun comes out from under."
-      ]
-    },
-    {
-      "_": [
-        "THE CASEMATE, and the NAME is the decision. Called TURRET it would be read: `zhasset",
-        "artprofile` declares a turret when a part is named exactly TURRET, and the compiler then",
-        "emits both an AIUpdateInterface Turret block and a `Turret = TURRET` draw line off it.",
-        "",
-        "ZH HAS NO TURRET ARC. TurretAIData::buildFieldParse carries eighteen keys and not one",
-        "bounds azimuth — MinIdleScanAngle/MaxIdleScanAngle limit the idle wander only,",
-        "TurretFireAngleSweep is a sweep while firing, and the weapon's MinTargetPitch and",
-        "MaxTargetPitch are elevation. A gun is 360 degrees or it is fixed. So a gun welded",
-        "inside a box of armour has to be FIXED, and the geometry behind the opening must not be",
-        "called TURRET — a part named for a thing it cannot do is a lie in the exact place four",
-        "different tools go looking. The compiler reads belts-and-no-TURRET and slows the hull to",
-        "60 deg/sec, which IS the traverse."
-      ],
-      "name": "CASEMATE",
-      "shape": "box",
-      "size": [22, 22, 5.6],
-      "at": [2, 0, 15.2],
-      "taper": 0.82,
-      "bevel": { "width": 0.5, "segments": 1 },
-      "paint": "hatch"
-    },
-    {
-      "_": "The gun, out of the casemate and through the opening. Six segments: a barrel is a",
-      "__": "cylinder seen end-on almost never and edge-on always.",
-      "name": "BARREL",
-      "shape": "cylinder",
-      "size": [3.2, 3.2, 34],
-      "segments": 6,
-      "at": [28, 0, 15.2],
-      "rot": [0, 90, 0]
     },
     {
       "_": "THE TEAM-COLOUR PLATE — the cheapest part on the model and the one that says whose",
@@ -507,7 +425,7 @@
       "______": "flat face, and chasing a sloped one is what moved the Mangal's three times.",
       "name": "HOUSECOLOR01",
       "shape": "box",
-      "texture": "mangal_house.tga",
+      "texture": "t80_house.tga",
       "size": [12, 0.8, 1.8],
       "at": [-13, 12.3, 11.2],
       "mirror": "y"
@@ -530,6 +448,33 @@
     { "name": "TREADFX03", "at": [15, 10.4, 0.2] },
     { "name": "TREADFX04", "at": [15, -10.4, 0.2] }
   ],
+  "_extra": [
+    "A SHEET NO MESH NAMES. The mud the tracks leave is laid on the TERRAIN, not on the tank,",
+    "so nothing inside the .w3d points at it and the orphan check cannot find it — which is why",
+    "`extraTextures` exists as its own block rather than being inferred.",
+    "",
+    "IT LIVES ON THE T-80 BECAUSE THE T-80 IS THE BASE TANK. The Mangal is derived from this",
+    "recipe and both units' compiled INI names track_rf.tga, but only one recipe needs to write",
+    "it. It used to live on the Mangal; deriving the Mangal FROM this file silently dropped it,",
+    "the pack kept declaring build/models/track_rf.tga in zh.art, the compiler kept emitting",
+    "TrackMarks = track_rf.tga, and nothing wrote the file — two tanks laying no mud, with no",
+    "error anywhere. e2e's zero-borrow gate caught it by demanding every declared file exist."
+  ],
+  "extraTextures": {
+    "track_rf.tga": {
+      "_": "32-bit: the terrain-track shader is _PresetAlphaShader and the ALPHA channel IS the",
+      "__": "mark. U runs across the ribbon and V alternates every other quad, so the sheet has",
+      "___": "to be V-symmetric or the mark flickers as the strip is laid.",
+      "size": 128,
+      "seed": 61,
+      "paint": "trackmark",
+      "base": [58, 50, 38],
+      "bands": 2,
+      "bandWidth": 0.17,
+      "linkPitch": 8,
+      "strength": 0.8
+    }
+  },
   "atlas": true,
   "textureSize": 512
 }

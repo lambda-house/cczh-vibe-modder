@@ -175,6 +175,12 @@ def _cut(ob, spec):
     of a 68-deep hall is at y = -30, whatever the hall's own `at` turns out to be.
     """
     cutter = _prim(spec)
+    # A CUTTER MAY TAPER, because an opening often has to follow the shape it is cut into
+    # rather than be a rectangle inside it. The track loop is the case that forced it: a
+    # rectangular hole in a trapezoid leaves a belt 0.7 thick along its runs and 3.2 thick at
+    # its wraps, which is wrong as a track and degenerate as a UV domain — an arc-length
+    # unwrap has nothing sensible to do with a bar four times thicker at one end.
+    _taper(cutter, spec.get("taper"), spec.get("taperAxis", "z"))
     cutter.location = spec.get("at", [0, 0, 0])
     cutter.rotation_euler = [math.radians(a) for a in spec.get("rot", [0, 0, 0])]
     _only(cutter)
@@ -262,6 +268,11 @@ def build_part(spec, uv_scale):
         m.use_axis = tuple(a in mir.lower() for a in "xyz")
         _apply(ob, m)
 
+    # A TRACK LOOP IS THE ONE PART WHOSE UVs ARE NOT A GUESS, so it does not get projected.
+    if spec.get("uvMode") == "belt":
+        uv_belt(ob, uv_scale)
+        return ob
+
     # CUBE projection, not smart-project. The house rule is that texel density must be UNIFORM
     # across surfaces — a live bug once made a cylinder's side cells 3.1x wider than its cap
     # cells, visible in game and invisible to every structural check. A cube projection at a
@@ -275,6 +286,163 @@ def build_part(spec, uv_scale):
     bpy.ops.uv.cube_project(cube_size=uv_scale)
     bpy.ops.object.mode_set(mode="OBJECT")
     return ob
+
+
+def _hull2d(pts):
+    """Convex hull of a point set in 2D — Andrew's monotone chain, counter-clockwise.
+
+    Deterministic by construction: the input is sorted and the only comparisons are on a
+    cross product's sign, so the same mesh gives the same hull on every machine.
+    """
+    pts = sorted(set(pts))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def uv_belt(ob, uv_scale):
+    """Unwrap a TRACK LOOP by arc length around its own outline, instead of projecting it.
+
+    WHY THIS EXISTS
+        Cube projection cannot know what a part IS. That is fine for a panelled flank and it
+        is the reason the atlas was built for everything else — a packed region knows its own
+        rectangle. But the belt is the one part that CANNOT be in the atlas, because
+        `W3DTankDraw` scrolls it by adding to its U offset and a packed rectangle would scroll
+        into its neighbour's. So the belt was the last surface on the model still being
+        projected blind, and it produced three separate bugs that all looked like bad taste:
+
+          - THE TWO RUNS SCROLLED THE SAME WAY. Cube projection maps a face by world position,
+            so both the ground run and the return run got u = x/scale and the engine's offset
+            moved them in the same direction. A real track counter-rotates: the bottom run
+            travels backwards relative to the hull while the top travels forwards. Unwrapping
+            around a closed loop gives that for free, because u increases monotonically going
+            round — which means it increases with +x along the bottom and with -x along the top.
+          - THE RUNS WERE PAINTED FROM DIFFERENT PARTS OF THE SHEET. A hollowed belt's runs are
+            thin bars; at uvScale 16 a 0.7-thick run spans v = 0.000..0.044 and the other one
+            v = 0.394..0.438. Same track, one sheet, two materials.
+          - THE END WRAPS GOT NO PATTERN AT ALL. Their normals point along x, so cube projection
+            mapped them by (y, z) — a near-constant u, hence no links, hence two flat dark
+            wedges where the track goes round the idler and the sprocket.
+
+        None of it is visible to a structural check: the sheet is correct, the mesh is correct,
+        and only their combination is wrong.
+
+    THE MAPPING
+        U is ARC LENGTH around the loop's outline, divided by uv_scale, so the link pitch is in
+        world units and the wrap closes on a whole tile. V is NORMALISED across the belt — the
+        y extent on the outer and inner perimeter, the bar's own thickness on the ring faces —
+        so the sheet's height always means "across the belt".
+
+        THAT LAST CHOICE IS MEASURED, NOT REASONED. Normalising V breaks this project's uniform
+        texel-density rule: the same 1.0 of V covers 4.4 world units on the perimeter and 0.7 on
+        the ring faces. It was rejected on those grounds once, and then 164 TREADS sub-objects
+        across 56 retail models were measured and said otherwise — V span median 0.91, and 99%
+        of them at or under 1.05, against a U span whose median is 5.03 tiles. EA scales V to
+        the belt and tiles U along it, anisotropically and deliberately. They can, and so can
+        we, for the same reason the belt is excluded from the atlas in the first place: it owns
+        its whole sheet, so it has nobody's texel density to match.
+
+        The 0.91 is theirs too, and it is a MARGIN — a ~4.5% inset at each edge, which is what
+        keeps bilinear filtering and the mip chain from sampling past the end of the strip.
+
+    SEAMLESS BY CONSTRUCTION
+        The repeat count is ROUNDED TO AN INTEGER and the scale adjusted to suit, so the wrap
+        closes on a whole tile. It has to: the join crosses the screen several times a second
+        once the thing is moving, and a fractional repeat would put a crawling seam in it.
+    """
+    me = ob.data
+
+    # TRIANGULATE FIRST, and this is a correctness step rather than an optimisation. A boolean
+    # that hollows a box leaves each side of the ring as a SINGLE eight-corner n-gon — the
+    # keyhole polygon that is how a face with a hole in it gets represented — so one face's
+    # corners span the entire perimeter. The seam unwrap below is per-face, and one shift
+    # decision cannot serve corners that are a whole loop apart: the top run came out sharing
+    # the bottom run's U range and scrolling the same way, which is precisely the defect this
+    # function exists to remove. Split into triangles, every face is local, and the shift works.
+    # Costs nothing — the exporter triangulates anyway.
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    bm.to_mesh(me)
+    bm.free()
+
+    hull = _hull2d([(round(v.co.x, 4), round(v.co.z, 4)) for v in me.vertices])
+    n = len(hull)
+    if n < 3:
+        return False
+
+    seg, cum = [], [0.0]
+    for i in range(n):
+        ax, az = hull[i]
+        bx, bz = hull[(i + 1) % n]
+        d = ((bx - ax) ** 2 + (bz - az) ** 2) ** 0.5
+        seg.append(d)
+        cum.append(cum[-1] + d)
+    total = cum[-1]
+    if total < 1e-6:
+        return False
+    reps = max(1, int(round(total / uv_scale)))
+    k = reps / total                       # world units of perimeter -> U
+
+    def project(x, z):
+        """Arc length of, and distance to, the nearest point on the outline."""
+        best_d, best_s = 1e18, 0.0
+        for i in range(n):
+            ax, az = hull[i]
+            bx, bz = hull[(i + 1) % n]
+            dx, dz = bx - ax, bz - az
+            l2 = dx * dx + dz * dz
+            t = 0.0 if l2 < 1e-12 else max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / l2))
+            d = ((x - (ax + t * dx)) ** 2 + (z - (az + t * dz)) ** 2) ** 0.5
+            if d < best_d:
+                best_d, best_s = d, cum[i] + t * seg[i]
+        return best_s, best_d
+
+    ys = [v.co.y for v in me.vertices]
+    y0, yspan = min(ys), max(max(ys) - min(ys), 1e-6)
+    depths = [project(v.co.x, v.co.z)[1] for v in me.vertices]
+    dspan = max(max(depths), 1e-6)         # the bar's thickness, measured rather than assumed
+
+    # Retail's measured V envelope: span 0.91, centred, i.e. inset 0.045 at each edge.
+    V0, VSPAN = 0.045, 0.91
+
+    uvl = me.uv_layers.active or me.uv_layers.new(name="UVMap")
+    for poly in me.polygons:
+        ring = abs(poly.normal.y) > 0.7
+        # UNWRAP THE SEAM PER FACE. Arc length runs 0..total and then jumps back to 0, so the
+        # one face sitting on that join would otherwise be stretched across the entire texture.
+        # Everything is expressed relative to the face's first corner and shifted by a whole
+        # perimeter when it is more than half a loop away, which — the repeat count being an
+        # integer — lands on exactly the same texel.
+        vals = []
+        for li in poly.loop_indices:
+            co = me.vertices[me.loops[li].vertex_index].co
+            s, d = project(co.x, co.z)
+            vals.append((li, s, d, co.y))
+        s0 = vals[0][1]
+        for li, s, d, y in vals:
+            if s - s0 > total * 0.5:
+                s -= total
+            elif s0 - s > total * 0.5:
+                s += total
+            across = (d / dspan) if ring else ((y - y0) / yspan)
+            uvl.data[li].uv = (s * k, V0 + VSPAN * across)
+    print(f"ZHBELT {ob.name} perimeter={total:.2f} repeats={reps} thickness={dspan:.2f}")
+    return True
 
 
 def tri_count(ob):

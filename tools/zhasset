@@ -4174,8 +4174,21 @@ def _paint_tread(w, h, spec):
                 k *= 0.74                                # the plate falling away into the gap
             # The belt's own edges, in shadow. Scaled to the sheet rather than a fixed 2 px:
             # at 128 across, two pixels was 1.5% of the belt and invisible.
-            edge = max(2, across // 12)
-            if v < edge or v > across - 1 - edge:
+            #
+            # OFF FOR A BELT THAT IS A LOOP, and this is a correctness switch rather than a
+            # taste one. These two bands assume the part sampling the sheet is a SOLID belt
+            # whose full height maps to the full height of the texture — true of a plain
+            # tapered box, false the moment the tread is hollowed into a track loop. A loop's
+            # runs are thin bars: at `uvScale` 16 a 0.7-thick run spans v = 0.000..0.044, i.e.
+            # rows 0-5 of a 128 sheet — entirely INSIDE this band — while the return run at
+            # z 6.3..7.0 lands on rows 50-56 and gets none of it. Same track, same texture,
+            # two different materials, and no structural check can see it because the sheet is
+            # correct and the mesh is correct and only their COMBINATION is wrong.
+            #
+            # The general rule this is an instance of: a painter that varies along V is making
+            # an assumption about how much of V the mesh will sample. State it or drop it.
+            edge = max(2, int(across * float(spec.get("edgeShadow", 1.0)) / 12))
+            if edge > 2 and (v < edge or v > across - 1 - edge):
                 k *= 0.62
 
             row.append(tuple(int(max(0, min(255, c * k))) for c in lo))
@@ -4237,11 +4250,24 @@ def _paint_wheels(w, h, spec):
                 dy = abs(v - across / 2.0)
                 d = (dx * dx + dy * dy) ** 0.5 / max(1.0, r)
                 if d < 1.0:
-                    # Tyre, then rim, then a bright hub. Three bands is all that survives at
-                    # RTS distance, and the hub is what makes it read as a wheel and not a hole.
-                    k *= (0.60 if d > 0.88 else
-                          1.34 if d > 0.62 else
-                          0.78 if d > 0.30 else 1.46)
+                    # Tyre, then rim, then a hub — and the bands are MONOTONIC, dark at the rim
+                    # and brightening inward. That is the fix for the bullseye.
+                    #
+                    # They used to alternate: 0.60 tyre, 1.34 rim, 0.78 dish, 1.46 hub. Every
+                    # step reversed direction, so the eye resolved a bright RING inside a dark
+                    # one and every road wheel on every model read as a target. The values were
+                    # tuned when a wheel was the only thing on a flat plate and needed to fight
+                    # for attention; sitting inside a real track loop, the dark surround is
+                    # already there and the same contrast is roughly double what is wanted.
+                    #
+                    # A photographed road wheel is nearly flat: a dark tyre, a slightly lighter
+                    # dished centre, a small hub, and ONE real step — at the rim. Round is
+                    # carried by that step, which is why the outer band stays well below the
+                    # 0.42 of the gap between wheels rather than matching it.
+                    k *= (0.66 if d > 0.90 else       # the tyre's shoulder, turning away
+                          0.92 if d > 0.64 else       # the tyre face
+                          1.08 if d > 0.26 else       # the dished centre
+                          1.20)                       # the hub
                 else:
                     # THE GAP BETWEEN WHEELS MUST BE DARKER THAN THE TYRE, or the discs do not
                     # separate and the row reads as a line of SQUARES: at 0.80 against a 0.60

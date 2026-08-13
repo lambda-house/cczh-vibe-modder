@@ -60,6 +60,32 @@
       }
     },
 
+    // THE T-80 — and today it is a HULL, not a tank. Tracks, running gear, glacis, fenders
+    // and nothing above the deck: the turret, the gun and the anti-air variant come later,
+    // and they come later ON PURPOSE. A turret is the easiest part of a tank to look at and
+    // the running gear is where every silhouette correction on this project has actually
+    // come from, so the base is finished first and photographed before anything is bolted on.
+    //
+    // It therefore has NO CAN_ATTACK and its weapon is inert, exactly like rf_base's — the
+    // content model requires a WeaponBearer on every unit and this one has nothing to fire
+    // it from. It exists to be built, driven and WATCHED: belts scrolling the right way,
+    // dust off the right bones, mud laid under the right track centrelines.
+    //
+    // One consequence to know about rather than discover: the compiler derives TurnRate from
+    // the MESH, and belts-with-no-TURRET means casemate, which means 60 deg/sec — the
+    // Overlord's rate. That is the correct reading of a fixed-gun tank and a slow one for an
+    // unarmed hull. It resolves itself when the turret lands; do not special-case it here.
+    "t80": {
+      "faction": "russian_federation", "cost": 900, "buildSeconds": 12,
+      "kindOf": ["VEHICLE", "SELECTABLE"],
+      "components": {
+        "Health": { "max": 700, "armorClass": "heavy_vehicle" },
+        "Mobile": { "speed": 4.2 },
+        "WeaponBearer": { "weapon": "mangal_cannon" },
+        "VeterancyCarrier": { "track": "vehicle_default" }
+      }
+    },
+
     // The construction base. A structure is a unit with speed 0 and role flags — ZH's model
     // exactly. FS_FACTORY is what gives it a build menu, and the menu is what makes the
     // Mangal reachable at all.
@@ -83,7 +109,7 @@
     // `zhasset models` builds from them. Both halves matter: lint refuses a model that
     // resolves to no file, because the alternative is a unit that moves, shoots, dies and
     // cannot be seen or clicked — with no error from the engine.
-    "models": { "mangal": "MANGAL", "rf_base": "RFBASE" },
+    "models": { "mangal": "MANGAL", "rf_base": "RFBASE", "t80": "T80" },
 
     // Carried by the pack and copied into the compiled output, routed by extension: .w3d to
     // Art/W3D/, images to Art/Textures/. These paths are BUILD OUTPUT — run
@@ -91,6 +117,7 @@
     "art": [
       "build/models/MANGAL.W3D",
       "build/models/RFBASE.W3D",
+      "build/models/T80.W3D",
       // ONE sheet for the Mangal since it went to atlas mode: mangal_roof.tga is gone, and
       // the roof is now a REGION of mangal.tga rather than a separate file. Leaving the old
       // name here was a dangling reference the pack gate caught immediately.
@@ -110,7 +137,18 @@
       "build/models/track_rf.tga",
       // One sheet for the base too, same as the Mangal: the dome and stack materials are now
       // REGIONS of rfbase.tga rather than separate files.
-      "build/models/rfbase.tga"
+      "build/models/rfbase.tga",
+      // The T-80's atlas, and its belt. Only two files for eleven parts: t80_gear.tga,
+      // t80_deck.tga and t80_house.tga are REGION names, not files — naming a texture on a
+      // part of an atlas recipe chooses which material fills that part's rectangle. The belt
+      // is the one that has to be a real file, for the reason given at mangal_tread.tga.
+      "build/models/t80.tga",
+      "build/models/t80_tread.tga",
+      // The running gear, on its own sheet for a DIFFERENT reason than the belt's: it does not
+      // scroll, but it is a thin plate standing 12 units off the centreline, and cube
+      // projection puts its faces so far apart in UV that an atlas region sized to hold them
+      // all leaves the face that matters sampling an empty band of itself.
+      "build/models/t80_wheel.tga"
     ],
 
     // artRig is EMPTY on purpose. It exists because ADOPTED art brings bones and sub-objects
@@ -130,7 +168,7 @@
   "factions": {
     // Startable: it owns a producer at t=0, so there is something to build FROM.
     "russian_federation": {
-      "units": ["mangal", "rf_base"],
+      "units": ["mangal", "t80", "rf_base"],
       "startingBuilding": "rf_base",
       "startingUnits": ["mangal"],
       "startMoney": 10000
