@@ -77,22 +77,22 @@
       "size": 256,
       "seed": 27,
       "base": [
-        54,
-        58,
-        50
+        78,
+        82,
+        72
       ],
       "panel": 44,
       "seam": 0.4,
       "wear": 0.3,
       "rivets": true,
       "accent": [
-        38,
-        42,
-        36
+        58,
+        62,
+        54
       ],
       "grilles": 6,
       "hatches": 0,
-      "ao": 0.6,
+      "ao": 0.45,
       "lip": 0.5
     },
     "mangal_roof.tga": {
@@ -318,19 +318,20 @@
       "name": "SKIRT",
       "shape": "box",
       "size": [
-        60,
+        50,
         36,
         5.5
       ],
       "at": [
-        0,
+        -4,
         0,
         9.75
       ],
       "bevel": {
         "width": 0.5,
         "segments": 1
-      }
+      },
+      "_front": "Stops 4 units short at the nose. Full length, its front face sealed the bottom of the opening and the cavity read as a letterbox above a wall."
     },
     {
       "_": "The hull under the shed. Visible through the open front and whenever the camera",
@@ -359,13 +360,13 @@
       "shape": "box",
       "size": [
         58,
-        34,
-        10
+        36,
+        12
       ],
       "at": [
         0,
         0,
-        15
+        16
       ],
       "taper": 0.97,
       "bevel": {
@@ -376,18 +377,19 @@
         {
           "shape": "box",
           "size": [
-            22,
+            26,
             30,
-            9
+            13
           ],
           "at": [
-            20,
+            19,
             0,
             0
           ]
         }
       ],
-      "texture": "mangal_screen.tga"
+      "texture": "mangal_screen.tga",
+      "_flank": "36 wide, flush with the skirt. At 34 it sat one unit inside and the shadow line read as a slot running the length of the vehicle."
     },
     {
       "name": "ROOF",
@@ -401,7 +403,7 @@
       "at": [
         1,
         0,
-        22
+        23
       ],
       "ridgeAxis": "x",
       "ridgeWidth": 0.5,
@@ -453,9 +455,9 @@
         8
       ],
       "at": [
-        -6,
+        -8,
         0,
-        15
+        16
       ],
       "taper": 0.82,
       "bevel": {
@@ -481,7 +483,7 @@
         3.2
       ],
       "at": [
-        -11,
+        -14,
         18.4,
         10.2
       ],
@@ -503,9 +505,9 @@
       ],
       "segments": 6,
       "at": [
-        24,
+        23,
         0,
-        15
+        16
       ],
       "rot": [
         0,

@@ -4063,6 +4063,33 @@ def _panel_texture(spec):
                         int(max(0, min(255, g))),
                         int(max(0, min(255, b)))))
         rows.append(row)
+
+    # GRIME STREAKS, and they are what makes concrete read as weathered rather than new. Every
+    # ledge on a real industrial building sheds dirt down the wall beneath it, so the surface
+    # acquires long vertical runs that fade as they fall. It is the cheapest fidelity available
+    # on a large flat wall: no geometry, no resolution, and it breaks up exactly the uniform
+    # mid-tone that makes a big grey box look unfinished.
+    #
+    # Anchored to the PANEL SEAMS rather than scattered, because that is where the water goes.
+    n_streak = int(spec.get("streaks", 0))
+    if n_streak:
+        strength = float(spec.get("streakStrength", 0.22))
+        for i in range(n_streak):
+            sx = int(size * (i + 0.5) / n_streak
+                     + size * 0.4 * (_hf(seed, i * 71, 11, 13) - 0.5)) % size
+            wide = max(1, int(size * 0.012 * (0.6 + _hf(seed, i, 23, 5))))
+            top = int(size * _hf(seed, i * 17, 3, 9) * 0.5)
+            for y in range(top, size):
+                # Fades with distance below its source, so the run has a direction.
+                fall = min(1.0, (y - top) / (size * 0.55))
+                k = 1.0 - strength * (1.0 - fall) * (0.55 + 0.45 * _hf(seed, i, y, 7))
+                for dx in range(-wide, wide + 1):
+                    x = (sx + dx) % size
+                    e = 1.0 - abs(dx) / float(wide + 1)
+                    kk = 1.0 - (1.0 - k) * e
+                    c = rows[y][x]
+                    rows[y][x] = tuple(int(max(0, min(255, v * kk))) for v in c)
+
     return size, rows
 
 
@@ -4190,8 +4217,16 @@ def _paint_wheels(w, h, spec):
                 k *= 0.62                                  # the belt's runs, in shadow
             else:
                 # Wheel centres step by a float so the row closes on the tile boundary.
-                cyc = (u / (length / float(n))) % 1.0
-                dx = abs(cyc - 0.5) * 2.0 * (length / float(n)) * 0.5
+                # PHASE IS NOT FREE TO ASSUME. Cube projection decides where U = 0 falls on
+                # the part, and a wheel centred mid-tile lands on the tile SEAM if that origin
+                # is half a tile out — which put a cut wheel at each end of the plate and one
+                # more wheel than the recipe asked for. `phase` moves the wheel within its tile
+                # so the row can be centred on the part it is painted on; the pattern still
+                # tiles either way, so this is alignment, not correctness.
+                step = length / float(n)
+                ph = float(spec.get("phase", 0.5))
+                cyc = ((u / step) - ph) % 1.0
+                dx = min(cyc, 1.0 - cyc) * step
                 dy = abs(v - across / 2.0)
                 d = (dx * dx + dy * dy) ** 0.5 / max(1.0, r)
                 if d < 1.0:
@@ -4211,6 +4246,49 @@ def _paint_wheels(w, h, spec):
             row.append(tuple(int(max(0, min(255, c * k))) for c in lo))
         rows.append(row)
     return rows
+
+
+def _paint_windows(w, h, spec):
+    """Rows of recessed windows — the single strongest fidelity cue a building has.
+
+    Measured against the reference and against retail alike: what separates a structure that
+    reads as INHABITED from a grey box is not resolution or triangle count, it is a repeating
+    human-scale element with strong local contrast. A window is dark glass, a bright sill
+    beneath it and a shadow above, and at RTS distance those three bands are the entire effect.
+
+    Rows come from the region's HEIGHT rather than being authored, so one spec gives a wing two
+    storeys and a machine hall four without either being stated — the same reasoning as the
+    tread's per-tile counts, and the same trap avoided: a count here is per REGION, because an
+    atlas region is the part.
+    """
+    rows = _panel_texture(dict(spec, size=max(w, h)))[1]
+    out = [list(rows[y][:w]) for y in range(h)]
+    seed = spec.get("seed", 1)
+    cols = max(2, int(spec.get("windowCols", 6)))
+    storeys = max(1, int(spec.get("storeys", max(1, round(h / max(1.0, w / cols) / 1.6)))))
+    cw, ch = w / float(cols), h / float(storeys)
+    # A window occupies part of its cell; the rest is wall. Too large and the building becomes
+    # a greenhouse, too small and it vanishes into the panel noise at RTS distance.
+    fw, fh = cw * 0.46, ch * 0.40
+    for sy in range(storeys):
+        for sx in range(cols):
+            # Deterministic variation: a few panes lit, most dark. A perfectly uniform grid
+            # reads as a texture; an irregular one reads as a building with people in it.
+            lit = _hf(seed, sx * 13 + 5, sy * 29 + 7, 3) > 0.78
+            cx, cy = (sx + 0.5) * cw, (sy + 0.55) * ch
+            x0, x1 = int(cx - fw / 2), int(cx + fw / 2)
+            y0, y1 = int(cy - fh / 2), int(cy + fh / 2)
+            for y in range(max(0, y0 - 2), min(h, y1 + 3)):
+                for x in range(max(0, x0), min(w, x1)):
+                    if y0 <= y < y1:
+                        k = 2.05 if lit else 0.30          # glass: lit, or a dark recess
+                    elif y >= y1:
+                        k = 1.30                            # the sill, catching light
+                    else:
+                        k = 0.52                            # the reveal above, in shadow
+                    c = out[y][x]
+                    out[y][x] = tuple(int(max(0, min(255, v * k))) for v in c)
+    return out
 
 
 def _paint_ribbed(w, h, spec):
@@ -4336,7 +4414,7 @@ def _paint_trackmark(w, h, spec):
 
 
 PAINTERS = {"tread": _paint_tread, "hatch": _paint_hatch, "wheels": _paint_wheels,
-            "ribbed": _paint_ribbed, "pipes": _paint_pipes}
+            "ribbed": _paint_ribbed, "pipes": _paint_pipes, "windows": _paint_windows}
 # Painters that produce a 32-bit sheet. Kept separate rather than sniffed from the return
 # value: a painter silently returning the wrong arity would be written as garbage pixels.
 ALPHA_PAINTERS = {"trackmark": _paint_trackmark}

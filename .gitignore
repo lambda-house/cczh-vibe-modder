@@ -11,3 +11,8 @@ __pycache__/
 # and no pixel of it enters a pack. Same rule as reference/: keep the input local, ship only
 # what we authored from it.
 incoming/
+
+# Preview contact sheets — generated, look at them, do not commit them.
+sheet.png
+base_sheet.png
+*_sheet.png
