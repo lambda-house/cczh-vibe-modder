@@ -64,8 +64,8 @@
       "lip": 0.35,
       "hatches": 2,
       "grilles": 3,
-      "streaks": 16,
-      "streakStrength": 0.3
+      "streaks": 20,
+      "streakStrength": 0.4
     },
     "rfbase_dome.tga": {
       "_": "Ribbed sheet metal, darker and cooler than the concrete so the dome separates from",
@@ -73,9 +73,9 @@
       "size": 256,
       "seed": 12,
       "base": [
-        150,
-        156,
-        160
+        162,
+        168,
+        172
       ],
       "panel": [
         14,
@@ -89,11 +89,11 @@
         132,
         138
       ],
-      "ao": 0.35,
+      "ao": 0.28,
       "lip": 0.4,
-      "ribs": 16,
+      "ribs": 22,
       "_lighten": "Three darkening passes stack on a dome: the material's own occlusion, the rib painter's valleys, and a Cycles bake of a surface curving away from every light. Authored at the flanks' tone it renders as a black cap.",
-      "streaks": 6,
+      "streaks": 5,
       "streakStrength": 0.18
     },
     "rfbase_stack.tga": {
@@ -156,8 +156,8 @@
       "hatches": 0,
       "grilles": 0,
       "ribs": 11,
-      "streaks": 8,
-      "streakStrength": 0.2
+      "streaks": 14,
+      "streakStrength": 0.34
     },
     "rfbase_pipes.tga": {
       "_": "The machine hall's pipe runs and conduit banks, with a flange every few units.",
@@ -182,8 +182,8 @@
       "hatches": 1,
       "grilles": 2,
       "pipes": 6,
-      "streaks": 7,
-      "streakStrength": 0.22
+      "streaks": 12,
+      "streakStrength": 0.36
     },
     "rfbase_sign.tga": {
       "_": "The entrance sign band. Deep red with a white rule, which is what the reference has under its lettering — the lettering itself is beyond what a 256px region can hold at this scale and is deliberately not attempted.",
@@ -230,10 +230,10 @@
       "lip": 0.45,
       "hatches": 0,
       "grilles": 0,
-      "windowCols": 16,
-      "streaks": 14,
-      "streakStrength": 0.3,
-      "storeys": 5
+      "windowCols": 20,
+      "streaks": 18,
+      "streakStrength": 0.42,
+      "storeys": 11
     }
   },
   "parts": [

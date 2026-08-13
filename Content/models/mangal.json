@@ -40,7 +40,7 @@
   ],
   "name": "MANGAL",
   "texture": "mangal.tga",
-  "budget": 520,
+  "budget": 600,
   "uvScale": 12.0,
   "textures": {
     "mangal.tga": {
@@ -192,8 +192,9 @@
         96
       ],
       "wheels": 1,
-      "runDepth": 0.14,
-      "paint": "wheels"
+      "runDepth": 0.17,
+      "paint": "wheels",
+      "phase": 0.0
     }
   },
   "parts": [
@@ -225,7 +226,7 @@
         "would have splayed the belt outward as it rose, turning the track into a funnel."
       ],
       "size": [
-        40,
+        46,
         7,
         11
       ],
@@ -235,7 +236,7 @@
         5.5
       ],
       "taper": [
-        1.55,
+        1.35,
         1.0
       ],
       "bevel": {
@@ -250,7 +251,7 @@
       "texture": "mangal_tread.tga",
       "uvScale": 16,
       "size": [
-        40,
+        46,
         7,
         11
       ],
@@ -260,7 +261,7 @@
         5.5
       ],
       "taper": [
-        1.55,
+        1.35,
         1.0
       ],
       "bevel": {
@@ -301,6 +302,34 @@
       "_uv": "uvScale 6 with the plate spanning z 0..6 makes V land on exactly 0..1 — the whole sheet once, no offset, no wrap. U then runs 5 repeats over 30 units, so one wheel per tile is five wheels on the vehicle."
     },
     {
+      "_": [
+        "The drive sprocket and idler. Smaller than a road wheel and lifted clear of the",
+        "ground, which is what makes the belt's 45-degree climb read as going somewhere.",
+        "",
+        "mirror 'xy' gives all four from one authored cylinder. Six segments: at this size a",
+        "circle needs no more, and the count is multiplied by four."
+      ],
+      "name": "SPROCKET",
+      "shape": "cylinder",
+      "size": [
+        8,
+        8,
+        7
+      ],
+      "segments": 8,
+      "rot": [
+        90,
+        0,
+        0
+      ],
+      "at": [
+        26,
+        14.0,
+        7
+      ],
+      "mirror": "xy"
+    },
+    {
       "_": "THE SKIRT — vertical plates over the upper half of each track, and it exists to",
       "__": "solve a coupling the taper created rather than for decoration. A tapered wall",
       "___": "narrows as it rises, so above z = 7.4 the shed was inboard of the track's outer",
@@ -339,12 +368,12 @@
       "name": "HULL",
       "shape": "box",
       "size": [
-        44,
-        24,
-        8
+        50,
+        26,
+        9
       ],
       "at": [
-        0,
+        2,
         0,
         10
       ],
@@ -403,7 +432,7 @@
       "at": [
         1,
         0,
-        23
+        27.5
       ],
       "ridgeAxis": "x",
       "ridgeWidth": 0.5,
@@ -432,7 +461,8 @@
           ]
         }
       ],
-      "_______": "The front GABLE is cut away. A ridge is a prism and its end face is solid, so it stood in front of the screen's opening and made the nose a wall no matter how large the hole behind it was."
+      "_______": "The front GABLE is cut away. A ridge is a prism and its end face is solid, so it stood in front of the screen's opening and made the nose a wall no matter how large the hole behind it was.",
+      "________": "Eaves at 22, on top of the frame rather than overlapping it. Overlapping, the roof closed the top of the opening and no widening of the cut could show."
     },
     {
       "_": "THE CASEMATE, and the name is the decision. It was called TURRET, and that name is",
@@ -450,14 +480,14 @@
       "name": "CASEMATE",
       "shape": "box",
       "size": [
-        18,
-        20,
-        8
+        22,
+        24,
+        9
       ],
       "at": [
-        -8,
+        2,
         0,
-        16
+        15
       ],
       "taper": 0.82,
       "bevel": {
@@ -488,10 +518,6 @@
         10.2
       ],
       "mirror": "y",
-      "bevel": {
-        "width": 0.3,
-        "segments": 1
-      },
       "_x": "On the SKIRT, which is vertical. Chasing a sloped wall's standoff moved this plate three times and buried or floated it twice — a flat plate belongs on a flat face."
     },
     {
@@ -505,9 +531,9 @@
       ],
       "segments": 6,
       "at": [
-        23,
+        28,
         0,
-        16
+        15
       ],
       "rot": [
         0,

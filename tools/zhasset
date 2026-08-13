@@ -4269,7 +4269,11 @@ def _paint_windows(w, h, spec):
     cw, ch = w / float(cols), h / float(storeys)
     # A window occupies part of its cell; the rest is wall. Too large and the building becomes
     # a greenhouse, too small and it vanishes into the panel noise at RTS distance.
-    fw, fh = cw * 0.46, ch * 0.40
+    # WIDER THAN TALL. A window is a landscape rectangle in almost every building ever built,
+    # and at 0.46 x 0.40 of a cell that happened to be tall these came out as vertical slots —
+    # which read as fluting or as a louvre, not as glazing. The aspect has to be stated here
+    # rather than inherited from whatever shape the region turned out to be.
+    fw, fh = cw * 0.62, ch * 0.30
     for sy in range(storeys):
         for sx in range(cols):
             # Deterministic variation: a few panes lit, most dark. A perfectly uniform grid
