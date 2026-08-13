@@ -225,7 +225,7 @@
         "would have splayed the belt outward as it rose, turning the track into a funnel."
       ],
       "size": [
-        28,
+        40,
         7,
         11
       ],
@@ -235,7 +235,7 @@
         5.5
       ],
       "taper": [
-        1.71,
+        1.55,
         1.0
       ],
       "bevel": {
@@ -250,7 +250,7 @@
       "texture": "mangal_tread.tga",
       "uvScale": 16,
       "size": [
-        28,
+        40,
         7,
         11
       ],
@@ -260,7 +260,7 @@
         5.5
       ],
       "taper": [
-        1.71,
+        1.55,
         1.0
       ],
       "bevel": {
@@ -286,18 +286,18 @@
       "shape": "box",
       "texture": "mangal_wheel.tga",
       "size": [
-        30,
+        42,
         0.8,
-        6
+        7
       ],
       "at": [
         0,
-        17.4,
-        3
+        17.6,
+        3.5
       ],
       "mirror": "y",
       "noAtlas": true,
-      "uvScale": 6,
+      "uvScale": 7,
       "_uv": "uvScale 6 with the plate spanning z 0..6 makes V land on exactly 0..1 — the whole sheet once, no offset, no wrap. U then runs 5 repeats over 30 units, so one wheel per tile is five wheels on the vehicle."
     },
     {
@@ -318,7 +318,7 @@
       "name": "SKIRT",
       "shape": "box",
       "size": [
-        46,
+        60,
         36,
         5.5
       ],
@@ -358,7 +358,7 @@
       "name": "SCREEN",
       "shape": "box",
       "size": [
-        44,
+        58,
         34,
         10
       ],
@@ -376,12 +376,12 @@
         {
           "shape": "box",
           "size": [
-            18,
-            28,
+            22,
+            30,
             9
           ],
           "at": [
-            16,
+            20,
             0,
             0
           ]
@@ -394,7 +394,7 @@
       "texture": "mangal_roof.tga",
       "shape": "ridge",
       "size": [
-        50,
+        64,
         40,
         11
       ],
@@ -414,7 +414,23 @@
       "___": "ridgeAxis x: the ridge runs fore-and-aft, so the panels shed to the flanks.",
       "____": "The EAVES come down to 16 — below the frame's top at 20 — so the panels cover the flanks and the open frame is seen mainly from the FRONT. That is how the reference is put together, and a roof whose eaves sat above the frame turned the whole thing into a carport.",
       "_____": "Two units proud of the frame at the nose. The reference's roof projects over the open front, but at six units it SHADED the opening shut at the game's camera angle and the interior stopped being visible at all.",
-      "______": "ridgeWidth 0.5, not 0.18. The flat crown is HALF the width — the panels break at its edges rather than meeting in a line. 0.18 was pass one's tent value reinstated on a wider part, and it made a barn."
+      "______": "ridgeWidth 0.5, not 0.18. The flat crown is HALF the width — the panels break at its edges rather than meeting in a line. 0.18 was pass one's tent value reinstated on a wider part, and it made a barn.",
+      "cuts": [
+        {
+          "shape": "box",
+          "size": [
+            6,
+            48,
+            16
+          ],
+          "at": [
+            30,
+            0,
+            0
+          ]
+        }
+      ],
+      "_______": "The front GABLE is cut away. A ridge is a prism and its end face is solid, so it stood in front of the screen's opening and made the nose a wall no matter how large the hole behind it was."
     },
     {
       "_": "THE CASEMATE, and the name is the decision. It was called TURRET, and that name is",
@@ -437,7 +453,7 @@
         8
       ],
       "at": [
-        2,
+        -6,
         0,
         15
       ],
@@ -483,11 +499,11 @@
       "size": [
         3.2,
         3.2,
-        26
+        34
       ],
       "segments": 6,
       "at": [
-        26,
+        24,
         0,
         15
       ],

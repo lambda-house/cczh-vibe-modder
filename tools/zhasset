@@ -3820,8 +3820,16 @@ def cmd_w3dfrom(a):
         # the hull's. Retail says the same thing by construction — NVGattTank's body is on
         # NVGattTank.tga and its two treads are on NVTreads.tga. So a tread keeps its own
         # tiling material even in atlas mode, and the force_texture rule steps aside for it.
+        # A part is on the atlas unless it opted out, and BOTH halves of opting out have to
+        # agree. *This was live and it is what made the road wheels render as blocks:* the
+        # `noAtlas` flag excluded the plate from the PACKING, so it kept full tiling UVs — and
+        # then this line handed it the atlas anyway, because only TREADS was exempt from
+        # force_texture. The plate sampled a packed sheet with coordinates running 0..6, which
+        # is a slice of whatever regions happened to lie under them. Correctly built, correctly
+        # painted, correctly packed, and pointed at the wrong texture.
         tread = tread_side(names[i]) is not None
-        tex = (a.texture if getattr(a, "force_texture", False) and not tread
+        own = tread or names[i].upper() in (getattr(a, "no_atlas", None) or set())
+        tex = (a.texture if getattr(a, "force_texture", False) and not own
                else (p["texture"] or a.texture))
         nodes.append(_w3d_mesh_node(names[i], base if len(prims) > 1 else "",
                                     verts, norms, uvs, p["tris"], tex,
@@ -4163,7 +4171,10 @@ def _paint_wheels(w, h, spec):
     seed = spec.get("seed", 1)
     horiz = w >= h
     length, across = (w, h) if horiz else (h, w)
-    n = max(2, int(spec.get("wheels", 5)))
+    # ONE is a legal count and the common one: a tiling plate repeats its tile every
+    # `uvScale` world units, so "wheels per TILE" is almost always 1 and the vehicle's six
+    # come from six repeats. Flooring at 2 silently doubled them to twelve.
+    n = max(1, int(spec.get("wheels", 1)))
     # The runs the belt makes along the top and bottom of the plate. The wheels are tangent to
     # them rather than floating, so the assembly reads as load-bearing.
     run = max(2, int(across * float(spec.get("runDepth", 0.13))))
@@ -4186,11 +4197,17 @@ def _paint_wheels(w, h, spec):
                 if d < 1.0:
                     # Tyre, then rim, then a bright hub. Three bands is all that survives at
                     # RTS distance, and the hub is what makes it read as a wheel and not a hole.
-                    k *= (0.55 if d > 0.86 else
-                          1.18 if d > 0.66 else
-                          0.72 if d > 0.34 else 1.30)
+                    k *= (0.60 if d > 0.88 else
+                          1.34 if d > 0.62 else
+                          0.78 if d > 0.30 else 1.46)
                 else:
-                    k *= 0.80                              # the hull plate behind the wheels
+                    # THE GAP BETWEEN WHEELS MUST BE DARKER THAN THE TYRE, or the discs do not
+                    # separate and the row reads as a line of SQUARES: at 0.80 against a 0.60
+                    # tyre the brightest thing in each cell was the hub and the darkest was the
+                    # wheel's own rim, so the eye grouped them into rectangular cells instead of
+                    # into circles. Round is carried by the CONTRAST STEP at the rim, not by the
+                    # geometry of the mask.
+                    k *= 0.42
             row.append(tuple(int(max(0, min(255, c * k))) for c in lo))
         rows.append(row)
     return rows
@@ -4465,6 +4482,90 @@ BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
 OPENSAGE_PLUGIN = os.path.expanduser("~/work/oss/OpenSAGE.BlenderPlugin")
 
 
+def cmd_preview(a):
+    """Build a recipe (or take a .w3d) and render a CONTACT SHEET of it.
+
+    The fast half of the authoring loop. Booting the game is the only way to learn what the
+    ENGINE thinks, and a poor way to learn whether a model is the right shape: it shows one
+    angle, at distance, after a two-minute round trip. This shows four angles in one image in
+    a few seconds, and every silhouette correction this project has made was visible in one of
+    them.
+
+    Four views, chosen because each catches a class the others miss — three-quarter is what the
+    game draws, SIDE is where proportion lives, FRONT is where an opening either reads as a
+    hole or does not, and a low pass on the running gear is where texture-space bugs surface.
+    """
+    import subprocess, tempfile
+    blender = a.blender or BLENDER
+    if not os.path.exists(blender):
+        print(f"Blender not found at {blender} — a preview is a render, so there is no fallback.")
+        return 1
+
+    w3d = a.file
+    with tempfile.TemporaryDirectory() as tmp:
+        if a.recipe:
+            w3d = os.path.join(tmp, "preview.w3d")
+            rc = cmd_model(argparse.Namespace(recipe=a.recipe, out=w3d, name=None, texture=None,
+                                              profiles=tmp, blender=blender))
+            if rc:
+                return rc
+        if not w3d or not os.path.exists(w3d):
+            print("pass --recipe <r.json> or a .w3d path")
+            return 1
+
+        glb = os.path.join(tmp, "p.glb")
+        if cmd_gltf(argparse.Namespace(file=w3d, out=glb, textures=None)):
+            return 1
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zhpreview.py")
+        r = subprocess.run([blender, "--background", "--python", script, "--",
+                            glb, tmp, str(a.size)], capture_output=True, text=True)
+        if "ZHP ok" not in r.stdout:
+            print("PREVIEW RENDER FAILED:")
+            for line in (r.stdout + r.stderr).splitlines():
+                if any(k in line for k in ("Error", "Traceback", "ZHPFAIL", "raise")):
+                    print("  " + line)
+            return 1
+
+        names = [l.split()[1] for l in r.stdout.splitlines()
+                 if l.startswith("ZHP ") and l.split()[1] != "ok"]
+        tiles = []
+        for n in names:
+            p = os.path.join(tmp, f"{n}.png")
+            if os.path.exists(p):
+                tiles.append((n, png_read(p)))
+        if not tiles:
+            print("the render produced no images")
+            return 1
+
+        # Composited here rather than in Blender: laying four renders into a grid is arithmetic,
+        # and doing it in the subprocess would mean a second scene and a compositor graph.
+        s = a.size
+        cols = 2
+        rows = (len(tiles) + cols - 1) // cols
+        W, H = s * cols, s * rows
+        # Mid grey, not white or transparent: a render on a transparent background composites
+        # against whatever a viewer happens to use, and a dark model on white loses its edges.
+        sheet = [[(58, 60, 62)] * W for _ in range(H)]
+        # `png_read` hands alpha back as its OWN array, not as a fourth channel in the pixels —
+        # reading it off the tuple silently made every render opaque, which composited the
+        # transparent background as black and lost a dark model's edges against it.
+        for i, (_n, (tw, th, trows, ta)) in enumerate(tiles):
+            ox, oy = (i % cols) * s, (rows - 1 - i // cols) * s
+            for y in range(min(s, th)):
+                for x in range(min(s, tw)):
+                    al = ta[y][x] if ta else 255
+                    if al == 0:
+                        continue
+                    px, b = trows[y][x], sheet[oy + y][ox + x]
+                    k = al / 255.0
+                    sheet[oy + y][ox + x] = tuple(
+                        int(px[c] * k + b[c] * (1 - k)) for c in range(3))
+        open(a.out, "wb").write(_png(W, H, sheet))
+
+    print(f"{a.out}  {W}x{H}  {', '.join(n for n, _ in tiles)}")
+    return 0
+
+
 def cmd_w3dgrade(a):
     """Read a `.w3d` with OpenSAGE's plugin and DIFF it against our own reading.
 
@@ -4614,6 +4715,10 @@ def cmd_model(a):
         ns = argparse.Namespace(gltf=glb, out=a.out, name=name,
                                 texture=a.texture or recipe.get("texture"),
                                 bones=recipe.get("bones"),
+                                # The parts that opted out of the pack must also opt out of the
+                                # atlas TEXTURE; the two decisions are one decision.
+                                no_atlas={(p.get("name") or "").upper()
+                                          for p in recipe.get("parts", []) if p.get("noAtlas")},
                                 force_texture=bool(recipe.get("atlas")))
         rc = cmd_w3dfrom(ns)
         if rc:
@@ -5003,6 +5108,15 @@ def main():
     md.add_argument("--profiles", help="directory for art-profiles.json (default: beside --out)")
     md.add_argument("--blender", help=f"path to Blender (default {BLENDER})")
     md.set_defaults(fn=cmd_model)
+
+    pv = sub.add_parser("preview",
+                        help="render a model from four angles into one contact sheet — the FAST loop")
+    pv.add_argument("file", nargs="?", help="a .w3d; omit and pass --recipe to build one first")
+    pv.add_argument("--recipe", help="build this recipe and preview the result")
+    pv.add_argument("--out", default="preview.png")
+    pv.add_argument("--size", type=int, default=420, help="pixels per view (default 420)")
+    pv.add_argument("--blender", help=f"path to Blender (default {BLENDER})")
+    pv.set_defaults(fn=cmd_preview)
 
     wg = sub.add_parser("w3dgrade",
                         help="grade a .w3d with OpenSAGE's INDEPENDENT reader and diff it")
